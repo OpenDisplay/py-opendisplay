@@ -32,7 +32,7 @@ dependencies = [
     "pillow>=10.0.0",
     "numpy>=1.24.0,!=2.4.0",
     "bleak-retry-connector>=3.5.0",
-    "epaper-dithering==0.6.0",
+    "epaper-dithering==0.6.1",
 ]
 
 [project.optional-dependencies]
