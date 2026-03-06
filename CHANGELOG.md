@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.4.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.3.0...v5.4.0) (2026-03-06)
+
+
+### Features
+
+* add voltage_to_percent function ([fd93f82](https://github.com/OpenDisplay/py-opendisplay/commit/fd93f8243e636e943080882b1a1d2ee7a035d5e1))
+
 ## [5.3.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.2.0...v5.3.0) (2026-03-06)
 
 
