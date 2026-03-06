@@ -5,6 +5,7 @@
 
 from epaper_dithering import ColorScheme, DitherMode
 
+from .battery import voltage_to_percent
 from .device import OpenDisplayDevice, prepare_image
 from .discovery import discover_devices
 from .exceptions import (
@@ -106,6 +107,7 @@ __all__ = [
     # Utilities
     "parse_advertisement",
     "decode_button_event",
+    "voltage_to_percent",
     # Constants
     "SERVICE_UUID",
     "MANUFACTURER_ID",
