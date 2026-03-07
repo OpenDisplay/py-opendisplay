@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.5.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.4.0...v5.5.0) (2026-03-07)
+
+
+### Features
+
+* add py.typed marker and fix strict mypy errors ([959176b](https://github.com/OpenDisplay/py-opendisplay/commit/959176bcd275591f5d9bfbcc2922ae363f12ad3b))
+* add py.typed marker and fix strict mypy errors and add prek ([c1cf3b4](https://github.com/OpenDisplay/py-opendisplay/commit/c1cf3b4aff940518c410236e3f0fec8ef44bdb4e))
+
 ## [5.4.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.3.0...v5.4.0) (2026-03-06)
 
 
