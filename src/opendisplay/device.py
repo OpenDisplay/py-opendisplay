@@ -71,7 +71,7 @@ def _rotate_source_image(image: Image.Image, rotate: Rotation) -> Image.Image:
 
 def prepare_image(
     image: Image.Image,
-    config: GlobalConfig,
+    config: GlobalConfig | None = None,
     capabilities: DeviceCapabilities | None = None,
     use_measured_palettes: bool = True,
     panel_ic_type: int | None = None,
@@ -108,7 +108,7 @@ def prepare_image(
         RuntimeError: If config has no display information
     """
     if capabilities is None:
-        if not config.displays:
+        if config is None or not config.displays:
             raise RuntimeError("Config has no display information")
         display = config.displays[0]
         capabilities = DeviceCapabilities(
@@ -118,7 +118,7 @@ def prepare_image(
             rotation=display.rotation,
         )
 
-    if panel_ic_type is None and config.displays:
+    if panel_ic_type is None and config is not None and config.displays:
         panel_ic_type = config.displays[0].panel_ic_type
 
     target_size = (capabilities.width, capabilities.height)
@@ -248,7 +248,7 @@ class OpenDisplayDevice:
 
         # Will be set after resolution
         self.mac_address = mac_address or ""  # Resolved in __aenter__
-        self._connection = None  # Created after MAC resolution
+        self._connection: BLEConnection | None = None  # Created after MAC resolution
 
         self._config = config
         self._capabilities = capabilities
@@ -279,8 +279,8 @@ class OpenDisplayDevice:
                 self.mac_address,
             )
         else:
-            # MAC was provided directly
-            self.mac_address = self._mac_address_param
+            # MAC was provided directly — validated non-empty in __init__
+            self.mac_address = self._mac_address_param or ""
 
         # Create connection with resolved MAC
         self._connection = BLEConnection(
@@ -291,7 +291,7 @@ class OpenDisplayDevice:
             use_services_cache=self._use_services_cache,
         )
 
-        await self._connection.connect()
+        await self._conn.connect()
 
         # Auto-interrogate if no config or capabilities provided
         if self._config is None and self._capabilities is None:
@@ -304,9 +304,22 @@ class OpenDisplayDevice:
 
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         """Disconnect from device."""
-        await self._connection.disconnect()
+        if self._connection is not None:
+            await self._conn.disconnect()
+
+    @property
+    def _conn(self) -> BLEConnection:
+        """Return active BLE connection, raising RuntimeError if not connected."""
+        if self._connection is None:
+            raise RuntimeError("Device not connected")
+        return self._connection
 
     def _ensure_capabilities(self) -> DeviceCapabilities:
         """Ensure device capabilities are available.
@@ -426,10 +439,10 @@ class OpenDisplayDevice:
 
         # Send read config command
         cmd = build_read_config_command()
-        await self._connection.write_command(cmd)
+        await self._conn.write_command(cmd)
 
         # Read first chunk
-        response = await self._connection.read_response(timeout=self.TIMEOUT_FIRST_CHUNK)
+        response = await self._conn.read_response(timeout=self.TIMEOUT_FIRST_CHUNK)
         chunk_data = strip_command_echo(response, CommandCode.READ_CONFIG)
 
         # Parse first chunk header
@@ -440,7 +453,7 @@ class OpenDisplayDevice:
 
         # Read remaining chunks
         while len(tlv_data) < total_length:
-            next_response = await self._connection.read_response(timeout=self.TIMEOUT_CHUNK)
+            next_response = await self._conn.read_response(timeout=self.TIMEOUT_CHUNK)
             next_chunk_data = strip_command_echo(next_response, CommandCode.READ_CONFIG)
 
             # Skip chunk number field (2 bytes) and append data
@@ -478,10 +491,10 @@ class OpenDisplayDevice:
 
         # Send read firmware version command
         cmd = build_read_fw_version_command()
-        await self._connection.write_command(cmd)
+        await self._conn.write_command(cmd)
 
         # Read response
-        response = await self._connection.read_response(timeout=self.TIMEOUT_ACK)
+        response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
 
         # Parse version (includes SHA hash)
         self._fw_version = parse_firmware_version(response)
@@ -515,7 +528,7 @@ class OpenDisplayDevice:
 
         # Build and send reboot command
         cmd = build_reboot_command()
-        await self._connection.write_command(cmd)
+        await self._conn.write_command(cmd)
 
         # Device will reset immediately - no ACK expected
         _LOGGER.info(
@@ -564,10 +577,10 @@ class OpenDisplayDevice:
             led_instance=led_instance,
             flash_config=flash_config,
         )
-        await self._connection.write_command(cmd)
+        await self._conn.write_command(cmd)
 
         response_timeout = self.TIMEOUT_REFRESH if timeout is None else timeout
-        response = await self._connection.read_response(timeout=response_timeout)
+        response = await self._conn.read_response(timeout=response_timeout)
 
         # Firmware LED errors use 0xFF73 + error code payload.
         if len(response) >= 2 and unpack_command_code(response) == 0xFF73:
@@ -646,10 +659,10 @@ class OpenDisplayDevice:
 
         # Send first command
         _LOGGER.debug("Sending first config chunk (%d bytes)", len(first_cmd))
-        await self._connection.write_command(first_cmd)
+        await self._conn.write_command(first_cmd)
 
         # Wait for ACK
-        response = await self._connection.read_response(timeout=self.TIMEOUT_ACK)
+        response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
         validate_ack_response(response, CommandCode.WRITE_CONFIG)
 
         # Send remaining chunks if needed
@@ -660,10 +673,10 @@ class OpenDisplayDevice:
                 len(chunk_cmds),
                 len(chunk_cmd)
             )
-            await self._connection.write_command(chunk_cmd)
+            await self._conn.write_command(chunk_cmd)
 
             # Wait for ACK after each chunk
-            response = await self._connection.read_response(timeout=self.TIMEOUT_ACK)
+            response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
             validate_ack_response(response, CommandCode.WRITE_CONFIG_CHUNK)
 
         _LOGGER.info("Config written successfully to %s", self.mac_address)
@@ -922,6 +935,7 @@ class OpenDisplayDevice:
         """
         # 1. Send START command (different for each protocol)
         if use_compression:
+            assert uncompressed_size is not None and compressed_data is not None
             start_cmd, remaining_compressed = build_direct_write_start_compressed(
                 uncompressed_size, compressed_data
             )
@@ -929,10 +943,10 @@ class OpenDisplayDevice:
             start_cmd = build_direct_write_start_uncompressed()
             remaining_compressed = None
 
-        await self._connection.write_command(start_cmd)
+        await self._conn.write_command(start_cmd)
 
         # 2. Wait for START ACK (identical for both protocols)
-        response = await self._connection.read_response(timeout=self.TIMEOUT_ACK)
+        response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
         validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
 
         # 3. Send data chunks
@@ -948,10 +962,10 @@ class OpenDisplayDevice:
         # 4. Send END command if needed (identical for both protocols)
         if not auto_completed:
             end_cmd = build_direct_write_end_command(refresh_mode.value)
-            await self._connection.write_command(end_cmd)
+            await self._conn.write_command(end_cmd)
 
             # Wait for END ACK (90s timeout for display refresh)
-            response = await self._connection.read_response(timeout=self.TIMEOUT_REFRESH)
+            response = await self._conn.read_response(timeout=self.TIMEOUT_REFRESH)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
 
     async def _send_data_chunks(self, image_data: bytes) -> bool:
@@ -984,14 +998,14 @@ class OpenDisplayDevice:
 
             # Send DATA command
             data_cmd = build_direct_write_data_command(chunk_data)
-            await self._connection.write_command(data_cmd)
+            await self._conn.write_command(data_cmd)
 
             bytes_sent += len(chunk_data)
             chunks_sent += 1
 
             # Wait for response after every chunk (PIPELINE_CHUNKS=1)
             try:
-                response = await self._connection.read_response(timeout=self.TIMEOUT_ACK)
+                response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
             except BLETimeoutError:
                 # Timeout on response - firmware might be doing display refresh
                 # This happens when the chunk completes directWriteTotalBytes
@@ -1002,7 +1016,7 @@ class OpenDisplayDevice:
                 )
 
                 # Wait up to 90 seconds for the END response
-                response = await self._connection.read_response(timeout=self.TIMEOUT_REFRESH)
+                response = await self._conn.read_response(timeout=self.TIMEOUT_REFRESH)
 
             # Check what response we got (firmware can send 0x0072 on ANY chunk, not just last!)
             command, is_ack = check_response_type(response)

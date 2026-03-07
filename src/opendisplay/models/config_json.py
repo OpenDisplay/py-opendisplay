@@ -6,6 +6,7 @@ Compatible with the Open Display Config Builder web tool format.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 from .config import (
     BinaryInputs,
@@ -38,7 +39,7 @@ def _parse_int(value: str | int) -> int:
     return int(value)
 
 
-def config_to_json(config: GlobalConfig) -> dict:
+def config_to_json(config: GlobalConfig) -> dict[str, Any]:
     """Export GlobalConfig to JSON-serializable dict.
 
     Format matches the Open Display Config Builder web tool exactly:
@@ -84,12 +85,7 @@ def config_to_json(config: GlobalConfig) -> dict:
     # Power option (packet type 0x04 = 4)
     pwr = config.power
 
-    # Handle battery_capacity_mah which can be int or bytes
-    if isinstance(pwr.battery_capacity_mah, bytes):
-        # Convert bytes to int (little-endian)
-        battery_capacity = int.from_bytes(pwr.battery_capacity_mah[:3], 'little')
-    else:
-        battery_capacity = pwr.battery_capacity_mah
+    battery_capacity = int.from_bytes(pwr.battery_capacity_mah[:3], "little")
 
     packets.append({
         "id": "4",  # Decimal string
@@ -243,7 +239,7 @@ def config_to_json(config: GlobalConfig) -> dict:
     }
 
 
-def config_from_json(data: dict) -> GlobalConfig:
+def config_from_json(data: dict[str, Any]) -> GlobalConfig:
     """Import GlobalConfig from JSON dict.
 
     Parses JSON format from the Open Display Config Builder web tool.
@@ -295,7 +291,7 @@ def config_from_json(data: dict) -> GlobalConfig:
         elif packet_id == 4:  # 0x04 = power_option
             power = PowerOption(
                 power_mode=_parse_int(fields.get("power_mode", "0")),
-                battery_capacity_mah=_parse_int(fields.get("battery_capacity_mah", "0")),
+                battery_capacity_mah=_parse_int(fields.get("battery_capacity_mah", "0")).to_bytes(3, "little"),
                 sleep_timeout_ms=_parse_int(fields.get("sleep_timeout_ms", "0")),
                 tx_power=_parse_int(fields.get("tx_power", "0")),
                 sleep_flags=_parse_int(fields.get("sleep_flags", "0")),
@@ -408,6 +404,10 @@ def config_from_json(data: dict) -> GlobalConfig:
         raise ValueError(
             "Missing required packet(s): " + ", ".join(missing_required)
         )
+
+    assert system is not None
+    assert manufacturer is not None
+    assert power is not None
 
     return GlobalConfig(
         system=system,

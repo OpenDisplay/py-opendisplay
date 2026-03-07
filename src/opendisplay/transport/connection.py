@@ -13,6 +13,7 @@ from ..exceptions import BLEConnectionError, BLETimeoutError
 from ..protocol import SERVICE_UUID
 
 if TYPE_CHECKING:
+    from bleak.backends.characteristic import BleakGATTCharacteristic
     from bleak.backends.device import BLEDevice
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,14 +54,19 @@ class BLEConnection:
 
         self._client: BleakClient | None = None
         self._notification_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self._notification_characteristic = None
+        self._notification_characteristic: BleakGATTCharacteristic | None = None
 
     async def __aenter__(self) -> BLEConnection:
         """Connect to device (context manager entry)."""
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         """Disconnect from device (context manager exit)."""
         await self.disconnect()
 
@@ -88,20 +94,21 @@ class BLEConnection:
                 device = self.ble_device
             else:
                 # For MAC-only usage, scan for the device
-                device = await BleakScanner.find_device_by_address(
+                found_device: BLEDevice | None = await BleakScanner.find_device_by_address(
                     self.mac_address,
                     timeout=self.timeout
                 )
-                if device is None:
+                if found_device is None:
                     raise BLEConnectionError(
                         f"Device {self.mac_address} not found during scan"
                     )
+                device = found_device
 
             # Establish connection with retry logic
             self._client = await establish_connection(
                 client_class=BleakClientWithServiceCache,
                 device=device,
-                name=device.name,
+                name=device.name or self.mac_address,
                 max_attempts=self.max_attempts,
                 use_services_cache=self.use_services_cache,
                 timeout=self.timeout,
@@ -164,7 +171,7 @@ class BLEConnection:
 
         _LOGGER.debug("Notifications started")
 
-    def _notification_callback(self, sender, data: bytearray) -> None:
+    def _notification_callback(self, sender: BleakGATTCharacteristic, data: bytearray) -> None:
         """Handle incoming BLE notifications.
 
         Args:

@@ -29,7 +29,7 @@ def _config(width: int = 2, height: int = 2) -> GlobalConfig:
             reserved=b"\x00" * 18,
         ),
         power=PowerOption(
-            power_mode=0, battery_capacity_mah=0, sleep_timeout_ms=0,
+            power_mode=0, battery_capacity_mah=b"\x00\x00\x00", sleep_timeout_ms=0,
             tx_power=0, sleep_flags=0, battery_sense_pin=0xFF,
             battery_sense_enable_pin=0xFF, battery_sense_flags=0,
             capacity_estimator=0, voltage_scaling_factor=0,

@@ -312,7 +312,7 @@ def _minimal_manufacturer() -> ManufacturerData:
 def _minimal_power() -> PowerOption:
     return PowerOption(
         power_mode=1,
-        battery_capacity_mah=1000,
+        battery_capacity_mah=(1000).to_bytes(3, "little"),
         sleep_timeout_ms=1000,
         tx_power=0,
         sleep_flags=0,

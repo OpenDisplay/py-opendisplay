@@ -23,19 +23,19 @@ PANELS_4GRAY: frozenset[int] = frozenset({
 # Map: (panel_ic_type, color_scheme) -> measured ColorPalette
 # panel_ic_type identifies the e-paper panel model
 # color_scheme identifies the color mode (MONO, BWR, BWGBRY, etc.)
-DISPLAY_PALETTE_MAP: dict[tuple[int, int], ColorPalette] = {
+DISPLAY_PALETTE_MAP: dict[tuple[int, ColorScheme], ColorPalette] = {
     # Spectra 7.3" 6-color (ep73_spectra_800x480)
-    (35, 4): SPECTRA_7_3_6COLOR,
+    (35, ColorScheme.BWGBRY): SPECTRA_7_3_6COLOR,
     # 4.26" Monochrome (ep426_800x480)
-    (39, 0): MONO_4_26,
+    (39, ColorScheme.MONO): MONO_4_26,
     # Solum 2.6" BWR (ep26r_152x296)
-    (33, 1): SOLUM_BWR,
+    (33, ColorScheme.BWR): SOLUM_BWR,
     # 3.97" BWRY (ep397yr_800x480)
-    (55, 3): BWRY_3_97,
+    (55, ColorScheme.BWRY): BWRY_3_97,
     # Add more as color calibration becomes available:
-    # (?, 3): BWRY_4_2,  # 4.2" BWRY
-    # (?, 1): HANSHOW_BWR,
-    # (?, 2): HANSHOW_BWY,
+    # (?, ColorScheme.BWRY): BWRY_4_2,  # 4.2" BWRY
+    # (?, ColorScheme.BWR): HANSHOW_BWR,
+    # (?, ColorScheme.BWY): HANSHOW_BWY,
 }
 
 
@@ -64,7 +64,7 @@ def get_palette_for_display(
     )
 
     if use_measured and panel_ic_type is not None:
-        key = (panel_ic_type, scheme.value)
+        key = (panel_ic_type, scheme)
         measured = DISPLAY_PALETTE_MAP.get(key)
         if measured is not None:
             return measured

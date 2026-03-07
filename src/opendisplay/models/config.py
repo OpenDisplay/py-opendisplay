@@ -155,7 +155,7 @@ class PowerOption:
     Size: 32 bytes (packed struct from firmware)
     """
     power_mode: int  # uint8
-    battery_capacity_mah: int  # 3 bytes (24-bit value)
+    battery_capacity_mah: bytes  # 3 bytes (24-bit little-endian)
     sleep_timeout_ms: int  # uint16
     tx_power: int  # uint8
     sleep_flags: int  # uint8 bitfield
@@ -170,12 +170,8 @@ class PowerOption:
 
     @property
     def battery_mah(self) -> int:
-        """Get battery capacity in mAh (converts 3-byte array to integer)."""
-        return (
-                self.battery_capacity_mah[0]
-                | (self.battery_capacity_mah[1] << 8)
-                | (self.battery_capacity_mah[2] << 16)
-        )
+        """Get battery capacity in mAh (converts 3-byte little-endian to integer)."""
+        return int.from_bytes(self.battery_capacity_mah[:3], "little")
 
     @property
     def power_mode_enum(self) -> PowerMode | int:
@@ -206,12 +202,9 @@ class PowerOption:
         if len(data) < cls.SIZE:
             raise ValueError(f"Invalid PowerOption size: {len(data)} < {cls.SIZE}")
 
-        # Parse 3-byte battery capacity
-        battery_mah = int.from_bytes(data[1:4], 'little')
-
         return cls(
             power_mode=data[0],
-            battery_capacity_mah=battery_mah,
+            battery_capacity_mah=data[1:4],
             sleep_timeout_ms=int.from_bytes(data[4:6], 'little'),
             tx_power=data[6],
             sleep_flags=data[7],

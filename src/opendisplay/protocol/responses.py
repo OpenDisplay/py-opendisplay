@@ -19,7 +19,7 @@ def unpack_command_code(data: bytes, offset: int = 0) -> int:
     Returns:
         Command code as integer
     """
-    return struct.unpack(">H", data[offset:offset+2])[0]
+    return int(struct.unpack(">H", data[offset:offset+2])[0])
 
 
 def strip_command_echo(data: bytes, expected_cmd: CommandCode) -> bytes:

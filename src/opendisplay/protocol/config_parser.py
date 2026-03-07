@@ -192,6 +192,10 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
             "Missing required packet(s): " + ", ".join(missing_required)
         )
 
+    assert system is not None
+    assert manufacturer is not None
+    assert power is not None
+
     return GlobalConfig(
         system=system,
         manufacturer=manufacturer,
