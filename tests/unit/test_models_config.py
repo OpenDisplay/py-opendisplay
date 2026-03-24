@@ -102,6 +102,7 @@ class TestManufacturerDataBoardTyping:
     def test_unknown_board_type_falls_back_to_int(self):
         mfg = self._mfg(BoardManufacturer.SEEED, 99)
         assert mfg.board_type_enum == 99
+        assert mfg.board_type_name is None
 
 
 class TestDisplayConfigTransmissionModes:
