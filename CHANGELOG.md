@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.6.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.5.0...v5.6.0) (2026-03-24)
+
+
+### Features
+
+* add python 14 to supported versions ([2d97f2f](https://github.com/OpenDisplay/py-opendisplay/commit/2d97f2f334fe76204ef1f0eb1a82d5a019c8147f))
+
+
+### Bug Fixes
+
+* respect device supports_zip when choosing upload protocol ([5320a5a](https://github.com/OpenDisplay/py-opendisplay/commit/5320a5a6a7a6ebbb34a78e8eac813cb3db8c3fc5))
+
 ## [5.5.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.4.0...v5.5.0) (2026-03-07)
 
 
