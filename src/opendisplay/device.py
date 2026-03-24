@@ -833,7 +833,7 @@ class OpenDisplayDevice:
             elif compress and compressed_data:
                 _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
             else:
-                _LOGGER.info("Compression disabled, using uncompressed protocol")
+                _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
             await self._execute_upload(image_data, refresh_mode, use_compression=False)
 
         _LOGGER.info("Image upload complete")
