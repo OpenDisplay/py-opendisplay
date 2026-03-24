@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.7.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.6.0...v5.7.0) (2026-03-24)
+
+
+### Features
+
+* add initial support for encryption ([28c24f9](https://github.com/OpenDisplay/py-opendisplay/commit/28c24f9622ee900ffca08f91197a79e69e1db5bc))
+* support reauthentication ([3214ead](https://github.com/OpenDisplay/py-opendisplay/commit/3214ead07f4c4f48ede373764fb84f84993541c8))
+
 ## [5.6.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.5.0...v5.6.0) (2026-03-24)
 
 
