@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from epaper_dithering import ColorScheme, DitherMode, dither_image
@@ -265,6 +266,7 @@ class OpenDisplayDevice:
         self._session_key: bytes | None = None
         self._session_id: bytes | None = None
         self._nonce_counter: int = 0
+        self._auth_time: float | None = None  # monotonic timestamp of last successful auth
 
     async def __aenter__(self) -> OpenDisplayDevice:
         """Connect and optionally interrogate device."""
@@ -340,6 +342,7 @@ class OpenDisplayDevice:
     async def _write(self, data: bytes) -> None:
         """Write a command, encrypting it if an active session exists."""
         if self._session_key is not None and self._session_id is not None:
+            await self._reauthenticate_if_needed()
             cmd = data[:2]
             payload = data[2:]
             self._nonce_counter += 1
@@ -347,6 +350,24 @@ class OpenDisplayDevice:
             await self._conn.write_command(encrypted)
         else:
             await self._conn.write_command(data)
+
+    async def _reauthenticate_if_needed(self) -> None:
+        """Re-authenticate proactively at 90% of session_timeout_seconds."""
+        if self._encryption_key is None or self._auth_time is None:
+            return
+        if self._config is None or self._config.security_config is None:
+            return
+        timeout = self._config.security_config.session_timeout_seconds
+        if timeout == 0:
+            return
+        elapsed = time.monotonic() - self._auth_time
+        if elapsed >= timeout * 0.9:
+            _LOGGER.info(
+                "Session approaching timeout (%.0fs / %ds), re-authenticating",
+                elapsed,
+                timeout,
+            )
+            await self.authenticate(self._encryption_key)
 
     async def _read(self, timeout: float) -> bytes:
         """Read a response, decrypting it if an active session exists.
@@ -397,6 +418,7 @@ class OpenDisplayDevice:
         self._session_key = derive_session_key(key, client_nonce, server_nonce)
         self._session_id = derive_session_id(self._session_key, client_nonce, server_nonce)
         self._nonce_counter = 0
+        self._auth_time = time.monotonic()
 
         _LOGGER.info("Authentication successful, session established")
 
@@ -664,6 +686,12 @@ class OpenDisplayDevice:
         to the device using the WRITE_CONFIG (0x0041) command with
         automatic chunking for large configs.
 
+        On encrypted devices this command is sent encrypted (normal flow).
+        If the device has the ``rewrite_allowed`` flag set in its SecurityConfig,
+        the firmware also accepts unencrypted WRITE_CONFIG — useful for
+        provisioning without knowing the current key (connect with
+        ``config=`` or ``capabilities=`` to skip interrogation).
+
         Args:
             config: GlobalConfig to write to device
 
@@ -720,20 +748,10 @@ class OpenDisplayDevice:
         _LOGGER.info("Config written successfully to %s", self.mac_address)
 
     def export_config_json(self, file_path: str) -> None:
-        """Export device config to JSON file.
-
-        Exports the configuration in a format compatible with the
-        Open Display Config Builder web tool.
-
-        Args:
-            file_path: Path to save JSON file
+        """Export device config to JSON file (Open Display Config Builder format).
 
         Raises:
             ValueError: If no config loaded
-
-        Example:
-            async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF") as device:
-                device.export_config_json("my_config.json")
         """
         if not self._config:
             raise ValueError("No config loaded - interrogate device first")
@@ -751,26 +769,11 @@ class OpenDisplayDevice:
 
     @staticmethod
     def import_config_json(file_path: str) -> GlobalConfig:
-        """Import config from JSON file.
-
-        Imports configuration from a JSON file created by the
-        Open Display Config Builder web tool or exported by
-        export_config_json().
-
-        Args:
-            file_path: Path to JSON file
-
-        Returns:
-            GlobalConfig instance
+        """Import config from JSON file (Open Display Config Builder format).
 
         Raises:
             FileNotFoundError: If file not found
             ValueError: If JSON invalid
-
-        Example:
-            config = OpenDisplayDevice.import_config_json("my_config.json")
-            async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF") as device:
-                await device.write_config(config)
         """
         import json
 
