@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import struct
 
-from ..exceptions import InvalidResponseError
+from ..exceptions import AuthenticationFailedError, AuthenticationRequiredError, InvalidResponseError
 from ..models.firmware import FirmwareVersion
 from .commands import RESPONSE_HIGH_BIT_FLAG, CommandCode
+
+# Status bytes returned in AUTHENTICATE responses
+_AUTH_STATUS_OK = 0x00
+_AUTH_STATUS_WRONG_KEY = 0x01
+_AUTH_STATUS_ENCRYPTION_NOT_CONFIGURED = 0x03
+_AUTH_STATUS_RATE_LIMITED = 0x04
 
 
 def unpack_command_code(data: bytes, offset: int = 0) -> int:
@@ -81,6 +87,84 @@ def validate_ack_response(data: bytes, expected_command: int) -> None:
 
     if response_code not in valid_responses:
         raise InvalidResponseError(f"ACK mismatch: expected 0x{expected_command:04x}, got 0x{response_code:04x}")
+
+
+def parse_authenticate_challenge(data: bytes) -> bytes:
+    """Parse step-1 AUTHENTICATE response and return the server nonce.
+
+    Expected format: [0x0050][status:1][server_nonce:16]
+
+    Args:
+        data: Raw BLE notification from device
+
+    Returns:
+        16-byte server nonce
+
+    Raises:
+        AuthenticationError: If device returns an error status
+        InvalidResponseError: If response format is invalid
+    """
+    if len(data) < 2:
+        raise InvalidResponseError(f"Auth challenge response too short: {len(data)} bytes")
+
+    echo = unpack_command_code(data)
+    if echo not in (0x0050, 0x0050 | RESPONSE_HIGH_BIT_FLAG):
+        raise InvalidResponseError(f"Auth challenge echo mismatch: got 0x{echo:04x}")
+
+    if len(data) < 3:
+        raise InvalidResponseError("Auth challenge response missing status byte")
+
+    status = data[2]
+    if status == _AUTH_STATUS_ENCRYPTION_NOT_CONFIGURED:
+        raise AuthenticationRequiredError("Device does not have encryption configured")
+    if status == _AUTH_STATUS_RATE_LIMITED:
+        raise AuthenticationFailedError("Authentication rate limit exceeded — wait before retrying")
+    if status != _AUTH_STATUS_OK:
+        raise AuthenticationFailedError(f"Auth challenge failed with status 0x{status:02x}")
+
+    if len(data) < 19:  # 2 echo + 1 status + 16 nonce
+        raise InvalidResponseError(f"Auth challenge response too short for nonce: {len(data)} bytes (need 19)")
+
+    return data[3:19]
+
+
+def parse_authenticate_success(data: bytes) -> bytes:
+    """Parse step-2 AUTHENTICATE response and return the server proof.
+
+    Expected format: [0x0050][status:1][server_response:16]
+
+    Args:
+        data: Raw BLE notification from device
+
+    Returns:
+        16-byte server response (proof that device also knows the key)
+
+    Raises:
+        AuthenticationError: If device rejects the challenge response
+        InvalidResponseError: If response format is invalid
+    """
+    if len(data) < 2:
+        raise InvalidResponseError(f"Auth success response too short: {len(data)} bytes")
+
+    echo = unpack_command_code(data)
+    if echo not in (0x0050, 0x0050 | RESPONSE_HIGH_BIT_FLAG):
+        raise InvalidResponseError(f"Auth success echo mismatch: got 0x{echo:04x}")
+
+    if len(data) < 3:
+        raise InvalidResponseError("Auth success response missing status byte")
+
+    status = data[2]
+    if status == _AUTH_STATUS_WRONG_KEY:
+        raise AuthenticationFailedError("Authentication failed: wrong encryption key")
+    if status == _AUTH_STATUS_RATE_LIMITED:
+        raise AuthenticationFailedError("Authentication rate limit exceeded — wait before retrying")
+    if status != _AUTH_STATUS_OK:
+        raise AuthenticationFailedError(f"Authentication failed with status 0x{status:02x}")
+
+    if len(data) < 19:  # 2 echo + 1 status + 16 server_response
+        raise InvalidResponseError(f"Auth success response too short for server proof: {len(data)} bytes (need 19)")
+
+    return data[3:19]
 
 
 def parse_firmware_version(data: bytes) -> FirmwareVersion:

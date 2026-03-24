@@ -8,6 +8,14 @@ from typing import TYPE_CHECKING
 from epaper_dithering import ColorScheme, DitherMode, dither_image
 from PIL import Image
 
+from .crypto import (
+    compute_challenge_response,
+    decrypt_response,
+    derive_session_id,
+    derive_session_key,
+    encrypt_command,
+    generate_client_nonce,
+)
 from .display_palettes import PANELS_4GRAY, get_palette_for_display
 from .encoding import (
     compress_image_data,
@@ -15,7 +23,7 @@ from .encoding import (
     encode_image,
     fit_image,
 )
-from .exceptions import BLETimeoutError, ProtocolError
+from .exceptions import AuthenticationRequiredError, BLETimeoutError, ProtocolError
 from .models.capabilities import DeviceCapabilities
 from .models.config import GlobalConfig
 from .models.enums import BoardManufacturer, FitMode, RefreshMode, Rotation
@@ -25,6 +33,8 @@ from .protocol import (
     CHUNK_SIZE,
     MAX_COMPRESSED_SIZE,
     CommandCode,
+    build_authenticate_step1,
+    build_authenticate_step2,
     build_direct_write_data_command,
     build_direct_write_end_command,
     build_direct_write_start_compressed,
@@ -39,7 +49,13 @@ from .protocol import (
     serialize_config,
     validate_ack_response,
 )
-from .protocol.responses import check_response_type, strip_command_echo, unpack_command_code
+from .protocol.responses import (
+    check_response_type,
+    parse_authenticate_challenge,
+    parse_authenticate_success,
+    strip_command_echo,
+    unpack_command_code,
+)
 from .transport import BLEConnection
 
 if TYPE_CHECKING:
@@ -200,6 +216,7 @@ class OpenDisplayDevice:
         max_attempts: int = 4,
         use_services_cache: bool = True,
         use_measured_palettes: bool = True,
+        encryption_key: bytes | None = None,
     ):
         """Initialize OpenDisplay device.
 
@@ -214,16 +231,10 @@ class OpenDisplayDevice:
             max_attempts: Maximum connection attempts for bleak-retry-connector (default: 4)
             use_services_cache: Enable GATT service caching for faster reconnections (default: True)
             use_measured_palettes: Use measured color palettes when available (default: True)
+            encryption_key: 16-byte AES-128 master key for encrypted devices (optional).
 
         Raises:
             ValueError: If neither or both mac_address and device_name provided
-
-        Examples:
-            # Using MAC address (existing behavior)
-            device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
-
-            # Using device name (new feature)
-            device = OpenDisplayDevice(device_name="OpenDisplay-A123")
         """
         # Validation: exactly one of mac_address or device_name must be provided
         if mac_address and device_name:
@@ -248,6 +259,12 @@ class OpenDisplayDevice:
         self._config = config
         self._capabilities = capabilities
         self._fw_version: FirmwareVersion | None = None
+
+        # Encryption session state (populated by authenticate())
+        self._encryption_key = encryption_key
+        self._session_key: bytes | None = None
+        self._session_id: bytes | None = None
+        self._nonce_counter: int = 0
 
     async def __aenter__(self) -> OpenDisplayDevice:
         """Connect and optionally interrogate device."""
@@ -288,6 +305,10 @@ class OpenDisplayDevice:
 
         await self._conn.connect()
 
+        # Authenticate before any other commands if key provided
+        if self._encryption_key is not None:
+            await self.authenticate(self._encryption_key)
+
         # Auto-interrogate if no config or capabilities provided
         if self._config is None and self._capabilities is None:
             _LOGGER.info("No config provided, auto-interrogating device")
@@ -315,6 +336,69 @@ class OpenDisplayDevice:
         if self._connection is None:
             raise RuntimeError("Device not connected")
         return self._connection
+
+    async def _write(self, data: bytes) -> None:
+        """Write a command, encrypting it if an active session exists."""
+        if self._session_key is not None and self._session_id is not None:
+            cmd = data[:2]
+            payload = data[2:]
+            self._nonce_counter += 1
+            encrypted = encrypt_command(self._session_key, self._session_id, self._nonce_counter, cmd, payload)
+            await self._conn.write_command(encrypted)
+        else:
+            await self._conn.write_command(data)
+
+    async def _read(self, timeout: float) -> bytes:
+        """Read a response, decrypting it if an active session exists.
+
+        Raises:
+            AuthenticationRequiredError: If device returns 0xFE (encryption required, no active session)
+        """
+        raw = await self._conn.read_response(timeout=timeout)
+        if self._session_key is not None:
+            cmd_code, payload = decrypt_response(self._session_key, raw)
+            return cmd_code.to_bytes(2, "big") + payload
+        # Firmware returns [cmd_high, cmd_low, 0xFE] (3 bytes) when a command
+        # requires authentication but no session is active.
+        if len(raw) == 3 and raw[2] == 0xFE:
+            raise AuthenticationRequiredError(
+                "Device requires an encryption key — pass encryption_key=bytes.fromhex('...') to OpenDisplayDevice"
+            )
+        return raw
+
+    async def authenticate(self, key: bytes) -> None:
+        """Perform two-step challenge-response authentication with the device.
+
+        After successful authentication, all subsequent commands and responses
+        are transparently encrypted/decrypted via _write() and _read().
+
+        Args:
+            key: 16-byte AES-128 master key
+
+        Raises:
+            AuthenticationFailedError: If the device rejects the key or is rate-limited
+            InvalidResponseError: If device sends malformed response
+        """
+        _LOGGER.debug("Authenticating with device %s", self.mac_address)
+
+        # Step 1: Request server nonce
+        await self._conn.write_command(build_authenticate_step1())
+        challenge_response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
+        server_nonce = parse_authenticate_challenge(challenge_response)
+
+        # Step 2: Prove key knowledge, receive server proof
+        client_nonce = generate_client_nonce()
+        challenge = compute_challenge_response(key, server_nonce, client_nonce)
+        await self._conn.write_command(build_authenticate_step2(client_nonce, challenge))
+        success_response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
+        parse_authenticate_success(success_response)  # raises on wrong key / error
+
+        # Derive session key and ID
+        self._session_key = derive_session_key(key, client_nonce, server_nonce)
+        self._session_id = derive_session_id(self._session_key, client_nonce, server_nonce)
+        self._nonce_counter = 0
+
+        _LOGGER.info("Authentication successful, session established")
 
     def _ensure_capabilities(self) -> DeviceCapabilities:
         """Ensure device capabilities are available.
@@ -426,10 +510,10 @@ class OpenDisplayDevice:
 
         # Send read config command
         cmd = build_read_config_command()
-        await self._conn.write_command(cmd)
+        await self._write(cmd)
 
         # Read first chunk
-        response = await self._conn.read_response(timeout=self.TIMEOUT_FIRST_CHUNK)
+        response = await self._read(self.TIMEOUT_FIRST_CHUNK)
         chunk_data = strip_command_echo(response, CommandCode.READ_CONFIG)
 
         # Parse first chunk header
@@ -440,7 +524,7 @@ class OpenDisplayDevice:
 
         # Read remaining chunks
         while len(tlv_data) < total_length:
-            next_response = await self._conn.read_response(timeout=self.TIMEOUT_CHUNK)
+            next_response = await self._read(self.TIMEOUT_CHUNK)
             next_chunk_data = strip_command_echo(next_response, CommandCode.READ_CONFIG)
 
             # Skip chunk number field (2 bytes) and append data
@@ -515,7 +599,7 @@ class OpenDisplayDevice:
 
         # Build and send reboot command
         cmd = build_reboot_command()
-        await self._conn.write_command(cmd)
+        await self._write(cmd)
 
         # Device will reset immediately - no ACK expected
         _LOGGER.info("Reboot command sent to %s - device will reset (connection will drop)", self.mac_address)
@@ -558,10 +642,10 @@ class OpenDisplayDevice:
             led_instance=led_instance,
             flash_config=flash_config,
         )
-        await self._conn.write_command(cmd)
+        await self._write(cmd)
 
         response_timeout = self.TIMEOUT_REFRESH if timeout is None else timeout
-        response = await self._conn.read_response(timeout=response_timeout)
+        response = await self._read(response_timeout)
 
         # Firmware LED errors use 0xFF73 + error code payload.
         if len(response) >= 2 and unpack_command_code(response) == 0xFF73:
@@ -587,20 +671,6 @@ class OpenDisplayDevice:
             ValueError: If config serialization fails or exceeds size limit
             BLEConnectionError: If write fails
             ProtocolError: If device returns error response
-
-        Example:
-            async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF") as device:
-                # Read current config
-                config = device.config
-
-                # Modify config
-                config.displays[0].rotation = 180
-
-                # Write back to device
-                await device.write_config(config)
-
-                # Reboot to apply changes
-                await device.reboot()
         """
         _LOGGER.debug("Writing config to device %s", self.mac_address)
 
@@ -632,19 +702,19 @@ class OpenDisplayDevice:
 
         # Send first command
         _LOGGER.debug("Sending first config chunk (%d bytes)", len(first_cmd))
-        await self._conn.write_command(first_cmd)
+        await self._write(first_cmd)
 
         # Wait for ACK
-        response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
+        response = await self._read(self.TIMEOUT_ACK)
         validate_ack_response(response, CommandCode.WRITE_CONFIG)
 
         # Send remaining chunks if needed
         for i, chunk_cmd in enumerate(chunk_cmds, start=1):
             _LOGGER.debug("Sending config chunk %d/%d (%d bytes)", i, len(chunk_cmds), len(chunk_cmd))
-            await self._conn.write_command(chunk_cmd)
+            await self._write(chunk_cmd)
 
             # Wait for ACK after each chunk
-            response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
+            response = await self._read(self.TIMEOUT_ACK)
             validate_ack_response(response, CommandCode.WRITE_CONFIG_CHUNK)
 
         _LOGGER.info("Config written successfully to %s", self.mac_address)
@@ -721,22 +791,7 @@ class OpenDisplayDevice:
         fit: FitMode = FitMode.STRETCH,
         rotate: Rotation = Rotation.ROTATE_0,
     ) -> tuple[bytes, bytes | None, Image.Image]:
-        """Prepare image for upload.
-
-        Handles optional source rotation, fitting, dithering, encoding,
-        and optional compression.
-
-        Args:
-            image: PIL Image to prepare
-            dither_mode: Dithering algorithm to use
-            compress: Whether to compress the image data
-            tone_compression: Dynamic range compression ("auto", or 0.0-1.0)
-            fit: How to map the image to display dimensions
-            rotate: Source image rotation enum (0/90/180/270)
-
-        Returns:
-            Tuple of (uncompressed_data, compressed_data or None, processed_image)
-        """
+        """Prepare image for upload. Internal wrapper for the module-level prepare_image()."""
         panel_ic_type = self._config.displays[0].panel_ic_type if self._config and self._config.displays else None
         return prepare_image(
             image,
@@ -780,15 +835,8 @@ class OpenDisplayDevice:
             refresh_mode: Display refresh mode (default: FULL)
             dither_mode: Dithering algorithm (default: BURKES)
             compress: Enable zlib compression (default: True)
-            tone_compression: Dynamic range compression (default: "auto").
-                "auto" = analyze image and fit to display range.
-                0.0 = disabled, 0.0-1.0 = fixed linear compression.
-                Only applies to measured palettes.
+            tone_compression: Dynamic range compression ("auto" or 0.0–1.0, default: "auto").
             fit: How to map the image to display dimensions (default: CONTAIN).
-                STRETCH - distort to fill exact dimensions
-                CONTAIN - scale to fit, pad with white
-                COVER - scale to cover, crop overflow
-                CROP - center-crop at native resolution, pad if smaller
             rotate: Source image rotation enum, applied before fit/encoding.
 
         Raises:
@@ -913,10 +961,10 @@ class OpenDisplayDevice:
             start_cmd = build_direct_write_start_uncompressed()
             remaining_compressed = None
 
-        await self._conn.write_command(start_cmd)
+        await self._write(start_cmd)
 
         # 2. Wait for START ACK (identical for both protocols)
-        response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
+        response = await self._read(self.TIMEOUT_ACK)
         validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
 
         # 3. Send data chunks
@@ -932,10 +980,10 @@ class OpenDisplayDevice:
         # 4. Send END command if needed (identical for both protocols)
         if not auto_completed:
             end_cmd = build_direct_write_end_command(refresh_mode.value)
-            await self._conn.write_command(end_cmd)
+            await self._write(end_cmd)
 
             # Wait for END ACK (90s timeout for display refresh)
-            response = await self._conn.read_response(timeout=self.TIMEOUT_REFRESH)
+            response = await self._read(self.TIMEOUT_REFRESH)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
 
     async def _send_data_chunks(self, image_data: bytes) -> bool:
@@ -968,14 +1016,14 @@ class OpenDisplayDevice:
 
             # Send DATA command
             data_cmd = build_direct_write_data_command(chunk_data)
-            await self._conn.write_command(data_cmd)
+            await self._write(data_cmd)
 
             bytes_sent += len(chunk_data)
             chunks_sent += 1
 
             # Wait for response after every chunk (PIPELINE_CHUNKS=1)
             try:
-                response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
+                response = await self._read(self.TIMEOUT_ACK)
             except BLETimeoutError:
                 # Timeout on response - firmware might be doing display refresh
                 # This happens when the chunk completes directWriteTotalBytes
@@ -986,7 +1034,7 @@ class OpenDisplayDevice:
                 )
 
                 # Wait up to 90 seconds for the END response
-                response = await self._conn.read_response(timeout=self.TIMEOUT_REFRESH)
+                response = await self._read(self.TIMEOUT_REFRESH)
 
             # Check what response we got (firmware can send 0x0072 on ANY chunk, not just last!)
             command, _ = check_response_type(response)

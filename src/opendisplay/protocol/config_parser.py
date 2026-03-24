@@ -14,6 +14,7 @@ from ..models.config import (
     LedConfig,
     ManufacturerData,
     PowerOption,
+    SecurityConfig,
     SensorData,
     SystemConfig,
     WifiConfig,
@@ -32,9 +33,11 @@ PACKET_TYPE_SENSOR = 0x23
 PACKET_TYPE_DATABUS = 0x24
 PACKET_TYPE_BINARY_INPUT = 0x25
 PACKET_TYPE_WIFI_CONFIG = 0x26
+PACKET_TYPE_SECURITY_CONFIG = 0x27
 
 WIFI_CONFIG_SIZE = 160
 WIFI_CONFIG_LEGACY_SIZE = 65
+SECURITY_CONFIG_SIZE = 64
 
 
 def parse_config_response(raw_data: bytes) -> GlobalConfig:
@@ -153,6 +156,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     data_buses = []
     binary_inputs = []
     wifi_config = None
+    security_config = None
 
     for (packet_type, packet_number), packet_data in packets.items():
         if packet_type == PACKET_TYPE_SYSTEM:
@@ -173,16 +177,19 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
             binary_inputs.append(_parse_binary_inputs(packet_data))
         elif packet_type == PACKET_TYPE_WIFI_CONFIG:
             wifi_config = _parse_wifi_config(packet_data)
+        elif packet_type == PACKET_TYPE_SECURITY_CONFIG:
+            security_config = SecurityConfig.from_bytes(packet_data)
 
-    missing_required = []
-    if system is None:
-        missing_required.append("system")
-    if manufacturer is None:
-        missing_required.append("manufacturer")
-    if power is None:
-        missing_required.append("power")
-    if not displays:
-        missing_required.append("display")
+    missing_required = [
+        name
+        for name, present in [
+            ("system", system),
+            ("manufacturer", manufacturer),
+            ("power", power),
+            ("display", displays),
+        ]
+        if not present
+    ]
     if missing_required:
         raise ConfigParseError("Missing required packet(s): " + ", ".join(missing_required))
 
@@ -200,6 +207,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         data_buses=data_buses,
         binary_inputs=binary_inputs,
         wifi_config=wifi_config,
+        security_config=security_config,
         version=version,  # From firmware wrapper
         minor_version=1,  # Not stored in device (only single version byte exists)
         loaded=True,
@@ -225,6 +233,7 @@ def _get_packet_size(packet_type: int) -> int | None:
         PACKET_TYPE_DATABUS: 30,  # Fixed: was 28
         PACKET_TYPE_BINARY_INPUT: 30,  # Fixed: was 29
         PACKET_TYPE_WIFI_CONFIG: 160,
+        PACKET_TYPE_SECURITY_CONFIG: SECURITY_CONFIG_SIZE,
     }
     return sizes.get(packet_type)
 
