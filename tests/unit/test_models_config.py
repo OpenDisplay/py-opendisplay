@@ -103,3 +103,24 @@ class TestManufacturerDataBoardTyping:
         mfg = self._mfg(BoardManufacturer.SEEED, 99)
         assert mfg.board_type_enum == 99
         assert mfg.board_type_name is None
+
+
+class TestDisplayConfigTransmissionModes:
+    """Test DisplayConfig.supports_zip from transmission_modes bitfield."""
+
+    def _display(self, transmission_modes: int) -> DisplayConfig:
+        d = _display_config(active_width_mm=120, active_height_mm=90)
+        d.transmission_modes = transmission_modes
+        return d
+
+    def test_supports_zip_true_when_bit_set(self):
+        assert self._display(transmission_modes=0x02).supports_zip is True
+
+    def test_supports_zip_false_when_no_bits_set(self):
+        assert self._display(transmission_modes=0x00).supports_zip is False
+
+    def test_supports_zip_false_when_only_raw_bit_set(self):
+        assert self._display(transmission_modes=0x01).supports_zip is False
+
+    def test_supports_zip_true_with_multiple_bits_set(self):
+        assert self._display(transmission_modes=0x03).supports_zip is True

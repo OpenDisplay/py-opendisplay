@@ -809,13 +809,16 @@ class OpenDisplayDevice:
             self.color_scheme.name,
         )
 
-        # Prepare image (fit, dither, encode, compress)
-        image_data, compressed_data, processed_image = self._prepare_image(
-            image, dither_mode, compress, tone_compression, fit, rotate
+        # Determine compression support before preparing to avoid wasted CPU
+        supports_compression = (
+            self._config.displays[0].supports_zip if (self._config and self._config.displays) else True
         )
 
-        # Choose protocol based on compression and size
-        if compress and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
+        # Prepare image (fit, dither, encode, compress)
+        image_data, compressed_data, processed_image = self._prepare_image(
+            image, dither_mode, compress and supports_compression, tone_compression, fit, rotate
+        )
+        if compress and supports_compression and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
             _LOGGER.info("Using compressed upload protocol (size: %d bytes)", len(compressed_data))
             await self._execute_upload(
                 image_data,
@@ -825,10 +828,12 @@ class OpenDisplayDevice:
                 uncompressed_size=len(image_data),
             )
         else:
-            if compress and compressed_data:
+            if compress and not supports_compression:
+                _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
+            elif compress and compressed_data:
                 _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
             else:
-                _LOGGER.info("Compression disabled, using uncompressed protocol")
+                _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
             await self._execute_upload(image_data, refresh_mode, use_compression=False)
 
         _LOGGER.info("Image upload complete")
@@ -857,7 +862,10 @@ class OpenDisplayDevice:
         """
         image_data, compressed_data, _ = prepared_data
 
-        if compress and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
+        supports_compression = (
+            self._config.displays[0].supports_zip if (self._config and self._config.displays) else True
+        )
+        if compress and supports_compression and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
             _LOGGER.info("Using compressed upload protocol (size: %d bytes)", len(compressed_data))
             await self._execute_upload(
                 image_data,
@@ -867,7 +875,9 @@ class OpenDisplayDevice:
                 uncompressed_size=len(image_data),
             )
         else:
-            if compress and compressed_data:
+            if compress and not supports_compression:
+                _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
+            elif compress and compressed_data:
                 _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
             else:
                 _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
