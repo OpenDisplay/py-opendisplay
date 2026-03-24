@@ -809,14 +809,14 @@ class OpenDisplayDevice:
             self.color_scheme.name,
         )
 
-        # Prepare image (fit, dither, encode, compress)
-        image_data, compressed_data, processed_image = self._prepare_image(
-            image, dither_mode, compress, tone_compression, fit, rotate
-        )
-
-        # Choose protocol based on compression and size
+        # Determine compression support before preparing to avoid wasted CPU
         supports_compression = (
             self._config.displays[0].supports_zip if (self._config and self._config.displays) else True
+        )
+
+        # Prepare image (fit, dither, encode, compress)
+        image_data, compressed_data, processed_image = self._prepare_image(
+            image, dither_mode, compress and supports_compression, tone_compression, fit, rotate
         )
         if compress and supports_compression and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
             _LOGGER.info("Using compressed upload protocol (size: %d bytes)", len(compressed_data))
