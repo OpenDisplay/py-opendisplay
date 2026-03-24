@@ -9,6 +9,9 @@ from .battery import voltage_to_percent
 from .device import OpenDisplayDevice, prepare_image
 from .discovery import discover_devices
 from .exceptions import (
+    AuthenticationError,
+    AuthenticationFailedError,
+    AuthenticationRequiredError,
     BLEConnectionError,
     BLETimeoutError,
     ConfigParseError,
@@ -34,6 +37,7 @@ from .models.config import (
     LedConfig,
     ManufacturerData,
     PowerOption,
+    SecurityConfig,
     SensorData,
     SystemConfig,
     WifiConfig,
@@ -64,6 +68,9 @@ __all__ = [
     "prepare_image",
     # Exceptions
     "OpenDisplayError",
+    "AuthenticationError",
+    "AuthenticationFailedError",
+    "AuthenticationRequiredError",
     "BLEConnectionError",
     "BLETimeoutError",
     "ProtocolError",
@@ -82,6 +89,7 @@ __all__ = [
     "SensorData",
     "DataBus",
     "BinaryInputs",
+    "SecurityConfig",
     "WifiConfig",
     # Models - Other
     "DeviceCapabilities",

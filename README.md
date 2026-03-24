@@ -293,6 +293,53 @@ async with OpenDisplayDevice(mac_address="BB:CC:DD:EE:FF:00") as device:
 `import_config_json()` raises `ValueError` if required packets (`system`, `manufacturer`, `power`) or all display packets are missing.
 JSON packet id `38` (`wifi_config` / TLV `0x26`) is supported for import/export.
 
+### Encryption
+
+Devices with firmware encryption enabled require authentication before accepting any commands (except `read_firmware_version`). Pass the 16-byte AES-128 master key to the constructor — authentication and session setup happen automatically before the first interrogation.
+
+```python
+from opendisplay import OpenDisplayDevice
+
+key = bytes.fromhex("0102030405060708090a0b0c0d0e0f10")
+
+async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", encryption_key=key) as device:
+    await device.upload_image(image)
+```
+
+All commands are transparently encrypted after authentication. Devices without encryption enabled work exactly as before — the `encryption_key` parameter is ignored if the device does not require it.
+
+#### Getting the key
+
+The encryption key is set when configuring the device via the [Open Display Config Builder](https://opendisplay.org/firmware/config/) web tool. It can be read from the device config once authenticated:
+
+```python
+async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", encryption_key=key) as device:
+    sc = device.config.security_config
+    print(sc.encryption_key.hex())         # 32-char hex string
+    print(sc.encryption_enabled_flag)      # True
+    print(sc.rewrite_allowed)              # True if WRITE_CONFIG works without auth
+    print(sc.session_timeout_seconds)      # How long before re-authentication is needed
+```
+
+#### Error handling
+
+```python
+from opendisplay import AuthenticationRequiredError, AuthenticationFailedError
+
+try:
+    async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF") as device:
+        pass
+except AuthenticationRequiredError:
+    # Device has encryption enabled but no key was provided
+    # (or the session expired and re-authentication is needed)
+    print("This device requires an encryption key")
+except AuthenticationFailedError:
+    # A key was provided but the device rejected it (wrong key or rate-limited)
+    print("Wrong encryption key")
+```
+
+Both exceptions are subclasses of `AuthenticationError`, which can be used as a catch-all when the distinction doesn't matter.
+
 ### Rebooting the Device
 
 Remotely reboot the device (useful after configuration changes or troubleshooting):

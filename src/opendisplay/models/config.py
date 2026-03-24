@@ -613,6 +613,47 @@ class WifiConfig:
 
 
 @dataclass
+class SecurityConfig:
+    """Security and encryption configuration (TLV packet type 0x27).
+
+    Size: 64 bytes (firmware fixed layout, excluding packet header)
+    """
+
+    encryption_enabled: int  # uint8: 0=disabled, 1=enabled
+    encryption_key: bytes  # 16-byte AES-128 master key (all-zero means disabled)
+    session_timeout_seconds: int  # uint16 LE: 0 = no timeout
+    flags: int  # uint8 bitfield (see flag properties below)
+    reset_pin: int  # uint8: pin number for hardware reset
+    reserved: bytes  # 43 bytes
+
+    SIZE: ClassVar[int] = 64
+
+    @property
+    def encryption_enabled_flag(self) -> bool:
+        """True if encryption is both enabled and key is non-zero."""
+        return self.encryption_enabled != 0 and any(self.encryption_key)
+
+    @property
+    def rewrite_allowed(self) -> bool:
+        """Bit 0: allow unauthenticated WRITE_CONFIG even when encryption is on."""
+        return bool(self.flags & 0x01)
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> SecurityConfig:
+        """Parse from TLV packet data."""
+        if len(data) < cls.SIZE:
+            raise ValueError(f"Invalid SecurityConfig size: {len(data)} < {cls.SIZE}")
+        return cls(
+            encryption_enabled=data[0],
+            encryption_key=bytes(data[1:17]),
+            session_timeout_seconds=int.from_bytes(data[17:19], "little"),
+            flags=data[19],
+            reset_pin=data[20],
+            reserved=bytes(data[21:64]),
+        )
+
+
+@dataclass
 class GlobalConfig:
     """Complete device configuration parsed from TLV data.
 
@@ -631,6 +672,7 @@ class GlobalConfig:
     data_buses: list[DataBus] = field(default_factory=list)
     binary_inputs: list[BinaryInputs] = field(default_factory=list)
     wifi_config: WifiConfig | None = None
+    security_config: SecurityConfig | None = None
 
     # Metadata
     version: int = 0

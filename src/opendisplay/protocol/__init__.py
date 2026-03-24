@@ -7,6 +7,8 @@ from .commands import (
     PIPELINE_CHUNKS,
     SERVICE_UUID,
     CommandCode,
+    build_authenticate_step1,
+    build_authenticate_step2,
     build_direct_write_data_command,
     build_direct_write_end_command,
     build_direct_write_start_compressed,
@@ -29,6 +31,8 @@ from .responses import (
 
 __all__ = [
     "CommandCode",
+    "build_authenticate_step1",
+    "build_authenticate_step2",
     "SERVICE_UUID",
     "MANUFACTURER_ID",
     "CHUNK_SIZE",
