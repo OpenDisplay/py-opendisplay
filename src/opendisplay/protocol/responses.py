@@ -89,6 +89,41 @@ def validate_ack_response(data: bytes, expected_command: int) -> None:
         raise InvalidResponseError(f"ACK mismatch: expected 0x{expected_command:04x}, got 0x{response_code:04x}")
 
 
+def _parse_auth_response(data: bytes, step_name: str) -> tuple[int, bytes]:
+    """Validate common structure of an AUTHENTICATE response.
+
+    Both authentication steps (challenge and success) share the same wire
+    format: [0x0050 echo][status:1][16-byte payload].  This helper handles
+    all shared validation so the two public functions only need to inspect
+    the status byte for step-specific error codes.
+
+    Args:
+        data: Raw BLE notification from device
+        step_name: Human-readable step name used in error messages
+            (e.g. "challenge", "success")
+
+    Returns:
+        Tuple of (status_byte, 16-byte payload)
+
+    Raises:
+        InvalidResponseError: If response format is invalid
+    """
+    if len(data) < 2:
+        raise InvalidResponseError(f"Auth {step_name} response too short: {len(data)} bytes")
+
+    echo = unpack_command_code(data)
+    expected = CommandCode.AUTHENTICATE
+    if echo not in (expected, expected | RESPONSE_HIGH_BIT_FLAG):
+        raise InvalidResponseError(f"Auth {step_name} echo mismatch: got 0x{echo:04x}")
+
+    if len(data) < 3:
+        raise InvalidResponseError(f"Auth {step_name} response missing status byte")
+
+    # Payload may be absent on some firmware versions (e.g. step-2 success sends only 3 bytes).
+    # Callers that need the payload (e.g. parse_authenticate_challenge) validate the length themselves.
+    return data[2], data[3:19]
+
+
 def parse_authenticate_challenge(data: bytes) -> bytes:
     """Parse step-1 AUTHENTICATE response and return the server nonce.
 
@@ -104,28 +139,16 @@ def parse_authenticate_challenge(data: bytes) -> bytes:
         AuthenticationError: If device returns an error status
         InvalidResponseError: If response format is invalid
     """
-    if len(data) < 2:
-        raise InvalidResponseError(f"Auth challenge response too short: {len(data)} bytes")
-
-    echo = unpack_command_code(data)
-    if echo not in (0x0050, 0x0050 | RESPONSE_HIGH_BIT_FLAG):
-        raise InvalidResponseError(f"Auth challenge echo mismatch: got 0x{echo:04x}")
-
-    if len(data) < 3:
-        raise InvalidResponseError("Auth challenge response missing status byte")
-
-    status = data[2]
+    status, payload = _parse_auth_response(data, "challenge")
     if status == _AUTH_STATUS_ENCRYPTION_NOT_CONFIGURED:
         raise AuthenticationRequiredError("Device does not have encryption configured")
     if status == _AUTH_STATUS_RATE_LIMITED:
         raise AuthenticationFailedError("Authentication rate limit exceeded — wait before retrying")
     if status != _AUTH_STATUS_OK:
         raise AuthenticationFailedError(f"Auth challenge failed with status 0x{status:02x}")
-
-    if len(data) < 19:  # 2 echo + 1 status + 16 nonce
-        raise InvalidResponseError(f"Auth challenge response too short for nonce: {len(data)} bytes (need 19)")
-
-    return data[3:19]
+    if len(payload) < 16:
+        raise InvalidResponseError(f"Auth challenge payload too short: {len(data)} bytes (need 19)")
+    return payload
 
 
 def parse_authenticate_success(data: bytes) -> bytes:
@@ -143,28 +166,14 @@ def parse_authenticate_success(data: bytes) -> bytes:
         AuthenticationError: If device rejects the challenge response
         InvalidResponseError: If response format is invalid
     """
-    if len(data) < 2:
-        raise InvalidResponseError(f"Auth success response too short: {len(data)} bytes")
-
-    echo = unpack_command_code(data)
-    if echo not in (0x0050, 0x0050 | RESPONSE_HIGH_BIT_FLAG):
-        raise InvalidResponseError(f"Auth success echo mismatch: got 0x{echo:04x}")
-
-    if len(data) < 3:
-        raise InvalidResponseError("Auth success response missing status byte")
-
-    status = data[2]
+    status, payload = _parse_auth_response(data, "success")
     if status == _AUTH_STATUS_WRONG_KEY:
         raise AuthenticationFailedError("Authentication failed: wrong encryption key")
     if status == _AUTH_STATUS_RATE_LIMITED:
         raise AuthenticationFailedError("Authentication rate limit exceeded — wait before retrying")
     if status != _AUTH_STATUS_OK:
         raise AuthenticationFailedError(f"Authentication failed with status 0x{status:02x}")
-
-    if len(data) < 19:  # 2 echo + 1 status + 16 server_response
-        raise InvalidResponseError(f"Auth success response too short for server proof: {len(data)} bytes (need 19)")
-
-    return data[3:19]
+    return payload
 
 
 def parse_firmware_version(data: bytes) -> FirmwareVersion:

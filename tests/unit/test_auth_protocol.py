@@ -139,10 +139,10 @@ class TestParseAuthenticateSuccess:
         with pytest.raises(AuthenticationFailedError):
             parse_authenticate_success(data)
 
-    def test_too_short_raises_invalid(self):
-        """Response shorter than 19 bytes raises InvalidResponseError."""
-        with pytest.raises(InvalidResponseError):
-            parse_authenticate_success(b"\x00\x50\x00" + b"\x00" * 5)
+    def test_short_ok_response_is_accepted(self):
+        """Step-2 success allows a short response (real firmware sends only echo+status)."""
+        # Real device sends [echo:2][status:1] with no trailing payload on success.
+        parse_authenticate_success(b"\x00\x50\x00")
 
     def test_empty_raises_invalid(self):
         """Empty response raises InvalidResponseError."""

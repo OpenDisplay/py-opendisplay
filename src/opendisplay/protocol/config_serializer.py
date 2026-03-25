@@ -5,6 +5,21 @@ from __future__ import annotations
 import struct
 from typing import TYPE_CHECKING
 
+from .config_parser import (
+    PACKET_TYPE_BINARY_INPUT,
+    PACKET_TYPE_DATABUS,
+    PACKET_TYPE_DISPLAY,
+    PACKET_TYPE_LED,
+    PACKET_TYPE_MANUFACTURER,
+    PACKET_TYPE_POWER,
+    PACKET_TYPE_SENSOR,
+    PACKET_TYPE_SYSTEM,
+    PACKET_TYPE_WIFI_CONFIG,
+)
+
+# PACKET_TYPE_SECURITY_CONFIG is intentionally not imported here — the serializer
+# does not handle SecurityConfig (it is read-only via this library).
+
 if TYPE_CHECKING:
     from ..models.config import (
         BinaryInputs,
@@ -18,17 +33,6 @@ if TYPE_CHECKING:
         SystemConfig,
         WifiConfig,
     )
-
-# Packet type IDs (same as config_parser.py)
-PACKET_TYPE_SYSTEM = 0x01
-PACKET_TYPE_MANUFACTURER = 0x02
-PACKET_TYPE_POWER = 0x04
-PACKET_TYPE_DISPLAY = 0x20
-PACKET_TYPE_LED = 0x21
-PACKET_TYPE_SENSOR = 0x23
-PACKET_TYPE_DATABUS = 0x24
-PACKET_TYPE_BINARY_INPUT = 0x25
-PACKET_TYPE_WIFI_CONFIG = 0x26
 
 
 def calculate_config_crc(data: bytes) -> int:
@@ -469,6 +473,10 @@ def serialize_config(config: GlobalConfig) -> bytes:
     if config.wifi_config is not None:
         packet_data += bytes([0, PACKET_TYPE_WIFI_CONFIG])
         packet_data += serialize_wifi_config(config.wifi_config)
+
+    # SecurityConfig (0x27) is intentionally NOT serialized here.
+    # It is read-only via this library: writing it could accidentally disable
+    # device encryption if the key or flags are corrupted in transit.
 
     # Validate size (max 4096 bytes including wrapper and CRC)
     total_size = len(packet_data) + 2  # +2 for CRC

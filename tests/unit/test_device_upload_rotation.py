@@ -7,7 +7,7 @@ from epaper_dithering import ColorScheme, DitherMode
 from PIL import Image
 
 from opendisplay import prepare_image
-from opendisplay.device import _rotate_source_image
+from opendisplay.encoding.pipeline import _rotate_source_image
 from opendisplay.models.config import (
     DisplayConfig,
     GlobalConfig,
@@ -78,15 +78,15 @@ def _config(width: int = 2, height: int = 2) -> GlobalConfig:
 
 def _stub_prepare_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "opendisplay.device.get_palette_for_display",
+        "opendisplay.encoding.pipeline.get_palette_for_display",
         lambda panel_ic_type, color_scheme, use_measured_palettes: None,
     )
     monkeypatch.setattr(
-        "opendisplay.device.dither_image",
+        "opendisplay.encoding.pipeline.dither_image",
         lambda image, palette, mode, tone_compression: image.convert("P"),
     )
     monkeypatch.setattr(
-        "opendisplay.device.encode_image",
+        "opendisplay.encoding.pipeline.encode_image",
         lambda image, color_scheme: b"\x01\x02",
     )
 
@@ -134,7 +134,7 @@ def test_prepare_image_rotates_before_fit(monkeypatch: pytest.MonkeyPatch) -> No
         seen["size_before_fit"] = image.size
         return image.resize(target_size)
 
-    monkeypatch.setattr("opendisplay.device.fit_image", fake_fit_image)
+    monkeypatch.setattr("opendisplay.encoding.pipeline.fit_image", fake_fit_image)
 
     image = Image.new("RGB", (4, 2), (255, 255, 255))
     encoded, compressed, processed = prepare_image(
@@ -164,7 +164,7 @@ def test_prepare_image_without_rotation_preserves_orientation_before_fit(
         seen["size_before_fit"] = image.size
         return image.resize(target_size)
 
-    monkeypatch.setattr("opendisplay.device.fit_image", fake_fit_image)
+    monkeypatch.setattr("opendisplay.encoding.pipeline.fit_image", fake_fit_image)
 
     image = Image.new("RGB", (4, 2), (255, 255, 255))
     prepare_image(
