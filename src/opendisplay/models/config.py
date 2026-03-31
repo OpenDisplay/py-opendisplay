@@ -19,11 +19,13 @@ from .enums import (
     DIYBoardType,
     ICType,
     LedType,
+    OpenDisplayBoardType,
     PowerMode,
     Rotation,
     SeeedBoardType,
     SensorType,
     SolumBoardType,
+    TouchIcType,
     WaveshareBoardType,
     WifiEncryption,
     get_board_type_name,
@@ -42,7 +44,9 @@ class SystemConfig:
     communication_modes: int  # uint8 bitfield
     device_flags: int  # uint8 bitfield
     pwr_pin: int  # uint8 (0xFF = none)
-    reserved: bytes  # 17 bytes
+    reserved: bytes  # 15 bytes
+    pwr_pin_2: int = 0xFF  # uint8 (0xFF = firmware default)
+    pwr_pin_3: int = 0xFF  # uint8 (0xFF = firmware default)
 
     @property
     def has_pwr_pin(self) -> bool:
@@ -80,7 +84,9 @@ class SystemConfig:
             communication_modes=data[2],
             device_flags=data[3],
             pwr_pin=data[4],
-            reserved=data[5:22],
+            reserved=data[5:20],
+            pwr_pin_2=data[20],
+            pwr_pin_3=data[21],
         )
 
 
@@ -110,7 +116,9 @@ class ManufacturerData:
         return get_manufacturer_name(self.manufacturer_id)
 
     @property
-    def board_type_enum(self) -> DIYBoardType | SeeedBoardType | SolumBoardType | WaveshareBoardType | int:
+    def board_type_enum(
+        self,
+    ) -> DIYBoardType | SeeedBoardType | SolumBoardType | WaveshareBoardType | OpenDisplayBoardType | int:
         """Get board type as manufacturer-specific enum, or raw int if unknown."""
         manufacturer = self.manufacturer_id_enum
         if not isinstance(manufacturer, BoardManufacturer):
@@ -125,6 +133,8 @@ class ManufacturerData:
                 return WaveshareBoardType(self.board_type)
             if manufacturer == BoardManufacturer.SOLUM:
                 return SolumBoardType(self.board_type)
+            if manufacturer == BoardManufacturer.OPENDISPLAY:
+                return OpenDisplayBoardType(self.board_type)
         except ValueError:
             return self.board_type
 
@@ -388,7 +398,9 @@ class SensorData:
     instance_number: int  # uint8
     sensor_type: int  # uint16
     bus_id: int  # uint8
-    reserved: bytes  # 26 bytes
+    i2c_addr_7bit: int = 0  # uint8 (0/0xFF = auto/default)
+    msd_data_start_byte: int = 0  # uint8: start byte in dynamicreturndata
+    reserved: bytes = b""  # 24 bytes
 
     @property
     def sensor_type_enum(self) -> SensorType | int:
@@ -410,7 +422,9 @@ class SensorData:
             instance_number=data[0],
             sensor_type=int.from_bytes(data[1:3], "little"),
             bus_id=data[3],
-            reserved=data[4:30],
+            i2c_addr_7bit=data[4],
+            msd_data_start_byte=data[5],
+            reserved=data[6:30],
         )
 
 
@@ -638,6 +652,31 @@ class SecurityConfig:
         """Bit 0: allow unauthenticated WRITE_CONFIG even when encryption is on."""
         return bool(self.flags & 0x01)
 
+    @property
+    def show_key_on_screen(self) -> bool:
+        """Bit 1: display encryption key on device screen."""
+        return bool(self.flags & 0x02)
+
+    @property
+    def reset_pin_enabled(self) -> bool:
+        """Bit 2: hardware reset pin is active."""
+        return bool(self.flags & 0x04)
+
+    @property
+    def reset_pin_polarity(self) -> bool:
+        """Bit 3: reset pin polarity (True = active high)."""
+        return bool(self.flags & 0x08)
+
+    @property
+    def reset_pin_pullup(self) -> bool:
+        """Bit 4: enable internal pull-up on reset pin."""
+        return bool(self.flags & 0x10)
+
+    @property
+    def reset_pin_pulldown(self) -> bool:
+        """Bit 5: enable internal pull-down on reset pin."""
+        return bool(self.flags & 0x20)
+
     @classmethod
     def from_bytes(cls, data: bytes) -> SecurityConfig:
         """Parse from TLV packet data."""
@@ -650,6 +689,108 @@ class SecurityConfig:
             flags=data[19],
             reset_pin=data[20],
             reserved=bytes(data[21:64]),
+        )
+
+
+@dataclass
+class TouchController:
+    """Touch controller configuration (TLV packet type 0x28, repeatable max 4).
+
+    Size: 32 bytes (packed struct from firmware)
+    """
+
+    instance_number: int  # uint8 (0-3)
+    touch_ic_type: int  # uint16
+    bus_id: int  # uint8 (0xFF = default bus 0)
+    i2c_addr_7bit: int  # uint8 (0/0xFF = auto)
+    int_pin: int  # uint8 (0xFF = poll only)
+    rst_pin: int  # uint8 (0xFF = skip reset)
+    display_instance: int  # uint8
+    flags: int  # uint8 bitfield
+    poll_interval_ms: int  # uint8 (0 = default 25ms)
+    touch_data_start_byte: int  # uint8 (0-6)
+    reserved: bytes  # 21 bytes
+
+    SIZE: ClassVar[int] = 32
+
+    @property
+    def touch_ic_type_enum(self) -> TouchIcType | int:
+        """Get touch IC type as enum, or raw int if unknown."""
+        try:
+            return TouchIcType(self.touch_ic_type)
+        except ValueError:
+            return self.touch_ic_type
+
+    @property
+    def invert_x(self) -> bool:
+        """Bit 0: invert X axis coordinates."""
+        return bool(self.flags & 0x01)
+
+    @property
+    def invert_y(self) -> bool:
+        """Bit 1: invert Y axis coordinates."""
+        return bool(self.flags & 0x02)
+
+    @property
+    def swap_xy(self) -> bool:
+        """Bit 2: swap X and Y axes."""
+        return bool(self.flags & 0x04)
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> TouchController:
+        """Parse from TLV packet data."""
+        if len(data) < cls.SIZE:
+            raise ValueError(f"Invalid TouchController size: {len(data)} < {cls.SIZE}")
+
+        return cls(
+            instance_number=data[0],
+            touch_ic_type=int.from_bytes(data[1:3], "little"),
+            bus_id=data[3],
+            i2c_addr_7bit=data[4],
+            int_pin=data[5],
+            rst_pin=data[6],
+            display_instance=data[7],
+            flags=data[8],
+            poll_interval_ms=data[9],
+            touch_data_start_byte=data[10],
+            reserved=data[11:32],
+        )
+
+
+@dataclass
+class PassiveBuzzer:
+    """Passive buzzer configuration (TLV packet type 0x29, repeatable max 4).
+
+    Size: 32 bytes (packed struct from firmware)
+    """
+
+    instance_number: int  # uint8 (0-3)
+    drive_pin: int  # uint8
+    enable_pin: int  # uint8 (0xFF = unused)
+    flags: int  # uint8 bitfield
+    duty_percent: int  # uint8 (0 = default 50%)
+    reserved: bytes  # 27 bytes
+
+    SIZE: ClassVar[int] = 32
+
+    @property
+    def enable_active_high(self) -> bool:
+        """Bit 0: enable pin is active high."""
+        return bool(self.flags & 0x01)
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> PassiveBuzzer:
+        """Parse from TLV packet data."""
+        if len(data) < cls.SIZE:
+            raise ValueError(f"Invalid PassiveBuzzer size: {len(data)} < {cls.SIZE}")
+
+        return cls(
+            instance_number=data[0],
+            drive_pin=data[1],
+            enable_pin=data[2],
+            flags=data[3],
+            duty_percent=data[4],
+            reserved=data[5:32],
         )
 
 
@@ -673,6 +814,8 @@ class GlobalConfig:
     binary_inputs: list[BinaryInputs] = field(default_factory=list)
     wifi_config: WifiConfig | None = None
     security_config: SecurityConfig | None = None
+    touch_controllers: list[TouchController] = field(default_factory=list)
+    buzzers: list[PassiveBuzzer] = field(default_factory=list)
 
     # Metadata
     version: int = 0

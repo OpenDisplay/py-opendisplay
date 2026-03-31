@@ -15,9 +15,12 @@ from .config import (
     GlobalConfig,
     LedConfig,
     ManufacturerData,
+    PassiveBuzzer,
     PowerOption,
+    SecurityConfig,
     SensorData,
     SystemConfig,
+    TouchController,
     WifiConfig,
 )
 
@@ -66,6 +69,8 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
                 "communication_modes": f"0x{sys.communication_modes:x}",
                 "device_flags": f"0x{sys.device_flags:x}",
                 "pwr_pin": f"0x{sys.pwr_pin:02x}",
+                "pwr_pin_2": f"0x{sys.pwr_pin_2:02x}",
+                "pwr_pin_3": f"0x{sys.pwr_pin_3:02x}",
                 "reserved": "0x0",
             },
         }
@@ -180,6 +185,8 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
                     "instance_number": f"0x{sensor.instance_number:x}",
                     "sensor_type": str(sensor.sensor_type),
                     "bus_id": f"0x{sensor.bus_id:x}",
+                    "i2c_addr_7bit": f"0x{sensor.i2c_addr_7bit:02x}",
+                    "msd_data_start_byte": f"0x{sensor.msd_data_start_byte:x}",
                     "reserved": "0x0",
                 },
             }
@@ -248,6 +255,63 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
             }
         )
 
+    # Security config (packet type 0x27 = 39)
+    if config.security_config is not None:
+        sec = config.security_config
+        packets.append(
+            {
+                "id": "39",
+                "name": "security_config",
+                "fields": {
+                    "encryption_enabled": str(sec.encryption_enabled),
+                    "encryption_key": sec.encryption_key.hex(),
+                    "session_timeout_seconds": str(sec.session_timeout_seconds),
+                    "flags": f"0x{sec.flags:02x}",
+                    "reset_pin": f"0x{sec.reset_pin:02x}",
+                    "reserved": "0x0",
+                },
+            }
+        )
+
+    # Touch controller configs (packet type 0x28 = 40)
+    for tc in config.touch_controllers:
+        packets.append(
+            {
+                "id": "40",
+                "name": "touch_controller",
+                "fields": {
+                    "instance_number": f"0x{tc.instance_number:x}",
+                    "touch_ic_type": str(tc.touch_ic_type),
+                    "bus_id": f"0x{tc.bus_id:02x}",
+                    "i2c_addr_7bit": f"0x{tc.i2c_addr_7bit:02x}",
+                    "int_pin": f"0x{tc.int_pin:02x}",
+                    "rst_pin": f"0x{tc.rst_pin:02x}",
+                    "display_instance": f"0x{tc.display_instance:x}",
+                    "flags": f"0x{tc.flags:02x}",
+                    "poll_interval_ms": str(tc.poll_interval_ms),
+                    "touch_data_start_byte": str(tc.touch_data_start_byte),
+                    "reserved": "0x0",
+                },
+            }
+        )
+
+    # Passive buzzer configs (packet type 0x29 = 41)
+    for bz in config.buzzers:
+        packets.append(
+            {
+                "id": "41",
+                "name": "passive_buzzer",
+                "fields": {
+                    "instance_number": f"0x{bz.instance_number:x}",
+                    "drive_pin": f"0x{bz.drive_pin:x}",
+                    "enable_pin": f"0x{bz.enable_pin:02x}",
+                    "flags": f"0x{bz.flags:02x}",
+                    "duty_percent": str(bz.duty_percent),
+                    "reserved": "0x0",
+                },
+            }
+        )
+
     return {
         "version": config.version,
         "minor_version": 1,  # JSON format version (not stored in device)
@@ -281,6 +345,9 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
     data_buses: list[DataBus] = []
     binary_inputs: list[BinaryInputs] = []
     wifi_config: WifiConfig | None = None
+    security_config: SecurityConfig | None = None
+    touch_controllers: list[TouchController] = []
+    buzzers: list[PassiveBuzzer] = []
 
     version = data.get("version", 1)
     minor_version = data.get("minor_version", 0)
@@ -295,7 +362,9 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                 communication_modes=_parse_int(fields.get("communication_modes", "0")),
                 device_flags=_parse_int(fields.get("device_flags", "0")),
                 pwr_pin=_parse_int(fields.get("pwr_pin", "0xff")),
-                reserved=bytes(17),  # Fixed size
+                reserved=bytes(15),  # Fixed size
+                pwr_pin_2=_parse_int(fields.get("pwr_pin_2", "0xff")),
+                pwr_pin_3=_parse_int(fields.get("pwr_pin_3", "0xff")),
             )
 
         elif packet_id == 2:  # 0x02 = manufacturer_data
@@ -370,7 +439,9 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                     instance_number=_parse_int(fields.get("instance_number", "0")),
                     sensor_type=_parse_int(fields.get("sensor_type", "0")),
                     bus_id=_parse_int(fields.get("bus_id", "0")),
-                    reserved=bytes(26),  # Fixed size
+                    i2c_addr_7bit=_parse_int(fields.get("i2c_addr_7bit", "0")),
+                    msd_data_start_byte=_parse_int(fields.get("msd_data_start_byte", "0")),
+                    reserved=bytes(24),  # Fixed size
                 )
             )
 
@@ -419,6 +490,50 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                 server_port=_parse_int(fields.get("server_port", "2446")),
             )
 
+        elif packet_id == 39:  # 0x27 = security_config
+            key_hex = fields.get("encryption_key", "")
+            try:
+                key = bytes.fromhex(key_hex) if key_hex else b"\x00" * 16
+            except ValueError:
+                key = b"\x00" * 16
+            security_config = SecurityConfig(
+                encryption_enabled=_parse_int(fields.get("encryption_enabled", "0")),
+                encryption_key=key[:16].ljust(16, b"\x00"),
+                session_timeout_seconds=_parse_int(fields.get("session_timeout_seconds", "0")),
+                flags=_parse_int(fields.get("flags", "0")),
+                reset_pin=_parse_int(fields.get("reset_pin", "0xff")),
+                reserved=bytes(43),
+            )
+
+        elif packet_id == 40:  # 0x28 = touch_controller
+            touch_controllers.append(
+                TouchController(
+                    instance_number=_parse_int(fields.get("instance_number", "0")),
+                    touch_ic_type=_parse_int(fields.get("touch_ic_type", "0")),
+                    bus_id=_parse_int(fields.get("bus_id", "0xff")),
+                    i2c_addr_7bit=_parse_int(fields.get("i2c_addr_7bit", "0")),
+                    int_pin=_parse_int(fields.get("int_pin", "0xff")),
+                    rst_pin=_parse_int(fields.get("rst_pin", "0xff")),
+                    display_instance=_parse_int(fields.get("display_instance", "0")),
+                    flags=_parse_int(fields.get("flags", "0")),
+                    poll_interval_ms=_parse_int(fields.get("poll_interval_ms", "0")),
+                    touch_data_start_byte=_parse_int(fields.get("touch_data_start_byte", "0")),
+                    reserved=bytes(21),
+                )
+            )
+
+        elif packet_id == 41:  # 0x29 = passive_buzzer
+            buzzers.append(
+                PassiveBuzzer(
+                    instance_number=_parse_int(fields.get("instance_number", "0")),
+                    drive_pin=_parse_int(fields.get("drive_pin", "0")),
+                    enable_pin=_parse_int(fields.get("enable_pin", "0xff")),
+                    flags=_parse_int(fields.get("flags", "0")),
+                    duty_percent=_parse_int(fields.get("duty_percent", "0")),
+                    reserved=bytes(27),
+                )
+            )
+
     missing_required = []
     if system is None:
         missing_required.append("system")
@@ -445,6 +560,9 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
         data_buses=data_buses,
         binary_inputs=binary_inputs,
         wifi_config=wifi_config,
+        security_config=security_config,
+        touch_controllers=touch_controllers,
+        buzzers=buzzers,
         version=version,
         minor_version=minor_version,
         loaded=True,

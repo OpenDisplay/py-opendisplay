@@ -33,6 +33,7 @@ class BoardManufacturer(IntEnum):
     SEEED = 1
     WAVESHARE = 2
     SOLUM = 3
+    OPENDISPLAY = 4
 
 
 class DIYBoardType(IntEnum):
@@ -52,6 +53,7 @@ class SeeedBoardType(IntEnum):
     NRF52840 = 5
     EE05 = 6
     EN05 = 7
+    RETERMINAL_E1003 = 8
 
 
 class WaveshareBoardType(IntEnum):
@@ -64,6 +66,19 @@ class SolumBoardType(IntEnum):
     """Solum board types."""
 
     M3 = 0
+
+
+class OpenDisplayBoardType(IntEnum):
+    """OpenDisplay board types."""
+
+    DEFAULT = 0
+
+
+class TouchIcType(IntEnum):
+    """Touch controller IC types."""
+
+    NONE = 0
+    GT911 = 1
 
 
 class CapacityEstimator(IntEnum):
@@ -90,6 +105,7 @@ class SensorType(IntEnum):
     TEMPERATURE = 1
     HUMIDITY = 2
     AXP2101_PMIC = 3
+    SHT40 = 4
 
 
 class WifiEncryption(IntEnum):
@@ -107,6 +123,7 @@ MANUFACTURER_NAMES: Final[dict[BoardManufacturer, str]] = {
     BoardManufacturer.SEEED: "Seeed Studio",
     BoardManufacturer.WAVESHARE: "Waveshare",
     BoardManufacturer.SOLUM: "Solum",
+    BoardManufacturer.OPENDISPLAY: "OpenDisplay",
 }
 
 _BOARD_TYPE_NAMES_DIY: Final[dict[DIYBoardType, str]] = {
@@ -122,6 +139,7 @@ _BOARD_TYPE_NAMES_SEEED: Final[dict[SeeedBoardType, str]] = {
     SeeedBoardType.NRF52840: "NRF52840",
     SeeedBoardType.EE05: "EE05",
     SeeedBoardType.EN05: "EN05",
+    SeeedBoardType.RETERMINAL_E1003: "reTerminal E1003",
 }
 
 _BOARD_TYPE_NAMES_WAVESHARE: Final[dict[WaveshareBoardType, str]] = {
@@ -130,6 +148,10 @@ _BOARD_TYPE_NAMES_WAVESHARE: Final[dict[WaveshareBoardType, str]] = {
 
 _BOARD_TYPE_NAMES_SOLUM: Final[dict[SolumBoardType, str]] = {
     SolumBoardType.M3: "M3",
+}
+
+_BOARD_TYPE_NAMES_OPENDISPLAY: Final[dict[OpenDisplayBoardType, str]] = {
+    OpenDisplayBoardType.DEFAULT: "Default",
 }
 
 
@@ -157,6 +179,8 @@ def get_board_type_name(manufacturer_id: BoardManufacturer | int, board_type: in
             return _BOARD_TYPE_NAMES_WAVESHARE[WaveshareBoardType(board_type)]
         if manufacturer == BoardManufacturer.SOLUM:
             return _BOARD_TYPE_NAMES_SOLUM[SolumBoardType(board_type)]
+        if manufacturer == BoardManufacturer.OPENDISPLAY:
+            return _BOARD_TYPE_NAMES_OPENDISPLAY[OpenDisplayBoardType(board_type)]
     except (ValueError, KeyError):
         return None
 

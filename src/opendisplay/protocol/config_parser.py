@@ -13,10 +13,12 @@ from ..models.config import (
     GlobalConfig,
     LedConfig,
     ManufacturerData,
+    PassiveBuzzer,
     PowerOption,
     SecurityConfig,
     SensorData,
     SystemConfig,
+    TouchController,
     WifiConfig,
 )
 
@@ -34,6 +36,8 @@ PACKET_TYPE_DATABUS = 0x24
 PACKET_TYPE_BINARY_INPUT = 0x25
 PACKET_TYPE_WIFI_CONFIG = 0x26
 PACKET_TYPE_SECURITY_CONFIG = 0x27
+PACKET_TYPE_TOUCH_CONTROLLER = 0x28
+PACKET_TYPE_PASSIVE_BUZZER = 0x29
 
 WIFI_CONFIG_SIZE = 160
 WIFI_CONFIG_LEGACY_SIZE = 65
@@ -157,6 +161,8 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     binary_inputs = []
     wifi_config = None
     security_config = None
+    touch_controllers = []
+    buzzers = []
 
     for (packet_type, packet_number), packet_data in packets.items():
         if packet_type == PACKET_TYPE_SYSTEM:
@@ -179,6 +185,10 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
             wifi_config = _parse_wifi_config(packet_data)
         elif packet_type == PACKET_TYPE_SECURITY_CONFIG:
             security_config = SecurityConfig.from_bytes(packet_data)
+        elif packet_type == PACKET_TYPE_TOUCH_CONTROLLER:
+            touch_controllers.append(TouchController.from_bytes(packet_data))
+        elif packet_type == PACKET_TYPE_PASSIVE_BUZZER:
+            buzzers.append(PassiveBuzzer.from_bytes(packet_data))
 
     missing_required = [
         name
@@ -208,6 +218,8 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         binary_inputs=binary_inputs,
         wifi_config=wifi_config,
         security_config=security_config,
+        touch_controllers=touch_controllers,
+        buzzers=buzzers,
         version=version,  # From firmware wrapper
         minor_version=1,  # Not stored in device (only single version byte exists)
         loaded=True,
@@ -234,6 +246,8 @@ def _get_packet_size(packet_type: int) -> int | None:
         PACKET_TYPE_BINARY_INPUT: 30,  # Fixed: was 29
         PACKET_TYPE_WIFI_CONFIG: 160,
         PACKET_TYPE_SECURITY_CONFIG: SECURITY_CONFIG_SIZE,
+        PACKET_TYPE_TOUCH_CONTROLLER: 32,
+        PACKET_TYPE_PASSIVE_BUZZER: 32,
     }
     return sizes.get(packet_type)
 
@@ -244,7 +258,9 @@ def _parse_system_config(data: bytes) -> SystemConfig:
         raise ConfigParseError(f"SystemConfig too short: {len(data)} bytes (need 22)")
 
     ic_type, comm_modes, dev_flags, pwr_pin = struct.unpack_from("<HBBB", data, 0)
-    reserved = data[5:22]
+    reserved = data[5:20]
+    pwr_pin_2 = data[20]
+    pwr_pin_3 = data[21]
 
     return SystemConfig(
         ic_type=ic_type,
@@ -252,6 +268,8 @@ def _parse_system_config(data: bytes) -> SystemConfig:
         device_flags=dev_flags,
         pwr_pin=pwr_pin,
         reserved=reserved,
+        pwr_pin_2=pwr_pin_2,
+        pwr_pin_3=pwr_pin_3,
     )
 
 
@@ -394,12 +412,16 @@ def _parse_sensor_data(data: bytes) -> SensorData:
         raise ConfigParseError(f"SensorData too short: {len(data)} bytes (need 30)")
 
     instance_num, sensor_type, bus_id = struct.unpack_from("<BHB", data, 0)
-    reserved = data[4:30]
+    i2c_addr_7bit = data[4]
+    msd_data_start_byte = data[5]
+    reserved = data[6:30]
 
     return SensorData(
         instance_number=instance_num,
         sensor_type=sensor_type,
         bus_id=bus_id,
+        i2c_addr_7bit=i2c_addr_7bit,
+        msd_data_start_byte=msd_data_start_byte,
         reserved=reserved,
     )
 
