@@ -612,16 +612,28 @@ async def _reboot(device_kwargs: dict[str, Any]) -> None:
 # ── export-config ─────────────────────────────────────────────────────────────
 
 
+def _default_export_path(device: str) -> str:
+    """Derive a default filename from the device identifier."""
+    return f"opendisplay_{device.replace(':', '').lower()}.json"
+
+
 def _add_export_config_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     p = subparsers.add_parser("export-config", help="Export device configuration to a JSON file")
     _add_device_options(p)
-    p.add_argument("output", metavar="OUTPUT_PATH", help="Path to write the JSON config file")
+    p.add_argument(
+        "output",
+        metavar="OUTPUT_PATH",
+        nargs="?",
+        default=None,
+        help="Path to write the JSON config file (default: opendisplay_<device>.json)",
+    )
     p.set_defaults(func=_cmd_export_config)
 
 
 def _cmd_export_config(args: argparse.Namespace) -> None:
     key = _parse_hex_key(args.key)
-    _run(_export_config(_device_kwargs(args.device, key, args.timeout), args.output))
+    output = args.output or _default_export_path(args.device)
+    _run(_export_config(_device_kwargs(args.device, key, args.timeout), output))
 
 
 async def _export_config(device_kwargs: dict[str, Any], output_path: str) -> None:
