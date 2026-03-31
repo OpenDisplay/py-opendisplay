@@ -55,6 +55,7 @@ class BLEConnection:
         self._client: BleakClient | None = None
         self._notification_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._notification_characteristic: BleakGATTCharacteristic | None = None
+        self.device_name: str | None = None
 
     async def __aenter__(self) -> BLEConnection:
         """Connect to device (context manager entry)."""
@@ -98,6 +99,8 @@ class BLEConnection:
                 if found_device is None:
                     raise BLEConnectionError(f"Device {self.mac_address} not found during scan")
                 device = found_device
+
+            self.device_name = device.name
 
             # Establish connection with retry logic
             self._client = await establish_connection(

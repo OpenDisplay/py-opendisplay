@@ -7,7 +7,7 @@ from epaper_dithering import ColorScheme, DitherMode
 
 from .battery import voltage_to_percent
 from .device import OpenDisplayDevice, prepare_image
-from .discovery import discover_devices
+from .discovery import discover_devices, discover_devices_with_adv
 from .exceptions import (
     AuthenticationError,
     AuthenticationFailedError,
@@ -65,6 +65,7 @@ __all__ = [
     # Main API
     "OpenDisplayDevice",
     "discover_devices",
+    "discover_devices_with_adv",
     "prepare_image",
     # Exceptions
     "OpenDisplayError",

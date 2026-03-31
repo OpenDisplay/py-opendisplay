@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from epaper_dithering import ColorScheme, DitherMode, dither_image
@@ -457,6 +458,11 @@ class OpenDisplayDevice:
         return True
 
     @property
+    def device_name(self) -> str | None:
+        """Get device BLE name, if available (requires active connection)."""
+        return self._connection.device_name if self._connection else None
+
+    @property
     def capabilities(self) -> DeviceCapabilities | None:
         """Get device capabilities (width, height, color scheme, rotation)."""
         return self._capabilities
@@ -823,6 +829,7 @@ class OpenDisplayDevice:
         tone_compression: float | str = "auto",
         fit: FitMode = FitMode.CONTAIN,
         rotate: Rotation = Rotation.ROTATE_0,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> Image.Image:
         """Upload image to device display.
 
@@ -877,6 +884,7 @@ class OpenDisplayDevice:
                 use_compression=True,
                 compressed_data=compressed_data,
                 uncompressed_size=len(image_data),
+                progress_callback=progress_callback,
             )
         else:
             if compress and not supports_compression:
@@ -885,7 +893,9 @@ class OpenDisplayDevice:
                 _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
             else:
                 _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
-            await self._execute_upload(image_data, refresh_mode, use_compression=False)
+            await self._execute_upload(
+                image_data, refresh_mode, use_compression=False, progress_callback=progress_callback
+            )
 
         _LOGGER.info("Image upload complete")
         return processed_image
@@ -895,6 +905,7 @@ class OpenDisplayDevice:
         prepared_data: tuple[bytes, bytes | None, Image.Image],
         refresh_mode: RefreshMode = RefreshMode.FULL,
         compress: bool = True,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> None:
         """Upload pre-computed image data to device.
 
@@ -907,6 +918,8 @@ class OpenDisplayDevice:
                 (uncompressed_data, compressed_data or None, processed_image)
             refresh_mode: Display refresh mode (default: FULL)
             compress: Whether to use compressed protocol if data is available
+            progress_callback: Optional callback receiving (bytes_sent, total_bytes)
+                after each chunk is written to the BLE transport.
 
         Raises:
             ProtocolError: If upload fails
@@ -924,6 +937,7 @@ class OpenDisplayDevice:
                 use_compression=True,
                 compressed_data=compressed_data,
                 uncompressed_size=len(image_data),
+                progress_callback=progress_callback,
             )
         else:
             if compress and not supports_compression:
@@ -932,7 +946,9 @@ class OpenDisplayDevice:
                 _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
             else:
                 _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
-            await self._execute_upload(image_data, refresh_mode, use_compression=False)
+            await self._execute_upload(
+                image_data, refresh_mode, use_compression=False, progress_callback=progress_callback
+            )
 
         _LOGGER.info("Prepared image upload complete")
 
@@ -943,6 +959,7 @@ class OpenDisplayDevice:
         use_compression: bool = False,
         compressed_data: bytes | None = None,
         uncompressed_size: int | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> None:
         """Execute image upload using compressed or uncompressed protocol.
 
@@ -975,10 +992,10 @@ class OpenDisplayDevice:
         if use_compression:
             # Compressed upload: send remaining compressed data as chunks
             if remaining_compressed:
-                auto_completed = await self._send_data_chunks(remaining_compressed)
+                auto_completed = await self._send_data_chunks(remaining_compressed, progress_callback)
         else:
             # Uncompressed upload: send raw image data as chunks
-            auto_completed = await self._send_data_chunks(image_data)
+            auto_completed = await self._send_data_chunks(image_data, progress_callback)
 
         # 4. Send END command if needed (identical for both protocols)
         if not auto_completed:
@@ -989,7 +1006,11 @@ class OpenDisplayDevice:
             response = await self._read(self.TIMEOUT_REFRESH)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
 
-    async def _send_data_chunks(self, image_data: bytes) -> bool:
+    async def _send_data_chunks(
+        self,
+        image_data: bytes,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> bool:
         """Send image data chunks with ACK handling.
 
         Sends image data in chunks via 0x0071 DATA commands. Handles:
@@ -1023,6 +1044,8 @@ class OpenDisplayDevice:
 
             bytes_sent += len(chunk_data)
             chunks_sent += 1
+            if progress_callback is not None:
+                progress_callback(bytes_sent, len(image_data))
 
             # Wait for response after every chunk (PIPELINE_CHUNKS=1)
             try:

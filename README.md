@@ -45,6 +45,37 @@ async with OpenDisplayDevice(device_name="OpenDisplay-A123") as device:
   await device.upload_image(image)
 ```
 
+## CLI
+
+Run without installing (requires [uv](https://docs.astral.sh/uv/)):
+
+```bash
+uvx --from py-opendisplay opendisplay --help
+```
+
+Or after `pip install py-opendisplay`:
+
+```bash
+# Discover nearby devices
+opendisplay scan
+
+# Read device info (size, color, firmware, board)
+opendisplay info --device AA:BB:CC:DD:EE:FF
+
+# Upload an image
+opendisplay upload --device AA:BB:CC:DD:EE:FF photo.jpg
+opendisplay upload --device AA:BB:CC:DD:EE:FF photo.jpg --fit cover --refresh-mode fast
+
+# Reboot the device
+opendisplay reboot --device AA:BB:CC:DD:EE:FF
+
+# Export / write device configuration
+opendisplay export-config --device AA:BB:CC:DD:EE:FF config.json
+opendisplay write-config --device AA:BB:CC:DD:EE:FF config.json
+```
+
+Encrypted devices require `--key HEX` (32 hex characters). Pass `-v` / `--verbose` for debug logging.
+
 ## Image Fitting
 
 Images are automatically fitted to the display dimensions. Control how aspect ratio mismatches are handled with the `fit` parameter:
