@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.8.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.7.0...v5.8.0) (2026-04-01)
+
+
+### Features
+
+* add cli ([5178320](https://github.com/OpenDisplay/py-opendisplay/commit/517832062a29fec0fe5c038bffe117a4fa569057))
+* add default file path to export-config cli command ([e1d52ca](https://github.com/OpenDisplay/py-opendisplay/commit/e1d52caef0a4f220711847f55b1f8f4c7edc74db))
+* protocol 1.2 support ([866bfce](https://github.com/OpenDisplay/py-opendisplay/commit/866bfcea3ba75f7b2b35b16580085dcfdff57f2b))
+
 ## [5.7.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.6.0...v5.7.0) (2026-03-24)
 
 
