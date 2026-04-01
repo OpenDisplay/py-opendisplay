@@ -13,9 +13,12 @@ if TYPE_CHECKING:
         GlobalConfig,
         LedConfig,
         ManufacturerData,
+        PassiveBuzzer,
         PowerOption,
+        SecurityConfig,
         SensorData,
         SystemConfig,
+        TouchController,
         WifiConfig,
     )
 
@@ -29,6 +32,9 @@ PACKET_TYPE_SENSOR = 0x23
 PACKET_TYPE_DATABUS = 0x24
 PACKET_TYPE_BINARY_INPUT = 0x25
 PACKET_TYPE_WIFI_CONFIG = 0x26
+PACKET_TYPE_SECURITY_CONFIG = 0x27
+PACKET_TYPE_TOUCH_CONTROLLER = 0x28
+PACKET_TYPE_PASSIVE_BUZZER = 0x29
 
 
 def calculate_config_crc(data: bytes) -> int:
@@ -68,7 +74,9 @@ def serialize_system_config(config: SystemConfig) -> bytes:
     - communication_modes: uint8
     - device_flags: uint8
     - pwr_pin: uint8
-    - reserved: 17 bytes
+    - reserved: 15 bytes
+    - pwr_pin_2: uint8
+    - pwr_pin_3: uint8
 
     Args:
         config: SystemConfig instance
@@ -84,9 +92,10 @@ def serialize_system_config(config: SystemConfig) -> bytes:
         config.pwr_pin,
     )
 
-    # Pad with reserved bytes to 22 total
-    reserved = config.reserved if config.reserved else b"\x00" * 17
-    return data + reserved[:17]
+    reserved = config.reserved if config.reserved else b"\x00" * 15
+    data += reserved[:15]
+    data += bytes([config.pwr_pin_2 & 0xFF, config.pwr_pin_3 & 0xFF])
+    return data
 
 
 def serialize_manufacturer_data(config: ManufacturerData) -> bytes:
@@ -278,7 +287,9 @@ def serialize_sensor_data(config: SensorData) -> bytes:
     - instance_number: uint8
     - sensor_type: uint16
     - bus_id: uint8
-    - reserved: 26 bytes
+    - i2c_addr_7bit: uint8
+    - msd_data_start_byte: uint8
+    - reserved: 24 bytes
 
     Args:
         config: SensorData instance
@@ -293,9 +304,9 @@ def serialize_sensor_data(config: SensorData) -> bytes:
         config.bus_id,
     )
 
-    # Pad with reserved bytes to 30 total
-    reserved = config.reserved if config.reserved else b"\x00" * 26
-    return data + reserved[:26]
+    data += bytes([config.i2c_addr_7bit & 0xFF, config.msd_data_start_byte & 0xFF])
+    reserved = config.reserved if config.reserved else b"\x00" * 24
+    return data + reserved[:24]
 
 
 def serialize_data_bus(config: DataBus) -> bytes:
@@ -390,6 +401,49 @@ def serialize_binary_inputs(config: BinaryInputs) -> bytes:
     return data + reserved[:14]
 
 
+def serialize_security_config(config: SecurityConfig) -> bytes:
+    """Serialize SecurityConfig to 64 bytes."""
+    data = bytes([config.encryption_enabled & 0xFF])
+    data += config.encryption_key[:16].ljust(16, b"\x00")
+    data += config.session_timeout_seconds.to_bytes(2, "little")
+    data += bytes([config.flags & 0xFF, config.reset_pin & 0xFF])
+    reserved = config.reserved if config.reserved else b"\x00" * 43
+    return data + reserved[:43]
+
+
+def serialize_touch_controller(config: TouchController) -> bytes:
+    """Serialize TouchController to 32 bytes."""
+    data = struct.pack(
+        "<BHBBBBBBB",
+        config.instance_number,
+        config.touch_ic_type,
+        config.bus_id,
+        config.i2c_addr_7bit,
+        config.int_pin,
+        config.rst_pin,
+        config.display_instance,
+        config.flags,
+        config.poll_interval_ms,
+    )
+    data += bytes([config.touch_data_start_byte & 0xFF])
+    reserved = config.reserved if config.reserved else b"\x00" * 21
+    return data + reserved[:21]
+
+
+def serialize_passive_buzzer(config: PassiveBuzzer) -> bytes:
+    """Serialize PassiveBuzzer to 32 bytes."""
+    data = struct.pack(
+        "<BBBBB",
+        config.instance_number,
+        config.drive_pin,
+        config.enable_pin,
+        config.flags,
+        config.duty_percent,
+    )
+    reserved = config.reserved if config.reserved else b"\x00" * 27
+    return data + reserved[:27]
+
+
 def serialize_wifi_config(config: WifiConfig) -> bytes:
     """Serialize WifiConfig to 160 bytes."""
     return config.to_bytes()
@@ -469,6 +523,22 @@ def serialize_config(config: GlobalConfig) -> bytes:
     if config.wifi_config is not None:
         packet_data += bytes([0, PACKET_TYPE_WIFI_CONFIG])
         packet_data += serialize_wifi_config(config.wifi_config)
+
+    if config.security_config is not None:
+        packet_data += bytes([0, PACKET_TYPE_SECURITY_CONFIG])
+        packet_data += serialize_security_config(config.security_config)
+
+    for i, tc in enumerate(config.touch_controllers):
+        if i >= 4:
+            break
+        packet_data += bytes([i, PACKET_TYPE_TOUCH_CONTROLLER])
+        packet_data += serialize_touch_controller(tc)
+
+    for i, bz in enumerate(config.buzzers):
+        if i >= 4:
+            break
+        packet_data += bytes([i, PACKET_TYPE_PASSIVE_BUZZER])
+        packet_data += serialize_passive_buzzer(bz)
 
     # Validate size (max 4096 bytes including wrapper and CRC)
     total_size = len(packet_data) + 2  # +2 for CRC
