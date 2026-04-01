@@ -20,7 +20,7 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --all-extras --group dev
 
       - name: Run prek
         run: uv run prek run --all-files
