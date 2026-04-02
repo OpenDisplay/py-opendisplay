@@ -12,11 +12,11 @@ from typing import Any, NoReturn, TypeVar
 
 from epaper_dithering import DitherMode
 from PIL import Image, UnidentifiedImageError
-from rich.console import Console, RenderableType
+from rich.console import Console
+from rich.live import Live
 from rich.logging import RichHandler
-from rich.progress import BarColumn, Progress, SpinnerColumn, Task, TaskProgressColumn, TextColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.table import Table
-from rich.text import Text
 from rich.tree import Tree
 
 from .battery import voltage_to_percent
@@ -469,36 +469,6 @@ async def _info(device_kwargs: dict[str, Any], output_json: bool) -> None:
     _console.print(_build_info_tree(data))
 
 
-# ── upload progress columns ───────────────────────────────────────────────────
-
-
-class _SpinnerOrSpace(SpinnerColumn):
-    """Spinner for normal tasks; blank space for bar-row tasks."""
-
-    def render(self, task: Task) -> Text:
-        if task.fields.get("show_bar"):
-            return Text(" ")
-        return super().render(task)  # type: ignore[return-value]
-
-
-class _BarWhenActive(BarColumn):
-    """Bar rendered only for tasks with show_bar=True and a known total."""
-
-    def render(self, task: Task) -> RenderableType:  # type: ignore[override]
-        if task.fields.get("show_bar") and task.total is not None:
-            return super().render(task)
-        return Text("")
-
-
-class _PctWhenActive(TaskProgressColumn):
-    """Percentage rendered only for tasks with show_bar=True and a known total."""
-
-    def render(self, task: Task) -> Text:
-        if task.fields.get("show_bar") and task.total is not None:
-            return super().render(task)
-        return Text("")
-
-
 # ── upload ────────────────────────────────────────────────────────────────────
 
 
@@ -528,7 +498,7 @@ def _add_upload_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         "--rotate",
         choices=list(_ROTATE_CHOICES),
         default="0",
-        help="Source image rotation in degrees (default: 0)",
+        help="Additional image rotation in degrees on top of device config (default: 0)",
     )
     p.add_argument("--no-compress", action="store_true", help="Disable zlib compression")
     p.add_argument(
@@ -575,30 +545,43 @@ async def _upload(
         _error(f"Cannot open image (unsupported format): {image_path}")
 
     try:
-        with Progress(
-            _SpinnerOrSpace(finished_text="[green]✓[/green]"),
+        # Two separate Progress instances so the bar row has no leading columns
+        # and starts at the left edge of the terminal.
+        spinner_progress = Progress(
+            SpinnerColumn(finished_text="[green]✓[/green]"),
             TextColumn("{task.description}"),
-            _BarWhenActive(),
-            _PctWhenActive(),
             console=_console,
-            transient=False,
-        ) as progress:
-            connect_task = progress.add_task("Connecting...", total=None, visible=True)
-            upload_task = progress.add_task("Uploading...", total=None, visible=False)
-            bar_task = progress.add_task("", total=None, visible=False, show_bar=True)
-            refresh_task = progress.add_task("Refreshing display...", total=None, visible=False)
+        )
+        bar_progress = Progress(
+            BarColumn(),
+            TaskProgressColumn(),
+            console=_console,
+        )
+
+        class _Display:  # pylint: disable=too-few-public-methods
+            # Render spinner always; bar only when it has a visible task.
+            def __rich_console__(self, _con, _opts):  # type: ignore[no-untyped-def]
+                yield spinner_progress
+                if any(t.visible for t in bar_progress.tasks):
+                    yield bar_progress
+
+        with Live(_Display(), console=_console, refresh_per_second=10, transient=False):
+            connect_task = spinner_progress.add_task("Connecting...", total=None)
+            upload_task = spinner_progress.add_task("Uploading...", total=None, visible=False)
+            refresh_task = spinner_progress.add_task("Refreshing display...", total=None, visible=False)
+            bar_task = bar_progress.add_task("", total=None, visible=False)
 
             async with OpenDisplayDevice(**device_kwargs) as device:
-                progress.update(connect_task, visible=False)
-                progress.update(upload_task, visible=True)
-                progress.update(bar_task, visible=True)
+                spinner_progress.update(connect_task, visible=False)
+                spinner_progress.update(upload_task, visible=True)
+                bar_progress.update(bar_task, visible=True)
 
                 def on_progress(sent: int, total: int) -> None:
-                    progress.update(bar_task, total=total, completed=sent)
+                    bar_progress.update(bar_task, total=total, completed=sent)
                     if sent == total:
-                        progress.update(bar_task, visible=False)
-                        progress.update(upload_task, visible=False)
-                        progress.update(refresh_task, visible=True)
+                        bar_progress.update(bar_task, visible=False)
+                        spinner_progress.update(upload_task, visible=False)
+                        spinner_progress.update(refresh_task, visible=True)
 
                 await device.upload_image(
                     image,
@@ -611,9 +594,8 @@ async def _upload(
                     progress_callback=on_progress,
                 )
 
-                progress.update(refresh_task, visible=False)
-
-            progress.update(upload_task, visible=True, description="[green]Done.[/green]", total=1, completed=1)
+            spinner_progress.update(refresh_task, visible=False)
+            spinner_progress.update(upload_task, visible=True, description="[green]Done.[/green]", total=1, completed=1)
     except OpenDisplayError as exc:
         _handle_ble_error(exc)
 
