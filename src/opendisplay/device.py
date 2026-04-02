@@ -575,7 +575,7 @@ class OpenDisplayDevice:
             self.width,
             self.height,
             self.color_scheme.name,
-            self.rotation,
+            self._config.displays[0].rotation_enum,
         )
 
         return self._config

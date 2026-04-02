@@ -304,12 +304,21 @@ class DisplayConfig:
             return self.color_scheme
 
     @property
-    def rotation_enum(self) -> Rotation | int:  # TODO check what rotation does in firmware
-        """Get rotation as enum, or raw int if unknown."""
+    def rotation_enum(self) -> Rotation | int:
+        """Get rotation as enum, or raw int if unknown.
+
+        Firmware stores rotation as an index (0=0°, 1=90°, 2=180°, 3=270°).
+        """
+        _INDEX_TO_ROTATION = {
+            0: Rotation.ROTATE_0,
+            1: Rotation.ROTATE_90,
+            2: Rotation.ROTATE_180,
+            3: Rotation.ROTATE_270,
+        }
         try:
             return Rotation(self.rotation)
         except ValueError:
-            return self.rotation
+            return _INDEX_TO_ROTATION.get(self.rotation, self.rotation)
 
     SIZE: ClassVar[int] = 66
 
