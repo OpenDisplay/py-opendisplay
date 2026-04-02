@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.9.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.8.2...v5.9.0) (2026-04-02)
+
+
+### Features
+
+* add GRAYSCALE_16 (4bpp) encoding support ([9b5983b](https://github.com/OpenDisplay/py-opendisplay/commit/9b5983ba01ed064325828e97b37efd1b0eebff6e))
+
 ## [5.8.2](https://github.com/OpenDisplay/py-opendisplay/compare/v5.8.1...v5.8.2) (2026-04-02)
 
 
