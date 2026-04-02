@@ -25,8 +25,12 @@ class CommandCode(IntEnum):
     # Image upload commands (direct write mode)
     DIRECT_WRITE_START = 0x0070  # Start direct write transfer
     DIRECT_WRITE_DATA = 0x0071  # Send image data chunk
-    DIRECT_WRITE_END = 0x0072  # End transfer and refresh display
-    LED_ACTIVATE = 0x0073  # Trigger LED flash pattern (firmware 1.0+)
+    DIRECT_WRITE_END = 0x0072  # End transfer and trigger display refresh
+    LED_ACTIVATE = 0x0073  # Host→device: trigger LED flash pattern (firmware 1.0+)
+    DIRECT_WRITE_REFRESH_COMPLETE = (
+        0x0073  # Device→host: refresh finished (same code as LED_ACTIVATE, different direction)
+    )
+    DIRECT_WRITE_REFRESH_TIMEOUT = 0x0074  # Device→host: refresh timed out
 
 
 # Protocol constants

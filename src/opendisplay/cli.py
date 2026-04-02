@@ -12,10 +12,11 @@ from typing import Any, NoReturn, TypeVar
 
 from epaper_dithering import DitherMode
 from PIL import Image, UnidentifiedImageError
-from rich.console import Console
+from rich.console import Console, RenderableType
 from rich.logging import RichHandler
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, Task, TaskProgressColumn, TextColumn
 from rich.table import Table
+from rich.text import Text
 from rich.tree import Tree
 
 from .battery import voltage_to_percent
@@ -468,6 +469,36 @@ async def _info(device_kwargs: dict[str, Any], output_json: bool) -> None:
     _console.print(_build_info_tree(data))
 
 
+# ── upload progress columns ───────────────────────────────────────────────────
+
+
+class _SpinnerOrSpace(SpinnerColumn):
+    """Spinner for normal tasks; blank space for bar-row tasks."""
+
+    def render(self, task: Task) -> Text:
+        if task.fields.get("show_bar"):
+            return Text(" ")
+        return super().render(task)  # type: ignore[return-value]
+
+
+class _BarWhenActive(BarColumn):
+    """Bar rendered only for tasks with show_bar=True and a known total."""
+
+    def render(self, task: Task) -> RenderableType:  # type: ignore[override]
+        if task.fields.get("show_bar") and task.total is not None:
+            return super().render(task)
+        return Text("")
+
+
+class _PctWhenActive(TaskProgressColumn):
+    """Percentage rendered only for tasks with show_bar=True and a known total."""
+
+    def render(self, task: Task) -> Text:
+        if task.fields.get("show_bar") and task.total is not None:
+            return super().render(task)
+        return Text("")
+
+
 # ── upload ────────────────────────────────────────────────────────────────────
 
 
@@ -545,22 +576,29 @@ async def _upload(
 
     try:
         with Progress(
-            SpinnerColumn(finished_text="[green]✓[/green]"),
+            _SpinnerOrSpace(finished_text="[green]✓[/green]"),
             TextColumn("{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
+            _BarWhenActive(),
+            _PctWhenActive(),
             console=_console,
             transient=False,
         ) as progress:
             connect_task = progress.add_task("Connecting...", total=None, visible=True)
             upload_task = progress.add_task("Uploading...", total=None, visible=False)
+            bar_task = progress.add_task("", total=None, visible=False, show_bar=True)
+            refresh_task = progress.add_task("Refreshing display...", total=None, visible=False)
 
             async with OpenDisplayDevice(**device_kwargs) as device:
                 progress.update(connect_task, visible=False)
                 progress.update(upload_task, visible=True)
+                progress.update(bar_task, visible=True)
 
                 def on_progress(sent: int, total: int) -> None:
-                    progress.update(upload_task, total=total, completed=sent)
+                    progress.update(bar_task, total=total, completed=sent)
+                    if sent == total:
+                        progress.update(bar_task, visible=False)
+                        progress.update(upload_task, visible=False)
+                        progress.update(refresh_task, visible=True)
 
                 await device.upload_image(
                     image,
@@ -573,7 +611,9 @@ async def _upload(
                     progress_callback=on_progress,
                 )
 
-            progress.update(upload_task, description="[green]Done.[/green]")
+                progress.update(refresh_task, visible=False)
+
+            progress.update(upload_task, visible=True, description="[green]Done.[/green]", total=1, completed=1)
     except OpenDisplayError as exc:
         _handle_ble_error(exc)
 
