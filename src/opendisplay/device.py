@@ -25,7 +25,7 @@ from .encoding import (
     encode_image,
     fit_image,
 )
-from .exceptions import AuthenticationRequiredError, AuthenticationSessionExistsError, ProtocolError
+from .exceptions import AuthenticationRequiredError, AuthenticationSessionExistsError, ImageEncodingError, ProtocolError
 from .models.capabilities import DeviceCapabilities
 from .models.config import GlobalConfig
 from .models.enums import BoardManufacturer, FitMode, RefreshMode, Rotation
@@ -1118,9 +1118,16 @@ class OpenDisplayDevice:
         display = self._config.displays[0]  # Primary display
 
         r = display.rotation_enum
+        try:
+            color_scheme = ColorScheme.from_value(display.color_scheme)
+        except ValueError as exc:
+            raise ImageEncodingError(
+                f"Device uses unsupported color scheme value {display.color_scheme}. "
+                "Reconfigure the device to a supported color scheme (0–5)."
+            ) from exc
         return DeviceCapabilities(
             width=display.pixel_width,
             height=display.pixel_height,
-            color_scheme=ColorScheme.from_value(display.color_scheme),
+            color_scheme=color_scheme,
             rotation=r.value if isinstance(r, Rotation) else 0,
         )
