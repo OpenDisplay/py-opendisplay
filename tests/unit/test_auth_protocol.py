@@ -2,7 +2,12 @@
 
 import pytest
 
-from opendisplay.exceptions import AuthenticationFailedError, AuthenticationRequiredError, InvalidResponseError
+from opendisplay.exceptions import (
+    AuthenticationFailedError,
+    AuthenticationRequiredError,
+    AuthenticationSessionExistsError,
+    InvalidResponseError,
+)
 from opendisplay.protocol.commands import build_authenticate_step1, build_authenticate_step2
 from opendisplay.protocol.responses import parse_authenticate_challenge, parse_authenticate_success
 
@@ -10,6 +15,8 @@ _SERVER_NONCE = bytes(range(16))
 _CLIENT_NONCE = bytes(range(16, 32))
 _CHALLENGE = bytes(range(32, 48))
 _SERVER_PROOF = bytes(range(48, 64))
+_DEFAULT_DEVICE_ID = bytes([0x00, 0x00, 0x00, 0x01])
+_CUSTOM_DEVICE_ID = bytes([0xDE, 0xAD, 0xBE, 0xEF])
 
 
 class TestBuildAuthenticateStep1:
@@ -58,24 +65,50 @@ class TestBuildAuthenticateStep2:
 class TestParseAuthenticateChallenge:
     """Tests for parse_authenticate_challenge."""
 
-    def _valid(self, nonce: bytes = _SERVER_NONCE) -> bytes:
+    def _old_format(self, nonce: bytes = _SERVER_NONCE) -> bytes:
+        """19-byte (old firmware) challenge."""
         return b"\x00\x50\x00" + nonce
 
+    def _new_format(self, nonce: bytes = _SERVER_NONCE, device_id: bytes = _CUSTOM_DEVICE_ID) -> bytes:
+        """23-byte (new firmware) challenge with device_id."""
+        return b"\x00\x50\x00" + nonce + device_id
+
     def test_valid_returns_nonce(self):
-        """Valid response returns 16-byte server nonce."""
-        nonce = parse_authenticate_challenge(self._valid())
+        """Valid old-format response returns correct 16-byte server nonce."""
+        nonce, _ = parse_authenticate_challenge(self._old_format())
         assert nonce == _SERVER_NONCE
 
     def test_valid_with_high_bit(self):
         """High-bit echo (ACK flag) is also accepted."""
         data = b"\x80\x50\x00" + _SERVER_NONCE
-        nonce = parse_authenticate_challenge(data)
+        nonce, _ = parse_authenticate_challenge(data)
         assert nonce == _SERVER_NONCE
 
     def test_nonce_is_16_bytes(self):
         """Returned nonce is always 16 bytes."""
-        nonce = parse_authenticate_challenge(self._valid())
+        nonce, _ = parse_authenticate_challenge(self._old_format())
         assert len(nonce) == 16
+
+    def test_old_format_uses_default_device_id(self):
+        """19-byte format falls back to default device ID [0,0,0,1]."""
+        _, device_id = parse_authenticate_challenge(self._old_format())
+        assert device_id == _DEFAULT_DEVICE_ID
+
+    def test_new_format_extracts_device_id(self):
+        """23-byte format extracts device_id from bytes [19:23]."""
+        _, device_id = parse_authenticate_challenge(self._new_format(device_id=_CUSTOM_DEVICE_ID))
+        assert device_id == _CUSTOM_DEVICE_ID
+
+    def test_new_format_nonce_unaffected_by_device_id(self):
+        """New format still returns correct nonce regardless of device_id."""
+        nonce, _ = parse_authenticate_challenge(self._new_format())
+        assert nonce == _SERVER_NONCE
+
+    def test_status_already_authenticated_raises_session_exists(self):
+        """Status 0x02 (existing session) raises AuthenticationSessionExistsError."""
+        data = b"\x00\x50\x02" + _SERVER_NONCE
+        with pytest.raises(AuthenticationSessionExistsError):
+            parse_authenticate_challenge(data)
 
     def test_status_wrong_key_raises_auth_failed(self):
         """Status 0x01 (wrong key) raises AuthenticationFailedError."""

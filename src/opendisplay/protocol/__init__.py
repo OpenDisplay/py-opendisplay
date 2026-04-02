@@ -2,6 +2,7 @@
 
 from .commands import (
     CHUNK_SIZE,
+    ENCRYPTED_CHUNK_SIZE,
     MANUFACTURER_ID,
     MAX_COMPRESSED_SIZE,
     PIPELINE_CHUNKS,
@@ -36,6 +37,7 @@ __all__ = [
     "SERVICE_UUID",
     "MANUFACTURER_ID",
     "CHUNK_SIZE",
+    "ENCRYPTED_CHUNK_SIZE",
     "PIPELINE_CHUNKS",
     "MAX_COMPRESSED_SIZE",
     "build_read_config_command",

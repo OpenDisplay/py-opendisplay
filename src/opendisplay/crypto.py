@@ -33,7 +33,12 @@ def aes_ecb_encrypt(key: bytes, block: bytes) -> bytes:
     return enc.update(block) + enc.finalize()
 
 
-def derive_session_key(master_key: bytes, client_nonce: bytes, server_nonce: bytes) -> bytes:
+def derive_session_key(
+    master_key: bytes,
+    client_nonce: bytes,
+    server_nonce: bytes,
+    device_id: bytes = _DEVICE_ID,
+) -> bytes:
     """Derive per-session AES-128 key from master key and nonces.
 
     Matches firmware deriveSessionKey():
@@ -41,7 +46,7 @@ def derive_session_key(master_key: bytes, client_nonce: bytes, server_nonce: byt
       2. AES-ECB(master_key, counter_be(1, 8 bytes) || intermediate[0:8])
     """
     label = b"OpenDisplay session"
-    cmac_input = label + b"\x00" + _DEVICE_ID + client_nonce + server_nonce + bytes([0x00, 0x80])
+    cmac_input = label + b"\x00" + device_id + client_nonce + server_nonce + bytes([0x00, 0x80])
     intermediate = aes_cmac(master_key, cmac_input)
 
     # counter = 1, big-endian 8 bytes
@@ -59,12 +64,17 @@ def derive_session_id(session_key: bytes, client_nonce: bytes, server_nonce: byt
     return aes_cmac(session_key, client_nonce + server_nonce)[:8]
 
 
-def compute_challenge_response(master_key: bytes, server_nonce: bytes, client_nonce: bytes) -> bytes:
+def compute_challenge_response(
+    master_key: bytes,
+    server_nonce: bytes,
+    client_nonce: bytes,
+    device_id: bytes = _DEVICE_ID,
+) -> bytes:
     """Compute CMAC challenge proof sent to device in step 2 of auth.
 
     CMAC(master_key, server_nonce || client_nonce || device_id)
     """
-    return aes_cmac(master_key, server_nonce + client_nonce + _DEVICE_ID)
+    return aes_cmac(master_key, server_nonce + client_nonce + device_id)
 
 
 def get_nonce(session_id: bytes, counter: int) -> bytes:

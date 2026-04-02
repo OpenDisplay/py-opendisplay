@@ -4,15 +4,24 @@ from __future__ import annotations
 
 import struct
 
-from ..exceptions import AuthenticationFailedError, AuthenticationRequiredError, InvalidResponseError
+from ..exceptions import (
+    AuthenticationFailedError,
+    AuthenticationRequiredError,
+    AuthenticationSessionExistsError,
+    InvalidResponseError,
+)
 from ..models.firmware import FirmwareVersion
 from .commands import RESPONSE_HIGH_BIT_FLAG, CommandCode
 
 # Status bytes returned in AUTHENTICATE responses
 _AUTH_STATUS_OK = 0x00
 _AUTH_STATUS_WRONG_KEY = 0x01
+_AUTH_STATUS_ALREADY_AUTHENTICATED = 0x02
 _AUTH_STATUS_ENCRYPTION_NOT_CONFIGURED = 0x03
 _AUTH_STATUS_RATE_LIMITED = 0x04
+
+# Default device ID used by old firmware (pre-23-byte challenge format)
+_DEFAULT_DEVICE_ID = bytes([0x00, 0x00, 0x00, 0x01])
 
 
 def unpack_command_code(data: bytes, offset: int = 0) -> int:
@@ -89,19 +98,25 @@ def validate_ack_response(data: bytes, expected_command: int) -> None:
         raise InvalidResponseError(f"ACK mismatch: expected 0x{expected_command:04x}, got 0x{response_code:04x}")
 
 
-def parse_authenticate_challenge(data: bytes) -> bytes:
-    """Parse step-1 AUTHENTICATE response and return the server nonce.
+def parse_authenticate_challenge(data: bytes) -> tuple[bytes, bytes]:
+    """Parse step-1 AUTHENTICATE response and return the server nonce and device ID.
 
-    Expected format: [0x0050][status:1][server_nonce:16]
+    Supports two formats:
+    - Old (19 bytes): [0x0050][status:1][server_nonce:16]
+    - New (23 bytes): [0x0050][status:1][server_nonce:16][device_id:4]
 
     Args:
         data: Raw BLE notification from device
 
     Returns:
-        16-byte server nonce
+        Tuple of (server_nonce: bytes[16], device_id: bytes[4]).
+        device_id defaults to [0x00, 0x00, 0x00, 0x01] for old firmware.
 
     Raises:
-        AuthenticationError: If device returns an error status
+        AuthenticationSessionExistsError: If device reports an existing session (status 0x02) —
+            caller should retry to receive a fresh challenge.
+        AuthenticationFailedError: If device returns an error status
+        AuthenticationRequiredError: If encryption is not configured on the device
         InvalidResponseError: If response format is invalid
     """
     if len(data) < 2:
@@ -115,6 +130,8 @@ def parse_authenticate_challenge(data: bytes) -> bytes:
         raise InvalidResponseError("Auth challenge response missing status byte")
 
     status = data[2]
+    if status == _AUTH_STATUS_ALREADY_AUTHENTICATED:
+        raise AuthenticationSessionExistsError("Device has an active session; retry to get a fresh challenge")
     if status == _AUTH_STATUS_ENCRYPTION_NOT_CONFIGURED:
         raise AuthenticationRequiredError("Device does not have encryption configured")
     if status == _AUTH_STATUS_RATE_LIMITED:
@@ -125,7 +142,9 @@ def parse_authenticate_challenge(data: bytes) -> bytes:
     if len(data) < 19:  # 2 echo + 1 status + 16 nonce
         raise InvalidResponseError(f"Auth challenge response too short for nonce: {len(data)} bytes (need 19)")
 
-    return data[3:19]
+    server_nonce = data[3:19]
+    device_id = data[19:23] if len(data) >= 23 else _DEFAULT_DEVICE_ID
+    return server_nonce, device_id
 
 
 def parse_authenticate_success(data: bytes) -> bytes:

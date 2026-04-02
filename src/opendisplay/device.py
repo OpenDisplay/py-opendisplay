@@ -25,7 +25,7 @@ from .encoding import (
     encode_image,
     fit_image,
 )
-from .exceptions import AuthenticationRequiredError, BLETimeoutError, ProtocolError
+from .exceptions import AuthenticationRequiredError, AuthenticationSessionExistsError, BLETimeoutError, ProtocolError
 from .models.capabilities import DeviceCapabilities
 from .models.config import GlobalConfig
 from .models.enums import BoardManufacturer, FitMode, RefreshMode, Rotation
@@ -33,6 +33,7 @@ from .models.firmware import FirmwareVersion
 from .models.led_flash import LedFlashConfig
 from .protocol import (
     CHUNK_SIZE,
+    ENCRYPTED_CHUNK_SIZE,
     MAX_COMPRESSED_SIZE,
     CommandCode,
     build_authenticate_step1,
@@ -346,8 +347,8 @@ class OpenDisplayDevice:
             await self._reauthenticate_if_needed()
             cmd = data[:2]
             payload = data[2:]
-            self._nonce_counter += 1
             encrypted = encrypt_command(self._session_key, self._session_id, self._nonce_counter, cmd, payload)
+            self._nonce_counter += 1
             await self._conn.write_command(encrypted)
         else:
             await self._conn.write_command(data)
@@ -403,20 +404,27 @@ class OpenDisplayDevice:
         """
         _LOGGER.debug("Authenticating with device %s", self.mac_address)
 
-        # Step 1: Request server nonce
-        await self._conn.write_command(build_authenticate_step1())
-        challenge_response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
-        server_nonce = parse_authenticate_challenge(challenge_response)
+        # Step 1: Request server nonce (retry once if device reports existing session)
+        for attempt in range(2):
+            await self._conn.write_command(build_authenticate_step1())
+            challenge_data = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
+            try:
+                server_nonce, device_id = parse_authenticate_challenge(challenge_data)
+                break
+            except AuthenticationSessionExistsError:
+                if attempt == 1:
+                    raise
+                _LOGGER.debug("Device has active session, retrying for fresh challenge")
 
         # Step 2: Prove key knowledge, receive server proof
         client_nonce = generate_client_nonce()
-        challenge = compute_challenge_response(key, server_nonce, client_nonce)
+        challenge = compute_challenge_response(key, server_nonce, client_nonce, device_id)
         await self._conn.write_command(build_authenticate_step2(client_nonce, challenge))
         success_response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
         parse_authenticate_success(success_response)  # raises on wrong key / error
 
         # Derive session key and ID
-        self._session_key = derive_session_key(key, client_nonce, server_nonce)
+        self._session_key = derive_session_key(key, client_nonce, server_nonce, device_id)
         self._session_id = derive_session_id(self._session_key, client_nonce, server_nonce)
         self._nonce_counter = 0
         self._auth_time = time.monotonic()
@@ -1035,7 +1043,8 @@ class OpenDisplayDevice:
         while bytes_sent < len(image_data):
             # Get next chunk
             chunk_start = bytes_sent
-            chunk_end = min(chunk_start + CHUNK_SIZE, len(image_data))
+            chunk_size = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else CHUNK_SIZE
+            chunk_end = min(chunk_start + chunk_size, len(image_data))
             chunk_data = image_data[chunk_start:chunk_end]
 
             # Send DATA command

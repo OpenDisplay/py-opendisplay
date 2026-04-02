@@ -92,6 +92,15 @@ class TestDeriveSessionKey:
         k2 = derive_session_key(master, cn, bytes([1] * 16))
         assert k1 != k2
 
+    def test_changes_with_device_id(self):
+        """Different device_id produces a different session key."""
+        master = bytes(range(16))
+        cn = bytes(range(16, 32))
+        sn = bytes(range(32, 48))
+        k1 = derive_session_key(master, cn, sn, bytes([0x00, 0x00, 0x00, 0x01]))
+        k2 = derive_session_key(master, cn, sn, bytes([0xDE, 0xAD, 0xBE, 0xEF]))
+        assert k1 != k2
+
 
 class TestDeriveSessionId:
     """Tests for derive_session_id."""
@@ -156,9 +165,18 @@ class TestComputeChallengeResponse:
         cn = bytes(range(32, 48))
         device_id = bytes([0x00, 0x00, 0x00, 0x01])
 
-        result = compute_challenge_response(master, sn, cn)
+        result = compute_challenge_response(master, sn, cn, device_id)
         expected = aes_cmac(master, sn + cn + device_id)
         assert result == expected
+
+    def test_changes_with_device_id(self):
+        """Different device_id produces a different challenge response."""
+        master = bytes(range(16))
+        sn = bytes(range(16, 32))
+        cn = bytes(range(32, 48))
+        r1 = compute_challenge_response(master, sn, cn, bytes([0x00, 0x00, 0x00, 0x01]))
+        r2 = compute_challenge_response(master, sn, cn, bytes([0xDE, 0xAD, 0xBE, 0xEF]))
+        assert r1 != r2
 
 
 class TestEncryptDecryptCommand:

@@ -35,7 +35,9 @@ MANUFACTURER_ID = 0x2446  # 9286 decimal
 RESPONSE_HIGH_BIT_FLAG = 0x8000  # High bit set in response codes indicates ACK
 
 # Chunking constants
-CHUNK_SIZE = 230  # Maximum data bytes per chunk
+CHUNK_SIZE = 230  # Maximum data bytes per chunk (unencrypted)
+ENCRYPTED_CHUNK_SIZE = 154  # Maximum data bytes per chunk when session is active
+# Encrypted packet: cmd(2)+nonce(16)+len(1)+data(154)+tag(12) = 185 bytes
 CONFIG_CHUNK_SIZE = 200  # Maximum config chunk size (verified from firmware)
 PIPELINE_CHUNKS = 1  # Wait for ACK after each chunk
 

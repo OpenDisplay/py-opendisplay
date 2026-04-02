@@ -55,6 +55,16 @@ class AuthenticationFailedError(AuthenticationError):
     pass
 
 
+class AuthenticationSessionExistsError(AuthenticationError):
+    """Device still has an active session from a previous connection.
+
+    Raised when the device returns status 0x02 in the step-1 challenge response.
+    The caller should retry the authentication request to get a fresh challenge.
+    """
+
+    pass
+
+
 class AuthenticationRequiredError(AuthenticationError):
     """Command rejected because no authenticated session exists.
 
