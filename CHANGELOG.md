@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.8.1](https://github.com/OpenDisplay/py-opendisplay/compare/v5.8.0...v5.8.1) (2026-04-02)
+
+
+### Bug Fixes
+
+* add refresh display state ([947686e](https://github.com/OpenDisplay/py-opendisplay/commit/947686e81d2051b2d596d76894cdca68b6046ad1))
+* apply device config rotation additively during image upload ([6c1363f](https://github.com/OpenDisplay/py-opendisplay/commit/6c1363fce2ea364c77b7ff153b30a2ee6eb6cadb))
+* fix encryption ([fd2ed20](https://github.com/OpenDisplay/py-opendisplay/commit/fd2ed207a2723fccbe088569f482a343764c2b77))
+* progress bar starts at left edge ([d580f17](https://github.com/OpenDisplay/py-opendisplay/commit/d580f17c6112c027c784fc433662052ec531b2c2))
+* show rotation degrees correctly ([1f67c5b](https://github.com/OpenDisplay/py-opendisplay/commit/1f67c5b01b4fa10467c784c90e6fcec4126f0080))
+
 ## [5.8.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.7.0...v5.8.0) (2026-04-01)
 
 
