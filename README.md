@@ -50,10 +50,10 @@ async with OpenDisplayDevice(device_name="OpenDisplay-A123") as device:
 Run without installing (requires [uv](https://docs.astral.sh/uv/)):
 
 ```bash
-uvx --from py-opendisplay opendisplay --help
+uvx --from "py-opendisplay[cli]" opendisplay --help
 ```
 
-Or after `pip install py-opendisplay`:
+Or after `pip install py-opendisplay[cli]`:
 
 ```bash
 # Discover nearby devices
