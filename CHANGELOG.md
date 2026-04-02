@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.8.2](https://github.com/OpenDisplay/py-opendisplay/compare/v5.8.1...v5.8.2) (2026-04-02)
+
+
+### Bug Fixes
+
+* bump epaper-dithering version to support GRAYSCALE_8 and GRAYSCALE_16 ([eb80b94](https://github.com/OpenDisplay/py-opendisplay/commit/eb80b94a0c4e0b5418546cd35e435f020751caf2))
+
 ## [5.8.1](https://github.com/OpenDisplay/py-opendisplay/compare/v5.8.0...v5.8.1) (2026-04-02)
 
 
