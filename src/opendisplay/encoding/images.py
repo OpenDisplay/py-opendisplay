@@ -89,6 +89,9 @@ def encode_image(
         return encode_4bpp(image, bwgbry_mapping=True)
     if color_scheme == ColorScheme.GRAYSCALE_4:
         return encode_2bpp(image)
+    if color_scheme == ColorScheme.GRAYSCALE_16:
+        # 16-level grayscale uses 4bpp; palette indices 0-15 map directly (0=black, 15=white)
+        return encode_4bpp(image)
     raise ValueError(f"Unsupported color scheme: {color_scheme}")
 
 
@@ -164,6 +167,10 @@ def encode_4bpp(image: Image.Image, bwgbry_mapping: bool = False) -> bytes:
 
     Format: 2 pixels per byte, MSB first
     Each 4-bit value maps to palette index (0-15)
+
+    Used for BWGBRY (6-color Spectra 6) and GRAYSCALE_16 (16-level grayscale).
+    For GRAYSCALE_16, palette indices 0-15 map directly to firmware values
+    (0=black, 15=white), so no remapping is needed.
 
     Args:
         image: Palette image (mode 'P')
