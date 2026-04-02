@@ -66,6 +66,25 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+_INDEX_TO_ROTATION: dict[int, Rotation] = {
+    0: Rotation.ROTATE_0,
+    1: Rotation.ROTATE_90,
+    2: Rotation.ROTATE_180,
+    3: Rotation.ROTATE_270,
+}
+
+
+def _capabilities_rotation(raw: int) -> Rotation:
+    """Convert a DeviceCapabilities.rotation int to a Rotation enum.
+
+    Tolerates both degree values (0/90/180/270) stored by current code and
+    raw firmware indices (0/1/2/3) that may exist in older serialized data.
+    """
+    try:
+        return Rotation(raw)
+    except ValueError:
+        return _INDEX_TO_ROTATION.get(raw, Rotation.ROTATE_0)
+
 
 def _rotate_source_image(image: Image.Image, rotate: Rotation) -> Image.Image:
     """Rotate source image by enum value before fitting.
@@ -128,18 +147,21 @@ def prepare_image(
         if config is None or not config.displays:
             raise RuntimeError("Config has no display information")
         display = config.displays[0]
+        r = display.rotation_enum
         capabilities = DeviceCapabilities(
             width=display.pixel_width,
             height=display.pixel_height,
             color_scheme=ColorScheme.from_value(display.color_scheme),
-            rotation=display.rotation,
+            rotation=r.value if isinstance(r, Rotation) else 0,
         )
 
     if panel_ic_type is None and config is not None and config.displays:
         panel_ic_type = config.displays[0].panel_ic_type
 
     target_size = (capabilities.width, capabilities.height)
-    image = _rotate_source_image(image, rotate)
+    base = _capabilities_rotation(capabilities.rotation)
+    effective = Rotation((base.value + rotate.value) % 360)
+    image = _rotate_source_image(image, effective)
 
     if image.size != target_size:
         _LOGGER.info(
@@ -996,18 +1018,20 @@ class OpenDisplayDevice:
         validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
 
         # 3. Send data chunks
+        auto_completed = False
         if use_compression:
             if remaining_compressed:
-                await self._send_data_chunks(remaining_compressed, progress_callback)
+                auto_completed = await self._send_data_chunks(remaining_compressed, progress_callback)
         else:
-            await self._send_data_chunks(image_data, progress_callback)
+            auto_completed = await self._send_data_chunks(image_data, progress_callback)
 
-        # 4. Send END, wait for ACK (refresh starting), then wait for refresh complete (0x73)
-        end_cmd = build_direct_write_end_command(refresh_mode.value)
-        await self._write(end_cmd)
+        # 4. Send END (unless device auto-triggered refresh), then wait for 0x73
+        if not auto_completed:
+            end_cmd = build_direct_write_end_command(refresh_mode.value)
+            await self._write(end_cmd)
 
-        response = await self._read(self.TIMEOUT_ACK)
-        validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
+            response = await self._read(self.TIMEOUT_ACK)
+            validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
         _LOGGER.debug("Display refresh started, waiting for completion...")
 
         response = await self._read(self.TIMEOUT_REFRESH)
@@ -1022,14 +1046,17 @@ class OpenDisplayDevice:
         self,
         image_data: bytes,
         progress_callback: Callable[[int, int], None] | None = None,
-    ) -> None:
-        """Send image data chunks, waiting for 0x71 ACK after each.
+    ) -> bool:
+        """Send image data chunks, waiting for ACK after each.
 
-        Args:
-            image_data: Image data to send in chunks
+        Returns:
+            True if the device sent 0x72 in place of a 0x71 ACK, meaning it
+            auto-triggered the refresh (uncompressed protocol, buffer full).
+            Caller must NOT send an explicit END in this case.
+            False on normal completion — caller should send END.
 
         Raises:
-            ProtocolError: If device responds with anything other than DATA ACK
+            ProtocolError: If device responds with an unexpected code
             BLETimeoutError: If no response within TIMEOUT_ACK
         """
         bytes_sent = 0
@@ -1048,6 +1075,17 @@ class OpenDisplayDevice:
 
             response = await self._read(self.TIMEOUT_ACK)
             command, _ = check_response_type(response)
+
+            if command == CommandCode.DIRECT_WRITE_END:
+                # Device auto-triggered refresh (buffer full) and sent 0x72
+                # instead of 0x71. No explicit END should follow.
+                _LOGGER.debug(
+                    "Device auto-completed upload after %d bytes (%d chunks)",
+                    bytes_sent,
+                    chunks_sent,
+                )
+                return True
+
             if command != CommandCode.DIRECT_WRITE_DATA:
                 raise ProtocolError(f"Unexpected response during upload: {command.name} (0x{command:04x})")
 
@@ -1059,9 +1097,8 @@ class OpenDisplayDevice:
                     bytes_sent / len(image_data) * 100,
                 )
 
-        _LOGGER.debug(
-            "All data chunks sent (%d chunks total)", chunks_sent
-        )  # Normal completion, caller should send END
+        _LOGGER.debug("All data chunks sent (%d chunks total)", chunks_sent)
+        return False
 
     def _extract_capabilities_from_config(self) -> DeviceCapabilities:
         """Extract DeviceCapabilities from GlobalConfig.
@@ -1080,9 +1117,10 @@ class OpenDisplayDevice:
 
         display = self._config.displays[0]  # Primary display
 
+        r = display.rotation_enum
         return DeviceCapabilities(
             width=display.pixel_width,
             height=display.pixel_height,
             color_scheme=ColorScheme.from_value(display.color_scheme),
-            rotation=display.rotation,
+            rotation=r.value if isinstance(r, Rotation) else 0,
         )
