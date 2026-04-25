@@ -6,7 +6,9 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
+from pathlib import Path
 from collections.abc import Coroutine
 from typing import Any, NoReturn, TypeVar
 
@@ -21,6 +23,7 @@ from rich.tree import Tree
 
 from .battery import voltage_to_percent
 from .device import OpenDisplayDevice
+from .partial import PartialState
 from .discovery import discover_devices_with_adv
 from .exceptions import (
     AuthenticationFailedError,
@@ -472,6 +475,25 @@ async def _info(device_kwargs: dict[str, Any], output_json: bool) -> None:
 # ── upload ────────────────────────────────────────────────────────────────────
 
 
+def _load_partial_state(path: str) -> PartialState:
+    """Load PartialState from path, or return a fresh one if the file is absent."""
+    p = Path(path)
+    if not p.exists():
+        return PartialState()
+    try:
+        return PartialState.from_bytes(p.read_bytes())
+    except (OSError, ValueError) as exc:
+        _error(f"Failed to load --state-file {path}: {exc}")
+
+
+def _save_partial_state(path: str, state: PartialState) -> None:
+    """Atomically write PartialState to path (write to .tmp then rename)."""
+    p = Path(path)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_bytes(state.to_bytes())
+    os.replace(tmp, p)
+
+
 def _add_upload_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     p = subparsers.add_parser("upload", help="Upload an image to the device")
     _add_device_options(p)
@@ -507,6 +529,14 @@ def _add_upload_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         metavar="VALUE",
         help='Dynamic range compression: "auto" or 0.0–1.0 (default: auto)',
     )
+    p.add_argument(
+        "--state-file",
+        metavar="PATH",
+        default=None,
+        help="Persistent partial-rendering state file. If the file exists, it's loaded and "
+        "the upload attempts a partial transfer; on success the file is rewritten. If it "
+        "does not exist, a fresh state is created (forcing a full upload first time).",
+    )
     p.set_defaults(func=_cmd_upload)
 
 
@@ -523,6 +553,7 @@ def _cmd_upload(args: argparse.Namespace) -> None:
             _ROTATE_CHOICES[args.rotate],
             not args.no_compress,
             tone,
+            args.state_file,
         )
     )
 
@@ -536,6 +567,7 @@ async def _upload(
     rotate: Rotation,
     compress: bool,
     tone_compression: float | str,
+    state_file: str | None,
 ) -> None:
     try:
         image = Image.open(image_path)
@@ -583,6 +615,8 @@ async def _upload(
                         spinner_progress.update(upload_task, visible=False)
                         spinner_progress.update(refresh_task, visible=True)
 
+                state = _load_partial_state(state_file) if state_file else None
+
                 await device.upload_image(
                     image,
                     refresh_mode=refresh_mode,
@@ -592,7 +626,11 @@ async def _upload(
                     fit=fit,
                     rotate=rotate,
                     progress_callback=on_progress,
+                    state=state,
                 )
+
+                if state_file and state is not None:
+                    _save_partial_state(state_file, state)
 
             spinner_progress.update(refresh_task, visible=False)
             spinner_progress.update(upload_task, visible=True, description="[green]Done.[/green]", total=1, completed=1)
