@@ -31,6 +31,8 @@ class CommandCode(IntEnum):
         0x0073  # Device→host: refresh finished (same code as LED_ACTIVATE, different direction)
     )
     DIRECT_WRITE_REFRESH_TIMEOUT = 0x0074  # Device→host: refresh timed out
+    DIRECT_WRITE_PARTIAL_START = 0x0076  # Start a versioned partial update transfer
+    DIRECT_WRITE_PARTIAL_DATA = 0x0077  # Send partial image segments
 
 
 # Protocol constants
@@ -137,6 +139,19 @@ def build_direct_write_start_uncompressed() -> bytes:
     return CommandCode.DIRECT_WRITE_START.to_bytes(2, byteorder="big")
 
 
+def build_direct_write_partial_start(old_etag: int, version: int = 1) -> bytes:
+    """Build 0x76 partial START with protocol version and old_etag.
+
+    Wire v1: [0x0076][version:1][old_etag:4 BE]
+    """
+    if not 0 <= version <= 0xFF:
+        raise ValueError(f"partial protocol version out of uint8 range: {version}")
+    if not 0 <= old_etag <= 0xFFFFFFFF:
+        raise ValueError(f"old_etag out of uint32 range: {old_etag}")
+    cmd = CommandCode.DIRECT_WRITE_PARTIAL_START.to_bytes(2, byteorder="big")
+    return cmd + version.to_bytes(1, byteorder="big") + old_etag.to_bytes(4, byteorder="big")
+
+
 def build_direct_write_data_command(chunk_data: bytes) -> bytes:
     """Build command to send image data chunk.
 
@@ -177,6 +192,20 @@ def build_direct_write_end_command(refresh_mode: int = 0) -> bytes:
     cmd = CommandCode.DIRECT_WRITE_END.to_bytes(2, byteorder="big")
     refresh = refresh_mode.to_bytes(1, byteorder="big")
     return cmd + refresh
+
+
+def build_direct_write_end_with_etag(refresh_mode: int, new_etag: int) -> bytes:
+    """Build 0x72 END with a new_etag tail. Etag presence is by length only."""
+    if not 0 <= new_etag <= 0xFFFFFFFF:
+        raise ValueError(f"new_etag out of uint32 range: {new_etag}")
+    cmd = CommandCode.DIRECT_WRITE_END.to_bytes(2, byteorder="big")
+    return cmd + refresh_mode.to_bytes(1, byteorder="big") + new_etag.to_bytes(4, byteorder="big")
+
+
+def build_partial_data_packet(payload: bytes) -> bytes:
+    """Wrap a packed segment payload in the 0x77 opcode prefix."""
+    cmd = CommandCode.DIRECT_WRITE_PARTIAL_DATA.to_bytes(2, byteorder="big")
+    return cmd + payload
 
 
 def build_led_activate_command(

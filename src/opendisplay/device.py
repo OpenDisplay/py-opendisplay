@@ -31,6 +31,17 @@ from .models.config import GlobalConfig
 from .models.enums import BoardManufacturer, FitMode, RefreshMode, Rotation
 from .models.firmware import FirmwareVersion
 from .models.led_flash import LedFlashConfig
+from .partial import (
+    ERR_ETAG_MISMATCH,
+    SEGMENT_HEADER_SIZE,
+    DiffStrategy,
+    PartialState,
+    RecursiveBoundingBoxStrategy,
+    Segment,
+    _generate_etag,
+    pack_segments_into_packets,
+    parse_nack,
+)
 from .protocol import (
     CHUNK_SIZE,
     ENCRYPTED_CHUNK_SIZE,
@@ -40,9 +51,12 @@ from .protocol import (
     build_authenticate_step2,
     build_direct_write_data_command,
     build_direct_write_end_command,
+    build_direct_write_end_with_etag,
+    build_direct_write_partial_start,
     build_direct_write_start_compressed,
     build_direct_write_start_uncompressed,
     build_led_activate_command,
+    build_partial_data_packet,
     build_read_config_command,
     build_read_fw_version_command,
     build_reboot_command,
@@ -860,6 +874,8 @@ class OpenDisplayDevice:
         fit: FitMode = FitMode.CONTAIN,
         rotate: Rotation = Rotation.ROTATE_0,
         progress_callback: Callable[[int, int], None] | None = None,
+        state: PartialState | None = None,
+        diff_strategy: DiffStrategy | None = None,
     ) -> Image.Image:
         """Upload image to device display.
 
@@ -906,6 +922,19 @@ class OpenDisplayDevice:
         image_data, compressed_data, processed_image = self._prepare_image(
             image, dither_mode, compress and supports_compression, tone_compression, fit, rotate
         )
+
+        if state is not None:
+            partial_outcome = await self._maybe_upload_partial(
+                processed_image, image_data, refresh_mode, state, diff_strategy
+            )
+            if partial_outcome == "skipped":
+                _LOGGER.info("Image upload complete (no changes; skipped transfer)")
+                return processed_image
+            if partial_outcome == "success":
+                _LOGGER.info("Image upload complete (partial path)")
+                return processed_image
+            # else: fall through to full-upload path; state will be refreshed below.
+
         if compress and supports_compression and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
             _LOGGER.info("Using compressed upload protocol (size: %d bytes)", len(compressed_data))
             await self._execute_upload(
@@ -928,6 +957,8 @@ class OpenDisplayDevice:
             )
 
         _LOGGER.info("Image upload complete")
+        if state is not None:
+            self._update_partial_state(state, processed_image, image_data)
         return processed_image
 
     async def upload_prepared_image(
@@ -936,6 +967,8 @@ class OpenDisplayDevice:
         refresh_mode: RefreshMode = RefreshMode.FULL,
         compress: bool = True,
         progress_callback: Callable[[int, int], None] | None = None,
+        state: PartialState | None = None,
+        diff_strategy: DiffStrategy | None = None,
     ) -> None:
         """Upload pre-computed image data to device.
 
@@ -954,7 +987,18 @@ class OpenDisplayDevice:
         Raises:
             ProtocolError: If upload fails
         """
-        image_data, compressed_data, _ = prepared_data
+        image_data, compressed_data, processed_image = prepared_data
+
+        if state is not None:
+            partial_outcome = await self._maybe_upload_partial(
+                processed_image, image_data, refresh_mode, state, diff_strategy
+            )
+            if partial_outcome == "skipped":
+                _LOGGER.info("Prepared image upload complete (no changes; skipped transfer)")
+                return
+            if partial_outcome == "success":
+                _LOGGER.info("Prepared image upload complete (partial path)")
+                return
 
         supports_compression = (
             self._config.displays[0].supports_zip if (self._config and self._config.displays) else True
@@ -981,6 +1025,156 @@ class OpenDisplayDevice:
             )
 
         _LOGGER.info("Prepared image upload complete")
+        if state is not None:
+            self._update_partial_state(state, processed_image, image_data)
+
+    def _update_partial_state(
+        self,
+        state: PartialState,
+        processed_image: Image.Image,
+        image_data: bytes,
+    ) -> None:
+        """After a successful full upload, refresh state to reflect what's now on the panel.
+
+        Generates a fresh non-zero etag, stashes the palette pixels for diffing
+        on the next call. ``image_data`` is unused but kept for API symmetry.
+        """
+        del image_data
+        palette_image = processed_image.convert("P") if processed_image.mode != "P" else processed_image
+        state.etag = _generate_etag()
+        state.last_image = palette_image.tobytes()
+        state.width, state.height = processed_image.size
+        state.bytes_per_pixel = 1
+
+    async def _maybe_upload_partial(
+        self,
+        processed_image: Image.Image,
+        image_data: bytes,
+        refresh_mode: RefreshMode,
+        state: PartialState,
+        diff_strategy: DiffStrategy | None,
+    ) -> str:
+        """Try to perform a partial upload. Return code:
+
+        - "success": partial transfer accepted; state mutated.
+        - "skipped": no changes detected; nothing sent; state untouched.
+        - "fallback_full": caller must do a full upload (and refresh state).
+        """
+        del image_data  # full encoding is per-segment for partial path
+
+        color_scheme = self.color_scheme
+        if color_scheme in (ColorScheme.BWR, ColorScheme.BWY):
+            # Bitplane color schemes are not supported on the partial path yet:
+            # encode_image() refuses them and per-segment plane extraction is
+            # not implemented. Force a full upload + state refresh.
+            _LOGGER.debug("Partial path skipped: color scheme %s requires bitplane encoding", color_scheme.name)
+            return "fallback_full"
+
+        width, height = processed_image.size
+        if (
+            state.etag == 0
+            or state.last_image is None
+            or state.width != width
+            or state.height != height
+        ):
+            return "fallback_full"
+
+        palette_image = processed_image.convert("P") if processed_image.mode != "P" else processed_image
+        new_palette = palette_image.tobytes()
+        old_palette = state.last_image
+
+        if len(old_palette) != len(new_palette):
+            return "fallback_full"
+
+        chunk_size = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else CHUNK_SIZE
+        max_segment_pixel_bytes = chunk_size - SEGMENT_HEADER_SIZE
+        if max_segment_pixel_bytes <= 0:
+            return "fallback_full"
+
+        strategy: DiffStrategy = diff_strategy or RecursiveBoundingBoxStrategy()
+        new_segments = strategy.diff(old_palette, new_palette, width, height, 1, max_segment_pixel_bytes)
+        if not new_segments:
+            return "skipped"
+
+        # Build (Segment, wire_pixels) pairs for both planes.
+        # PLANE_0 = new image, PLANE_1 = old image.
+        old_palette_image = palette_image.copy()
+        old_palette_image.frombytes(old_palette)
+
+        pairs: list[tuple[Segment, bytes]] = []
+        for seg in new_segments:
+            new_wire = self._encode_segment_wire(palette_image, seg.x, seg.y, seg.width, seg.height, color_scheme)
+            old_wire = self._encode_segment_wire(
+                old_palette_image, seg.x, seg.y, seg.width, seg.height, color_scheme
+            )
+            new_seg = Segment(seg.x, seg.y, seg.width, seg.height, b"", plane=0)
+            old_seg = Segment(seg.x, seg.y, seg.width, seg.height, b"", plane=1)
+            pairs.append((new_seg, new_wire))
+            pairs.append((old_seg, old_wire))
+
+        packets = pack_segments_into_packets(pairs, mtu=chunk_size)
+
+        new_etag = _generate_etag()
+
+        # 1. 0x76 partial START with protocol version + old_etag
+        await self._write(build_direct_write_partial_start(state.etag))
+        response = await self._read(self.TIMEOUT_ACK)
+        nack = parse_nack(response)
+        if nack is not None:
+            opcode, err = nack
+            if opcode == 0x76 and err == ERR_ETAG_MISMATCH:
+                _LOGGER.info("Partial upload: device etag mismatch — falling back to full upload")
+                state.etag = 0
+                state.last_image = None
+                return "fallback_full"
+            raise ProtocolError(f"Partial 0x76 NACK: opcode=0x{opcode:02x} err=0x{err:02x}")
+        validate_ack_response(response, CommandCode.DIRECT_WRITE_PARTIAL_START)
+
+        # 2. 0x77 packets — ACK after each
+        for pkt in packets:
+            await self._write(pkt)
+            ack = await self._read(self.TIMEOUT_ACK)
+            nack = parse_nack(ack)
+            if nack is not None:
+                opcode, err = nack
+                state.etag = 0
+                state.last_image = None
+                raise ProtocolError(f"Partial 0x77 NACK: opcode=0x{opcode:02x} err=0x{err:02x}")
+            validate_ack_response(ack, CommandCode.DIRECT_WRITE_PARTIAL_DATA)
+
+        # 3. 0x72 END with new_etag
+        await self._write(build_direct_write_end_with_etag(refresh_mode.value, new_etag))
+        response = await self._read(self.TIMEOUT_ACK)
+        validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
+
+        # 4. Wait for refresh-complete (0x73 device→host)
+        response = await self._read(self.TIMEOUT_REFRESH)
+        command, _ = check_response_type(response)
+        if command == CommandCode.DIRECT_WRITE_REFRESH_TIMEOUT:
+            raise ProtocolError("Display refresh timed out (device sent 0x74)")
+        if command != CommandCode.DIRECT_WRITE_REFRESH_COMPLETE:
+            raise ProtocolError(f"Unexpected response waiting for refresh: {command.name} (0x{command:04x})")
+
+        # Mutate state in place
+        state.etag = new_etag
+        state.last_image = new_palette
+        state.width = width
+        state.height = height
+        state.bytes_per_pixel = 1
+        return "success"
+
+    @staticmethod
+    def _encode_segment_wire(
+        palette_image: Image.Image,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        color_scheme: ColorScheme,
+    ) -> bytes:
+        """Crop the palette image to (x,y,w,h) and encode to the panel's wire format."""
+        cropped = palette_image.crop((x, y, x + w, y + h))
+        return encode_image(cropped, color_scheme)
 
     async def _execute_upload(
         self,
