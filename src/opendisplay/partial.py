@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 # ---------------------------------------------------------------------------
-# Wire constants (mirrored from firmware feat/partial-rendering)
+# Wire constants mirrored from the firmware partial-rendering protocol.
 # ---------------------------------------------------------------------------
 
 # NACK error codes returned by the device inside {0xFF, opcode, error, 0x00}
@@ -131,7 +131,7 @@ class FullImageStrategy:
 class RecursiveBoundingBoxStrategy:
     """Recursive bounding-box diff strategy (default).
 
-    Algorithm (per §3.3 of the partial-rendering plan):
+    Algorithm:
     1. Compute the minimal bounding box of all changed pixels within the
        current region.
     2. If the box's pixel data fits within ``max_segment_bytes``, emit it.
