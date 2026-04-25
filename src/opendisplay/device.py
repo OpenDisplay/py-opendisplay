@@ -927,13 +927,11 @@ class OpenDisplayDevice:
             partial_outcome = await self._maybe_upload_partial(
                 processed_image, image_data, refresh_mode, state, diff_strategy
             )
-            if partial_outcome == "skipped":
-                _LOGGER.info("Image upload complete (no changes; skipped transfer)")
-                return processed_image
             if partial_outcome == "success":
                 _LOGGER.info("Image upload complete (partial path)")
                 return processed_image
-            # else: fall through to full-upload path; state will be refreshed below.
+            if partial_outcome == "fallback_full":
+                _LOGGER.info("Partial path unavailable or unnecessary; continuing with full upload")
 
         if compress and supports_compression and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
             _LOGGER.info("Using compressed upload protocol (size: %d bytes)", len(compressed_data))
@@ -993,12 +991,11 @@ class OpenDisplayDevice:
             partial_outcome = await self._maybe_upload_partial(
                 processed_image, image_data, refresh_mode, state, diff_strategy
             )
-            if partial_outcome == "skipped":
-                _LOGGER.info("Prepared image upload complete (no changes; skipped transfer)")
-                return
             if partial_outcome == "success":
                 _LOGGER.info("Prepared image upload complete (partial path)")
                 return
+            if partial_outcome == "fallback_full":
+                _LOGGER.info("Partial prepared upload unavailable or unnecessary; continuing with full upload")
 
         supports_compression = (
             self._config.displays[0].supports_zip if (self._config and self._config.displays) else True
@@ -1057,7 +1054,6 @@ class OpenDisplayDevice:
         """Try to perform a partial upload. Return code:
 
         - "success": partial transfer accepted; state mutated.
-        - "skipped": no changes detected; nothing sent; state untouched.
         - "fallback_full": caller must do a full upload (and refresh state).
         """
         del image_data  # full encoding is per-segment for partial path
@@ -1094,7 +1090,8 @@ class OpenDisplayDevice:
         strategy: DiffStrategy = diff_strategy or RecursiveBoundingBoxStrategy()
         new_segments = strategy.diff(old_palette, new_palette, width, height, 1, max_segment_pixel_bytes)
         if not new_segments:
-            return "skipped"
+            _LOGGER.debug("Partial path: local state already matches target image; forcing full upload to resync")
+            return "fallback_full"
 
         # Build (Segment, wire_pixels) pairs for both planes.
         # PLANE_0 = new image, PLANE_1 = old image.
