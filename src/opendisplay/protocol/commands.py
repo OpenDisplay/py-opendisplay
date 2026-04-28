@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import struct
 from enum import IntEnum
 
 from ..models.led_flash import LedFlashConfig
@@ -31,8 +32,7 @@ class CommandCode(IntEnum):
         0x0073  # Device→host: refresh finished (same code as LED_ACTIVATE, different direction)
     )
     DIRECT_WRITE_REFRESH_TIMEOUT = 0x0074  # Device→host: refresh timed out
-    DIRECT_WRITE_PARTIAL_START = 0x0076  # Start a versioned partial update transfer
-    DIRECT_WRITE_PARTIAL_DATA = 0x0077  # Send partial image segments
+    DIRECT_WRITE_PARTIAL_START = 0x0076  # Start a versioned partial update transfer (stream via 0x71)
 
 
 # Protocol constants
@@ -139,17 +139,49 @@ def build_direct_write_start_uncompressed() -> bytes:
     return CommandCode.DIRECT_WRITE_START.to_bytes(2, byteorder="big")
 
 
-def build_direct_write_partial_start(old_etag: int, version: int = 1) -> bytes:
-    """Build 0x76 partial START with protocol version and old_etag.
+def build_direct_write_partial_start(
+    old_etag: int,
+    flags: int,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    interleave_span_pixels: int,
+    uncompressed_size: int,
+    stream_bytes: bytes = b"",
+    version: int = 1,
+) -> tuple[bytes, bytes]:
+    """Build 0x76 partial START packet.
 
-    Wire v1: [0x0076][version:1][old_etag:4 BE]
+    Fixed payload is 21 bytes; optional initial stream bytes are appended up
+    to MAX_START_PAYLOAD total packet size (including the 2-byte command).
+
+    Wire v1 fixed payload:
+      version(1) + flags(2BE) + old_etag(4BE) + x(2BE) + y(2BE) +
+      width(2BE) + height(2BE) + interleave_span_pixels(2BE) +
+      uncompressed_size(4LE)
+
+    Returns:
+        (start_packet, remaining_stream_bytes) — send start_packet as the
+        0x76 command, then remaining_stream_bytes via 0x71 DATA chunks.
     """
     if not 0 <= version <= 0xFF:
         raise ValueError(f"partial protocol version out of uint8 range: {version}")
-    if not 0 <= old_etag <= 0xFFFFFFFF:
-        raise ValueError(f"old_etag out of uint32 range: {old_etag}")
+    if not 1 <= old_etag <= 0xFFFFFFFF:
+        raise ValueError(f"old_etag must be non-zero uint32, got {old_etag}")
+
+    fixed = (
+        struct.pack(">BH", version, flags)
+        + struct.pack(">I", old_etag)
+        + struct.pack(">HHHHH", x, y, width, height, interleave_span_pixels)
+        + struct.pack("<I", uncompressed_size)
+    )  # 1+2+4+2+2+2+2+2+4 = 21 bytes
+
     cmd = CommandCode.DIRECT_WRITE_PARTIAL_START.to_bytes(2, byteorder="big")
-    return cmd + version.to_bytes(1, byteorder="big") + old_etag.to_bytes(4, byteorder="big")
+    max_initial = MAX_START_PAYLOAD - 2 - len(fixed)  # 200 - 2 - 21 = 177 bytes
+    initial = stream_bytes[:max_initial]
+    remaining = stream_bytes[max_initial:]
+    return cmd + fixed + initial, remaining
 
 
 def build_direct_write_data_command(chunk_data: bytes) -> bytes:
@@ -200,12 +232,6 @@ def build_direct_write_end_with_etag(refresh_mode: int, new_etag: int) -> bytes:
         raise ValueError(f"new_etag out of uint32 range: {new_etag}")
     cmd = CommandCode.DIRECT_WRITE_END.to_bytes(2, byteorder="big")
     return cmd + refresh_mode.to_bytes(1, byteorder="big") + new_etag.to_bytes(4, byteorder="big")
-
-
-def build_partial_data_packet(payload: bytes) -> bytes:
-    """Wrap a packed segment payload in the 0x77 opcode prefix."""
-    cmd = CommandCode.DIRECT_WRITE_PARTIAL_DATA.to_bytes(2, byteorder="big")
-    return cmd + payload
 
 
 def build_led_activate_command(

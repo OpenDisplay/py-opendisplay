@@ -1,430 +1,134 @@
 """Partial rendering support for OpenDisplay BLE devices.
 
-Provides PartialState (caller-owned mutable holder), the DiffStrategy protocol,
-Segment dataclass, and built-in diff strategies.
+Provides PartialState (caller-owned mutable holder), bounding-rect helpers,
+and the logical stream builder for the 0x76 single-rectangle protocol.
 
 Serialization format: struct header (magic + version + scalar fields) followed
-by a 4-byte big-endian length-prefixed ``last_image`` blob.  This avoids the
-pickle security surface while remaining compact and version-able.
+by a 4-byte big-endian length-prefixed ``last_image`` blob.
 
 ``last_image`` stores raw palette bytes (1 byte per pixel, from
-``PIL.Image.tobytes()`` on the dithered palette image).  The diff operates on
-these palette bytes; the library re-encodes segments to wire format before
-sending 0x77 packets.  ``bytes_per_pixel`` is always 1 (palette representation)
-for images stored by the library.
+``PIL.Image.tobytes()`` on the dithered palette image).
 """
 
 from __future__ import annotations
 
 import os
 import struct
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
 
 # ---------------------------------------------------------------------------
 # Wire constants mirrored from the firmware partial-rendering protocol.
 # ---------------------------------------------------------------------------
 
 # NACK error codes returned by the device inside {0xFF, opcode, error, 0x00}
-ERR_ETAG_MISMATCH = 0x01   # on 0x76: client must fall back to full transfer
-ERR_MIXED_DATA    = 0x02   # on 0x71 or 0x77: aborted; etag cleared on device
-ERR_SEGMENT_OOB   = 0x03   # on 0x77: aborted; etag cleared on device
-ERR_PARTIAL_VERSION = 0x04 # on 0x76: client protocol version unsupported
-ERR_SEGMENT_ALIGN  = 0x05  # on 0x77: segment x/width not on an 8-pixel boundary
+ERR_ETAG_MISMATCH   = 0x01   # on 0x76: client must fall back to full transfer
+ERR_MIXED_DATA      = 0x02   # aborted; etag cleared on device
+ERR_RECT_OOB        = 0x03   # on 0x76: rectangle out of display bounds
+ERR_PARTIAL_VERSION = 0x04   # on 0x76: client protocol version unsupported
+ERR_RECT_ALIGN      = 0x05   # on 0x76: x or width not aligned to byte boundary
+ERR_PARTIAL_FLAGS   = 0x06   # on 0x76: unsupported or reserved flags set
+ERR_PARTIAL_SIZE    = 0x07   # on 0x76: uncompressed_size does not match geometry
+ERR_PARTIAL_SPAN    = 0x08   # on 0x76: invalid interleave_span_pixels
+ERR_PARTIAL_STREAM  = 0x09   # on 0x71/0x72: stream byte count or content error
 
 NACK_PREFIX = 0xFF
 
-# 0x77 segment flags.
-SEGMENT_FLAG_PLANE_1 = 0x01      # PLANE_1 old-image segment when set; PLANE_0 new-image when clear
-SEGMENT_FLAG_COMPRESSED = 0x02   # Payload is one complete zlib stream when set
-SEGMENT_FLAG_RESERVED_MASK = 0xFC
+# 0x76 flag bits
+PARTIAL_FLAG_COMPRESSED = 0x0004   # bit 2: stream is zlib-compressed
+PARTIAL_FLAG_STORE_ETAG = 0x0008   # bit 3: 0x72 includes new_etag; store after refresh
+
+# pixels_per_byte for each bits_per_pixel value
+_PIXELS_PER_BYTE: dict[int, int] = {1: 8, 2: 4, 4: 2, 8: 1}
 
 
 def parse_nack(response: bytes) -> tuple[int, int] | None:
     """Return (opcode, error_code) if response is a 4-byte {0xFF, op, err, 0x00} NACK.
 
-    Returns None for any other response shape (caller treats as ACK / handles
-    via existing validators).
+    Returns None for any other response shape.
     """
     if len(response) == 4 and response[0] == NACK_PREFIX and response[3] == 0x00:
         return response[1], response[2]
     return None
 
-# Segment header size in bytes: x(2)+y(2)+w(2)+h(2)+flags(1) = 9
-SEGMENT_HEADER_SIZE = 9
-
-# Minimum region size (pixels) below which we stop recursing
-_MIN_REGION_PIXELS = 16
-
-# All segments emitted on the wire must have x and width aligned to this
-# many pixels. SSD16xx-class controllers stream 8 horizontal pixels per byte
-# and the firmware rejects misaligned segments with ERR_SEGMENT_ALIGN.
-SEGMENT_PIXEL_ALIGN = 8
-
 
 # ---------------------------------------------------------------------------
-# Segment — geometry + raw palette pixels for one rectangular region
+# Bounding-rect helpers
 # ---------------------------------------------------------------------------
 
-@dataclass
-class Segment:
-    """One rectangular region of pixel data with its location.
+def compute_bounding_rect(
+    old: bytes,
+    new: bytes,
+    width: int,
+    height: int,
+) -> tuple[int, int, int, int] | None:
+    """Return (x0, y0, x1_excl, y1_excl) of changed pixels, or None if identical."""
+    if old == new:
+        return None
+    min_x, max_x, min_y, max_y = width, -1, height, -1
+    for y in range(height):
+        row_off = y * width
+        row_changed = False
+        for x in range(width):
+            if old[row_off + x] != new[row_off + x]:
+                if x < min_x:
+                    min_x = x
+                if x > max_x:
+                    max_x = x
+                row_changed = True
+        if row_changed:
+            if y < min_y:
+                min_y = y
+            if y > max_y:
+                max_y = y
+    if max_x < 0:
+        return None
+    return (min_x, min_y, max_x + 1, max_y + 1)
 
-    ``pixels`` holds raw palette bytes (1 byte per pixel) before wire encoding.
-    ``plane``: 0 = PLANE_0 (new image), 1 = PLANE_1 (old image).
-    The library assigns plane values; diff strategies always return plane=0.
+
+def align_rect(
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+    display_width: int,
+    display_height: int,
+    pixels_per_byte: int,
+) -> tuple[int, int, int, int]:
+    """Expand (x0, y0, x1, y1) to packed-byte boundaries.
+
+    Returns (x, y, width, height) ready to send in 0x76.
     """
-
-    x: int
-    y: int
-    width: int
-    height: int
-    pixels: bytes          # raw palette bytes (1 byte per pixel)
-    plane: int = 0         # 0 = PLANE_0 (new), 1 = PLANE_1 (old)
-    compressed: bool = False
-
-    @property
-    def pixel_count(self) -> int:
-        return self.width * self.height
+    aligned_x0 = (x0 // pixels_per_byte) * pixels_per_byte
+    aligned_x1 = x1
+    if aligned_x1 % pixels_per_byte:
+        aligned_x1 += pixels_per_byte - (aligned_x1 % pixels_per_byte)
+    if aligned_x1 > display_width:
+        aligned_x1 = display_width
+        misalign = (aligned_x1 - aligned_x0) % pixels_per_byte
+        if misalign:
+            aligned_x0 = max(0, aligned_x0 - (pixels_per_byte - misalign))
+    return (aligned_x0, y0, aligned_x1 - aligned_x0, y1 - y0)
 
 
-# ---------------------------------------------------------------------------
-# DiffStrategy protocol
-# ---------------------------------------------------------------------------
+def build_partial_logical_stream(
+    old_rect_bytes: bytes,
+    new_rect_bytes: bytes,
+    span_bytes: int,
+) -> bytes:
+    """Interleave old and new rect bytes in old-first order.
 
-class DiffStrategy(Protocol):
-    """Protocol for pluggable diff strategies.
-
-    Implementations receive the old and new raw palette pixel buffers (1 byte
-    per pixel) and return a list of Segment objects (plane=0, palette bytes).
-    The library duplicates each segment for PLANE_1 with old-image pixels.
-
-    Returning an empty list means "no changes detected; skip transfer".
+    Produces: old_group_0 + new_group_0 + old_group_1 + new_group_1 + ...
     """
-
-    def diff(
-        self,
-        old: bytes,
-        new: bytes,
-        width: int,
-        height: int,
-        bytes_per_pixel: int,
-        max_segment_bytes: int,
-    ) -> list[Segment]: ...
-
-
-# ---------------------------------------------------------------------------
-# Built-in strategy: FullImageStrategy
-# ---------------------------------------------------------------------------
-
-class FullImageStrategy:
-    """Kill-switch strategy that always forces a full 0x71 upload.
-
-    ``diff()`` always returns an empty list so the library falls back to a
-    full-image transfer via the existing 0x71 path.
-    """
-
-    def diff(
-        self,
-        old: bytes,
-        new: bytes,
-        width: int,
-        height: int,
-        bytes_per_pixel: int,
-        max_segment_bytes: int,
-    ) -> list[Segment]:
-        return []
-
-
-# ---------------------------------------------------------------------------
-# Built-in strategy: RecursiveBoundingBoxStrategy
-# ---------------------------------------------------------------------------
-
-class RecursiveBoundingBoxStrategy:
-    """Recursive bounding-box diff strategy (default).
-
-    Algorithm:
-    1. Compute the minimal bounding box of all changed pixels within the
-       current region.
-    2. If the box's pixel data fits within ``max_segment_bytes``, emit it.
-    3. Otherwise split along the longer axis of the bounding box, recompute
-       each child's minimal bounding box, and recurse.
-    4. Stop recursing when the region is below ``min_region_pixels`` pixels
-       and emit as-is to avoid pathological subdivision.
-
-    Input ``old``/``new`` are raw palette bytes (1 byte per pixel).
-    ``max_segment_bytes`` is the pixel-data budget per segment (segment header
-    not included); the library computes this from the active MTU.
-    """
-
-    def __init__(self, min_region_pixels: int = _MIN_REGION_PIXELS) -> None:
-        self._min_region_pixels = min_region_pixels
-
-    # ------------------------------------------------------------------
-    # Public entry point
-    # ------------------------------------------------------------------
-
-    def diff(
-        self,
-        old: bytes,
-        new: bytes,
-        width: int,
-        height: int,
-        bytes_per_pixel: int,
-        max_segment_bytes: int,
-    ) -> list[Segment]:
-        """Return changed segments (plane=0, raw palette pixels)."""
-        if old == new:
-            return []
-
-        segments: list[Segment] = []
-        self._recurse(
-            old, new, width, height, bytes_per_pixel,
-            0, 0, width, height,          # initial region = full image
-            lambda seg: len(seg.pixels) <= max_segment_bytes,
-            segments,
-        )
-        return segments
-
-    def diff_with_fit(
-        self,
-        old: bytes,
-        new: bytes,
-        width: int,
-        height: int,
-        bytes_per_pixel: int,
-        segment_fits: Callable[[Segment], bool],
-    ) -> list[Segment]:
-        """Return changed segments using a caller-defined wire-fit predicate.
-
-        This is used by the BLE upload path because actual 0x77 fit depends on
-        the display encoding and whether a zlib-compressed segment is smaller
-        than its raw wire bytes. ``segment_fits`` receives a candidate segment
-        with raw palette pixels.
-        """
-        if old == new:
-            return []
-
-        segments: list[Segment] = []
-        self._recurse(
-            old, new, width, height, bytes_per_pixel,
-            0, 0, width, height,
-            segment_fits,
-            segments,
-        )
-        return segments
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _bounding_box(
-        old: bytes,
-        new: bytes,
-        img_width: int,
-        bytes_per_pixel: int,
-        rx: int,
-        ry: int,
-        rw: int,
-        rh: int,
-    ) -> tuple[int, int, int, int] | None:
-        """Return minimal bounding box (x0, y0, x1_excl, y1_excl) of changed
-        pixels within region (rx, ry, rw, rh), or None if no changes."""
-        min_x = rw
-        max_x = -1
-        min_y = rh
-        max_y = -1
-
-        bpp = bytes_per_pixel
-        for dy in range(rh):
-            gy = ry + dy
-            row_changed = False
-            for dx in range(rw):
-                gx = rx + dx
-                old_off = (gy * img_width + gx) * bpp
-                new_off = old_off
-                if old[old_off : old_off + bpp] != new[new_off : new_off + bpp]:
-                    if dx < min_x:
-                        min_x = dx
-                    if dx > max_x:
-                        max_x = dx
-                    row_changed = True
-            if row_changed:
-                if dy < min_y:
-                    min_y = dy
-                if dy > max_y:
-                    max_y = dy
-
-        if max_x < 0:
-            return None
-        return (rx + min_x, ry + min_y, rx + max_x + 1, ry + max_y + 1)
-
-    @staticmethod
-    def _extract_region(
-        buf: bytes,
-        img_width: int,
-        bytes_per_pixel: int,
-        x0: int,
-        y0: int,
-        x1: int,
-        y1: int,
-    ) -> bytes:
-        """Extract pixels from buf for rectangle [x0..x1) × [y0..y1)."""
-        bpp = bytes_per_pixel
-        row_bytes = (x1 - x0) * bpp
-        parts: list[bytes] = []
-        for y in range(y0, y1):
-            off = (y * img_width + x0) * bpp
-            parts.append(buf[off : off + row_bytes])
-        return b"".join(parts)
-
-    def _recurse(
-        self,
-        old: bytes,
-        new: bytes,
-        img_width: int,
-        img_height: int,
-        bytes_per_pixel: int,
-        rx: int,
-        ry: int,
-        rw: int,
-        rh: int,
-        segment_fits: Callable[[Segment], bool],
-        out: list[Segment],
-    ) -> None:
-        """Recursively find changed regions within (rx, ry, rw, rh)."""
-        if rw <= 0 or rh <= 0:
-            return
-
-        bb = self._bounding_box(old, new, img_width, bytes_per_pixel, rx, ry, rw, rh)
-        if bb is None:
-            return  # no changes in this region
-
-        x0, y0, x1, y1 = bb
-        # Snap x0 down and x1 up to the wire-required pixel alignment, clamped
-        # to the image width. y bounds are not constrained by the controller.
-        x0 -= x0 % SEGMENT_PIXEL_ALIGN
-        if x1 % SEGMENT_PIXEL_ALIGN:
-            x1 += SEGMENT_PIXEL_ALIGN - (x1 % SEGMENT_PIXEL_ALIGN)
-        if x1 > img_width:
-            x1 = img_width
-            # If img_width itself is not aligned, clamp x0 too so width stays aligned.
-            misalign = (x1 - x0) % SEGMENT_PIXEL_ALIGN
-            if misalign:
-                x0 = max(0, x0 - (SEGMENT_PIXEL_ALIGN - misalign))
-        bw = x1 - x0
-        bh = y1 - y0
-        pixel_count = bw * bh
-        pixels = self._extract_region(new, img_width, bytes_per_pixel, x0, y0, x1, y1)
-        candidate = Segment(x=x0, y=y0, width=bw, height=bh, pixels=pixels, plane=0)
-
-        if segment_fits(candidate) or pixel_count <= self._min_region_pixels:
-            # Fits (or too small to split further) — emit as-is
-            out.append(candidate)
-            return
-
-        # Split along the longer axis of the bounding box
-        if bw >= bh:
-            # Split vertically (along x) at midpoint of bounding box, snapped
-            # to the wire alignment so the two halves don't overlap after the
-            # bounding box of each is re-aligned.
-            mid = x0 + bw // 2
-            mid -= mid % SEGMENT_PIXEL_ALIGN
-            if mid <= rx or mid >= rx + rw:
-                # Region too narrow to split on an aligned boundary — emit as-is.
-                out.append(candidate)
-                return
-            # Left half: region from rx to mid
-            self._recurse(old, new, img_width, img_height, bytes_per_pixel,
-                          rx, ry, mid - rx, rh, segment_fits, out)
-            # Right half: region from mid to rx+rw
-            self._recurse(old, new, img_width, img_height, bytes_per_pixel,
-                          mid, ry, rx + rw - mid, rh, segment_fits, out)
-        else:
-            # Split horizontally (along y) at midpoint of bounding box
-            mid = y0 + bh // 2
-            # Top half
-            self._recurse(old, new, img_width, img_height, bytes_per_pixel,
-                          rx, ry, rw, mid - ry, segment_fits, out)
-            # Bottom half
-            self._recurse(old, new, img_width, img_height, bytes_per_pixel,
-                          rx, mid, rw, ry + rh - mid, segment_fits, out)
-
-
-# ---------------------------------------------------------------------------
-# Wire-format segment packing
-# ---------------------------------------------------------------------------
-
-def _build_segment_wire(seg: Segment, wire_pixels: bytes) -> bytes:
-    """Encode one segment to its 0x77 wire representation.
-
-    Uses *wire_pixels* rather than *seg.pixels* (which are palette bytes);
-    the caller is responsible for encoding palette bytes → wire format.
-
-    Wire format per segment: x(2BE) y(2BE) w(2BE) h(2BE) flags(1) payload(N)
-
-    flags bit 0 selects PLANE_1 when set; flags bit 1 marks payload as one
-    complete zlib stream.
-    """
-    flags = SEGMENT_FLAG_PLANE_1 if (seg.plane & 0x01) else 0
-    if seg.compressed:
-        flags |= SEGMENT_FLAG_COMPRESSED
-    header = struct.pack(">HHHHB", seg.x, seg.y, seg.width, seg.height, flags)
-    return header + wire_pixels
-
-
-def pack_segments_into_packets(
-    segments: list[tuple[Segment, bytes]],
-    mtu: int,
-    cmd_prefix: bytes = b"\x00\x77",
-) -> list[bytes]:
-    """Pack (segment, wire_pixels) pairs into 0x77 BLE packets.
-
-    Preserves input order and fills packets sequentially.
-
-    Args:
-        segments:   List of (Segment, wire_pixels) where wire_pixels is the
-                    encoded pixel data for that segment.
-        mtu:        Maximum total packet size in bytes (including cmd_prefix).
-        cmd_prefix: 2-byte opcode prefix (default 0x0077 big-endian).
-
-    Returns:
-        List of complete BLE packet bytes.
-    """
-    if not segments:
-        return []
-
-    max_payload = mtu - len(cmd_prefix)
-
-    # Pre-compute wire representation for each (segment, wire_pixels)
-    wires: list[bytes] = [_build_segment_wire(seg, wp) for seg, wp in segments]
-    packets: list[bytes] = []
-    packet_parts: list[bytes] = []
-    space = max_payload
-
-    for wire in wires:
-        if len(wire) > max_payload:
-            if packet_parts:
-                packets.append(cmd_prefix + b"".join(packet_parts))
-                packet_parts = []
-                space = max_payload
-            packets.append(cmd_prefix + wire)
-            continue
-
-        if len(wire) > space:
-            packets.append(cmd_prefix + b"".join(packet_parts))
-            packet_parts = []
-            space = max_payload
-
-        packet_parts.append(wire)
-        space -= len(wire)
-
-    if packet_parts:
-        packets.append(cmd_prefix + b"".join(packet_parts))
-
-    return packets
+    assert len(old_rect_bytes) == len(new_rect_bytes), "old/new rect byte lengths must match"
+    parts: list[bytes] = []
+    total = len(old_rect_bytes)
+    offset = 0
+    while offset < total:
+        chunk = min(span_bytes, total - offset)
+        parts.append(old_rect_bytes[offset : offset + chunk])
+        parts.append(new_rect_bytes[offset : offset + chunk])
+        offset += chunk
+    return b"".join(parts)
 
 
 # ---------------------------------------------------------------------------
