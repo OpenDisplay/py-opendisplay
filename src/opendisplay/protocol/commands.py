@@ -146,20 +146,18 @@ def build_direct_write_partial_start(
     y: int,
     width: int,
     height: int,
-    interleave_span_pixels: int,
     uncompressed_size: int,
     stream_bytes: bytes = b"",
     version: int = 1,
 ) -> tuple[bytes, bytes]:
     """Build 0x76 partial START packet.
 
-    Fixed payload is 21 bytes; optional initial stream bytes are appended up
+    Fixed payload is 19 bytes; optional initial stream bytes are appended up
     to MAX_START_PAYLOAD total packet size (including the 2-byte command).
 
     Wire v1 fixed payload:
       version(1) + flags(2BE) + old_etag(4BE) + x(2BE) + y(2BE) +
-      width(2BE) + height(2BE) + interleave_span_pixels(2BE) +
-      uncompressed_size(4LE)
+      width(2BE) + height(2BE) + uncompressed_size(4LE)
 
     Returns:
         (start_packet, remaining_stream_bytes) — send start_packet as the
@@ -173,12 +171,12 @@ def build_direct_write_partial_start(
     fixed = (
         struct.pack(">BH", version, flags)
         + struct.pack(">I", old_etag)
-        + struct.pack(">HHHHH", x, y, width, height, interleave_span_pixels)
+        + struct.pack(">HHHH", x, y, width, height)
         + struct.pack("<I", uncompressed_size)
-    )  # 1+2+4+2+2+2+2+2+4 = 21 bytes
+    )  # 1+2+4+2+2+2+2+4 = 19 bytes
 
     cmd = CommandCode.DIRECT_WRITE_PARTIAL_START.to_bytes(2, byteorder="big")
-    max_initial = MAX_START_PAYLOAD - 2 - len(fixed)  # 200 - 2 - 21 = 177 bytes
+    max_initial = MAX_START_PAYLOAD - 2 - len(fixed)  # 200 - 2 - 19 = 179 bytes
     initial = stream_bytes[:max_initial]
     remaining = stream_bytes[max_initial:]
     return cmd + fixed + initial, remaining

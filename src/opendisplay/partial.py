@@ -28,8 +28,7 @@ ERR_PARTIAL_VERSION = 0x04   # on 0x76: client protocol version unsupported
 ERR_RECT_ALIGN      = 0x05   # on 0x76: x or width not aligned to byte boundary
 ERR_PARTIAL_FLAGS   = 0x06   # on 0x76: unsupported or reserved flags set
 ERR_PARTIAL_SIZE    = 0x07   # on 0x76: uncompressed_size does not match geometry
-ERR_PARTIAL_SPAN    = 0x08   # on 0x76: invalid interleave_span_pixels
-ERR_PARTIAL_STREAM  = 0x09   # on 0x71/0x72: stream byte count or content error
+ERR_PARTIAL_STREAM  = 0x08   # on 0x71/0x72: stream byte count or content error
 
 NACK_PREFIX = 0xFF
 
@@ -113,22 +112,13 @@ def align_rect(
 def build_partial_logical_stream(
     old_rect_bytes: bytes,
     new_rect_bytes: bytes,
-    span_bytes: int,
 ) -> bytes:
-    """Interleave old and new rect bytes in old-first order.
+    """Build a plane-major old-then-new partial stream.
 
-    Produces: old_group_0 + new_group_0 + old_group_1 + new_group_1 + ...
+    Produces: old_rect + new_rect.
     """
     assert len(old_rect_bytes) == len(new_rect_bytes), "old/new rect byte lengths must match"
-    parts: list[bytes] = []
-    total = len(old_rect_bytes)
-    offset = 0
-    while offset < total:
-        chunk = min(span_bytes, total - offset)
-        parts.append(old_rect_bytes[offset : offset + chunk])
-        parts.append(new_rect_bytes[offset : offset + chunk])
-        offset += chunk
-    return b"".join(parts)
+    return old_rect_bytes + new_rect_bytes
 
 
 # ---------------------------------------------------------------------------

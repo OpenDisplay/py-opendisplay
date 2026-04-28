@@ -115,24 +115,22 @@ class TestAlignRect:
 
 
 class TestLogicalStream:
-    def test_old_new_interleaving(self):
-        stream = build_partial_logical_stream(b"abcdef", b"ABCDEF", span_bytes=2)
-        assert stream == b"abABcdCDefEF"
+    def test_old_then_new_plane_major_stream(self):
+        stream = build_partial_logical_stream(b"abcdef", b"ABCDEF")
+        assert stream == b"abcdefABCDEF"
 
-    def test_last_group_can_be_short(self):
-        stream = build_partial_logical_stream(b"abcde", b"ABCDE", span_bytes=4)
-        assert stream == b"abcdABCDeE"
+    def test_rejects_mismatched_rect_lengths(self):
+        with pytest.raises(AssertionError, match="old/new rect byte lengths"):
+            build_partial_logical_stream(b"abcde", b"ABCDEF")
 
     def test_stream_accounting(self):
         old = bytes(range(16))
         new = bytes(range(16, 32))
-        stream = build_partial_logical_stream(old, new, span_bytes=8)
+        stream = build_partial_logical_stream(old, new)
 
         assert len(stream) == 32
-        assert stream[:8] == old[:8]
-        assert stream[8:16] == new[:8]
-        assert stream[16:24] == old[8:]
-        assert stream[24:32] == new[8:]
+        assert stream[:16] == old
+        assert stream[16:] == new
 
 
 class TestBuilders:
@@ -145,7 +143,6 @@ class TestBuilders:
             y=9,
             width=16,
             height=10,
-            interleave_span_pixels=128,
             uncompressed_size=40,
             stream_bytes=stream,
         )
@@ -159,14 +156,13 @@ class TestBuilders:
         assert int.from_bytes(packet[11:13], "big") == 9
         assert int.from_bytes(packet[13:15], "big") == 16
         assert int.from_bytes(packet[15:17], "big") == 10
-        assert int.from_bytes(packet[17:19], "big") == 128
-        assert int.from_bytes(packet[19:23], "little") == 40
-        assert packet[23:] == stream[:177]
-        assert remaining == stream[177:]
+        assert int.from_bytes(packet[17:21], "little") == 40
+        assert packet[21:] == stream[:179]
+        assert remaining == stream[179:]
 
     def test_partial_start_rejects_zero_etag(self):
         with pytest.raises(ValueError, match="old_etag"):
-            build_direct_write_partial_start(0, 0, 0, 0, 8, 1, 8, 2)
+            build_direct_write_partial_start(0, 0, 0, 0, 8, 1, 2)
 
     def test_end_with_etag(self):
         cmd = build_direct_write_end_with_etag(refresh_mode=2, new_etag=0x01020304)

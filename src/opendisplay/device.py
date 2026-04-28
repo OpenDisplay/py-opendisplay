@@ -1152,12 +1152,7 @@ class OpenDisplayDevice:
         old_rect_bytes = self._encode_segment_wire(old_palette_image, rx, ry, rw, rh, color_scheme)
         new_rect_bytes = self._encode_segment_wire(palette_image, rx, ry, rw, rh, color_scheme)
 
-        # Row-band interleaving: 8 rows per group
-        band_rows = 8
-        span_pixels = rw * band_rows
-        span_bytes = span_pixels // pixels_per_byte
-
-        logical_stream = build_partial_logical_stream(old_rect_bytes, new_rect_bytes, span_bytes)
+        logical_stream = build_partial_logical_stream(old_rect_bytes, new_rect_bytes)
         uncompressed_size = len(logical_stream)
 
         compressed_stream = zlib.compress(logical_stream, level=6)
@@ -1169,8 +1164,8 @@ class OpenDisplayDevice:
             flags |= PARTIAL_FLAG_COMPRESSED
 
         _LOGGER.debug(
-            "Partial stream: rect=(%d,%d,%d,%d), span_pixels=%d, uncompressed=%d, wire=%d, compressed=%s",
-            rx, ry, rw, rh, span_pixels, uncompressed_size, len(stream_bytes), use_compression,
+            "Partial stream: rect=(%d,%d,%d,%d), uncompressed=%d, wire=%d, compressed=%s",
+            rx, ry, rw, rh, uncompressed_size, len(stream_bytes), use_compression,
         )
 
         new_etag = _generate_etag()
@@ -1181,7 +1176,6 @@ class OpenDisplayDevice:
             old_etag=state.etag,
             flags=flags,
             x=rx, y=ry, width=rw, height=rh,
-            interleave_span_pixels=span_pixels,
             uncompressed_size=uncompressed_size,
             stream_bytes=stream_bytes,
         )
