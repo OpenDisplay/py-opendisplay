@@ -882,7 +882,6 @@ class OpenDisplayDevice:
         rotate: Rotation = Rotation.ROTATE_0,
         progress_callback: Callable[[int, int], None] | None = None,
         state: PartialState | None = None,
-        diff_strategy: object | None = None,
     ) -> Image.Image:
         """Upload image to device display.
 
@@ -932,7 +931,7 @@ class OpenDisplayDevice:
 
         if state is not None:
             partial_outcome = await self._maybe_upload_partial(
-                processed_image, image_data, refresh_mode, state, diff_strategy, progress_callback
+                processed_image, image_data, refresh_mode, state, progress_callback
             )
             if partial_outcome == "success":
                 _LOGGER.info("Image upload complete (partial path)")
@@ -984,7 +983,6 @@ class OpenDisplayDevice:
         compress: bool = True,
         progress_callback: Callable[[int, int], None] | None = None,
         state: PartialState | None = None,
-        diff_strategy: object | None = None,
     ) -> None:
         """Upload pre-computed image data to device.
 
@@ -1007,7 +1005,7 @@ class OpenDisplayDevice:
 
         if state is not None:
             partial_outcome = await self._maybe_upload_partial(
-                processed_image, image_data, refresh_mode, state, diff_strategy, progress_callback
+                processed_image, image_data, refresh_mode, state, progress_callback
             )
             if partial_outcome == "success":
                 _LOGGER.info("Prepared image upload complete (partial path)")
@@ -1080,7 +1078,6 @@ class OpenDisplayDevice:
         image_data: bytes,
         refresh_mode: RefreshMode,
         state: PartialState,
-        diff_strategy: object | None,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> str:
         """Try a partial upload using the 0x76 single-rectangle protocol.
@@ -1091,7 +1088,6 @@ class OpenDisplayDevice:
         - "fallback_full": caller must do a full upload (and refresh state).
         """
         del image_data  # Partial requests do not compare against full-frame transfer size.
-        del diff_strategy  # reserved for future use
 
         if self._config is None or not self._config.displays:
             _LOGGER.debug("Partial path skipped: device config is required to verify partial support")
