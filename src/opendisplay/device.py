@@ -35,6 +35,7 @@ from .protocol import (
     CHUNK_SIZE,
     ENCRYPTED_CHUNK_SIZE,
     MAX_COMPRESSED_SIZE,
+    MAX_COMPRESSED_SIZE_ZIPXL,
     CommandCode,
     build_authenticate_step1,
     build_authenticate_step2,
@@ -227,6 +228,9 @@ class OpenDisplayDevice:
     TIMEOUT_FIRST_CHUNK = 10.0  # First chunk may take longer
     TIMEOUT_CHUNK = 2.0  # Subsequent chunks
     TIMEOUT_ACK = 5.0  # Command acknowledgments
+    TIMEOUT_UNCOMPRESSED_DATA_ACK = (
+        90.0  # Uncompressed chunks: bbepWriteData() blocks on SPI while Spectra/ACeP IC processes data (~60s max)
+    )
     TIMEOUT_REFRESH = 90.0  # Display refresh (firmware spec: up to 60s)
 
     def __init__(
@@ -898,15 +902,17 @@ class OpenDisplayDevice:
         )
 
         # Determine compression support before preparing to avoid wasted CPU
-        supports_compression = (
-            self._config.displays[0].supports_zip if (self._config and self._config.displays) else True
+        display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
+        supports_compression = display_cfg.supports_zip if display_cfg else True
+        max_compressed = (
+            MAX_COMPRESSED_SIZE_ZIPXL if (display_cfg and display_cfg.supports_zipxl) else MAX_COMPRESSED_SIZE
         )
 
         # Prepare image (fit, dither, encode, compress)
         image_data, compressed_data, processed_image = self._prepare_image(
             image, dither_mode, compress and supports_compression, tone_compression, fit, rotate
         )
-        if compress and supports_compression and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
+        if compress and supports_compression and compressed_data and len(compressed_data) < max_compressed:
             _LOGGER.info("Using compressed upload protocol (size: %d bytes)", len(compressed_data))
             await self._execute_upload(
                 image_data,
@@ -920,7 +926,7 @@ class OpenDisplayDevice:
             if compress and not supports_compression:
                 _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
             elif compress and compressed_data:
-                _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
+                _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", max_compressed)
             else:
                 _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
             await self._execute_upload(
@@ -956,10 +962,13 @@ class OpenDisplayDevice:
         """
         image_data, compressed_data, _ = prepared_data
 
-        supports_compression = (
-            self._config.displays[0].supports_zip if (self._config and self._config.displays) else True
+        display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
+        supports_compression = display_cfg.supports_zip if display_cfg else True
+        max_compressed = (
+            MAX_COMPRESSED_SIZE_ZIPXL if (display_cfg and display_cfg.supports_zipxl) else MAX_COMPRESSED_SIZE
         )
-        if compress and supports_compression and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
+
+        if compress and supports_compression and compressed_data and len(compressed_data) < max_compressed:
             _LOGGER.info("Using compressed upload protocol (size: %d bytes)", len(compressed_data))
             await self._execute_upload(
                 image_data,
@@ -973,7 +982,7 @@ class OpenDisplayDevice:
             if compress and not supports_compression:
                 _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
             elif compress and compressed_data:
-                _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
+                _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", max_compressed)
             else:
                 _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
             await self._execute_upload(
@@ -1023,7 +1032,9 @@ class OpenDisplayDevice:
             if remaining_compressed:
                 auto_completed = await self._send_data_chunks(remaining_compressed, progress_callback)
         else:
-            auto_completed = await self._send_data_chunks(image_data, progress_callback)
+            auto_completed = await self._send_data_chunks(
+                image_data, progress_callback, chunk_timeout=self.TIMEOUT_UNCOMPRESSED_DATA_ACK
+            )
 
         # 4. Send END (unless device auto-triggered refresh), then wait for 0x73
         if not auto_completed:
@@ -1046,6 +1057,7 @@ class OpenDisplayDevice:
         self,
         image_data: bytes,
         progress_callback: Callable[[int, int], None] | None = None,
+        chunk_timeout: float | None = None,
     ) -> bool:
         """Send image data chunks, waiting for ACK after each.
 
@@ -1057,8 +1069,9 @@ class OpenDisplayDevice:
 
         Raises:
             ProtocolError: If device responds with an unexpected code
-            BLETimeoutError: If no response within TIMEOUT_ACK
+            BLETimeoutError: If no response within chunk_timeout
         """
+        timeout = chunk_timeout if chunk_timeout is not None else self.TIMEOUT_ACK
         bytes_sent = 0
         chunks_sent = 0
 
@@ -1073,7 +1086,7 @@ class OpenDisplayDevice:
             if progress_callback is not None:
                 progress_callback(bytes_sent, len(image_data))
 
-            response = await self._read(self.TIMEOUT_ACK)
+            response = await self._read(timeout)
             command, _ = check_response_type(response)
 
             if command == CommandCode.DIRECT_WRITE_END:

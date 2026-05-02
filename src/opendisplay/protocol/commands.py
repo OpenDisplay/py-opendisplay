@@ -46,7 +46,8 @@ CONFIG_CHUNK_SIZE = 200  # Maximum config chunk size (verified from firmware)
 PIPELINE_CHUNKS = 1  # Wait for ACK after each chunk
 
 # Upload protocol constants
-MAX_COMPRESSED_SIZE = 50 * 1024  # 50KB - firmware buffer limit for compressed uploads
+MAX_COMPRESSED_SIZE = 50 * 1024  # Standard firmware buffer (nRF, ~50KB)
+MAX_COMPRESSED_SIZE_ZIPXL = 512 * 1024  # Extended buffer for ZIPXL-capable devices (ESP32 with PSRAM)
 MAX_START_PAYLOAD = 200  # Maximum bytes in START command (prevents MTU issues)
 
 
