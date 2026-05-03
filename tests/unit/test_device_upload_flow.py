@@ -360,6 +360,72 @@ async def test_dispatch_zipxl_accepts_large_compressed_data(monkeypatch: pytest.
     assert captured["use_compression"] is True
 
 
+# ─── _execute_upload: error paths ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_execute_upload_raises_valueerror_when_compression_args_missing() -> None:
+    """use_compression=True without compressed_data/uncompressed_size must raise ValueError."""
+    device = _make_device()
+    device._connection = _FakeConnection([])
+    with pytest.raises(ValueError, match="uncompressed_size and compressed_data are required"):
+        await device._execute_upload(b"\x00" * 10, RefreshMode.FULL, use_compression=True)
+
+
+@pytest.mark.asyncio
+async def test_execute_upload_reraises_when_uncompressed_start_rejected() -> None:
+    """InvalidResponseError from an uncompressed START is not swallowed (no fallback to try)."""
+    from opendisplay.exceptions import InvalidResponseError
+
+    device = _make_device()
+    device._connection = _FakeConnection([ERR_FRAME])
+    with pytest.raises(InvalidResponseError):
+        await device._execute_upload(b"\x00" * 10, RefreshMode.FULL, use_compression=False)
+
+
+@pytest.mark.asyncio
+async def test_execute_upload_raises_on_refresh_timeout_response() -> None:
+    """Device sending 0x74 (refresh timed out) must surface as ProtocolError."""
+    from opendisplay.exceptions import ProtocolError
+
+    image_data = b"\x00" * 10
+    device = _make_device()
+    # Minimal sequence up to the refresh wait, then device sends 0x74
+    fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, b"\x00\x74"])
+    device._connection = fake
+    with pytest.raises(ProtocolError, match="refresh timed out"):
+        await device._execute_upload(image_data, RefreshMode.FULL, use_compression=False)
+
+
+@pytest.mark.asyncio
+async def test_execute_upload_raises_on_unexpected_refresh_response() -> None:
+    """Any non-0x73 / non-0x74 response while waiting for refresh must surface as ProtocolError."""
+    from opendisplay.exceptions import ProtocolError
+
+    image_data = b"\x00" * 10
+    device = _make_device()
+    fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, b"\x00\x43"])  # READ_FW_VERSION echo
+    device._connection = fake
+    with pytest.raises(ProtocolError, match="Unexpected response"):
+        await device._execute_upload(image_data, RefreshMode.FULL, use_compression=False)
+
+
+# ─── DisplayConfig.supports_raw alias ────────────────────────────────────────
+
+
+def test_display_config_supports_raw_aliases_supports_zipxl() -> None:
+    """supports_raw is an alias for supports_zipxl (bit 0x01)."""
+    config = _make_config(transmission_modes=0x01)
+    display_cfg = config.displays[0]
+    assert display_cfg.supports_zipxl is True
+    assert display_cfg.supports_raw is True
+
+    config_no = _make_config(transmission_modes=0x02)
+    display_cfg_no = config_no.displays[0]
+    assert display_cfg_no.supports_zipxl is False
+    assert display_cfg_no.supports_raw is False
+
+
 # ─── _prepare_image: default FitMode ─────────────────────────────────────────
 
 
