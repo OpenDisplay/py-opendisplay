@@ -25,7 +25,13 @@ from .encoding import (
     encode_image,
     fit_image,
 )
-from .exceptions import AuthenticationRequiredError, AuthenticationSessionExistsError, ImageEncodingError, ProtocolError
+from .exceptions import (
+    AuthenticationRequiredError,
+    AuthenticationSessionExistsError,
+    ImageEncodingError,
+    InvalidResponseError,
+    ProtocolError,
+)
 from .models.capabilities import DeviceCapabilities
 from .models.config import GlobalConfig
 from .models.enums import BoardManufacturer, FitMode, RefreshMode, Rotation
@@ -35,6 +41,8 @@ from .protocol import (
     CHUNK_SIZE,
     ENCRYPTED_CHUNK_SIZE,
     MAX_COMPRESSED_SIZE,
+    MAX_COMPRESSED_SIZE_ZIPXL,
+    MAX_START_PAYLOAD,
     CommandCode,
     build_authenticate_step1,
     build_authenticate_step2,
@@ -223,10 +231,14 @@ class OpenDisplayDevice:
             await device.upload_image(image)
     """
 
+    _ENCRYPTED_RESPONSE_MIN_LEN = 31  # cmd(2) + nonce(16) + payload(1) + tag(12)
+
     # BLE operation timeouts (seconds)
     TIMEOUT_FIRST_CHUNK = 10.0  # First chunk may take longer
-    TIMEOUT_CHUNK = 2.0  # Subsequent chunks
+    TIMEOUT_CONFIG_CHUNK = 2.0  # Subsequent config read chunks (interrogate)
     TIMEOUT_ACK = 5.0  # Command acknowledgments
+    TIMEOUT_UNCOMPRESSED_DATA_ACK = 90.0  # Uncompressed DATA: bbepWriteData() blocks SPI on Spectra/ACeP (~60s max)
+    TIMEOUT_COMPRESSED_END_ACK = 90.0  # Compressed END: decompression + full SPI write to IC (~60s on Spectra/ACeP)
     TIMEOUT_REFRESH = 90.0  # Display refresh (firmware spec: up to 60s)
 
     def __init__(
@@ -401,8 +413,13 @@ class OpenDisplayDevice:
         """
         raw = await self._conn.read_response(timeout=timeout)
         if self._session_key is not None:
-            cmd_code, payload = decrypt_response(self._session_key, raw)
-            return cmd_code.to_bytes(2, "big") + payload
+            # Encrypted packets are at least cmd(2)+nonce(16)+payload(1)+tag(12)=31 bytes.
+            # Shorter responses are sent unencrypted by the firmware even during a session:
+            # direct-write ACKs (0x0070-0x0073) are always 2-byte plaintext; error frames
+            # like {0xFF, 0xFF} (compressed buffer unavailable) are also unencrypted.
+            if len(raw) >= self._ENCRYPTED_RESPONSE_MIN_LEN:
+                cmd_code, payload = decrypt_response(self._session_key, raw)
+                return cmd_code.to_bytes(2, "big") + payload
         # Firmware returns [cmd_high, cmd_low, 0xFE] (3 bytes) when a command
         # requires authentication but no session is active.
         if len(raw) == 3 and raw[2] == 0xFE:
@@ -582,7 +599,7 @@ class OpenDisplayDevice:
 
         # Read remaining chunks
         while len(tlv_data) < total_length:
-            next_response = await self._read(self.TIMEOUT_CHUNK)
+            next_response = await self._read(self.TIMEOUT_CONFIG_CHUNK)
             next_chunk_data = strip_command_echo(next_response, CommandCode.READ_CONFIG)
 
             # Skip chunk number field (2 bytes) and append data
@@ -827,7 +844,7 @@ class OpenDisplayDevice:
         dither_mode: DitherMode,
         compress: bool,
         tone_compression: float | str = "auto",
-        fit: FitMode = FitMode.STRETCH,
+        fit: FitMode = FitMode.CONTAIN,
         rotate: Rotation = Rotation.ROTATE_0,
     ) -> tuple[bytes, bytes | None, Image.Image]:
         """Prepare image for upload. Internal wrapper for the module-level prepare_image()."""
@@ -844,11 +861,6 @@ class OpenDisplayDevice:
             fit=fit,
             rotate=rotate,
         )
-
-    @staticmethod
-    def _rotate_source_image(image: Image.Image, rotate: Rotation) -> Image.Image:
-        """Rotate source image by enum value before fitting."""
-        return _rotate_source_image(image, rotate)
 
     async def upload_image(
         self,
@@ -897,35 +909,15 @@ class OpenDisplayDevice:
             self.color_scheme.name,
         )
 
-        # Determine compression support before preparing to avoid wasted CPU
-        supports_compression = (
-            self._config.displays[0].supports_zip if (self._config and self._config.displays) else True
-        )
+        # Check compression support early to avoid wasted CPU in _prepare_image
+        display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
+        supports_compression = display_cfg.supports_zip if display_cfg else True
 
         # Prepare image (fit, dither, encode, compress)
         image_data, compressed_data, processed_image = self._prepare_image(
             image, dither_mode, compress and supports_compression, tone_compression, fit, rotate
         )
-        if compress and supports_compression and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
-            _LOGGER.info("Using compressed upload protocol (size: %d bytes)", len(compressed_data))
-            await self._execute_upload(
-                image_data,
-                refresh_mode,
-                use_compression=True,
-                compressed_data=compressed_data,
-                uncompressed_size=len(image_data),
-                progress_callback=progress_callback,
-            )
-        else:
-            if compress and not supports_compression:
-                _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
-            elif compress and compressed_data:
-                _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
-            else:
-                _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
-            await self._execute_upload(
-                image_data, refresh_mode, use_compression=False, progress_callback=progress_callback
-            )
+        await self._dispatch_upload(image_data, refresh_mode, compress, compressed_data, progress_callback)
 
         _LOGGER.info("Image upload complete")
         return processed_image
@@ -955,11 +947,24 @@ class OpenDisplayDevice:
             ProtocolError: If upload fails
         """
         image_data, compressed_data, _ = prepared_data
+        await self._dispatch_upload(image_data, refresh_mode, compress, compressed_data, progress_callback)
+        _LOGGER.info("Prepared image upload complete")
 
-        supports_compression = (
-            self._config.displays[0].supports_zip if (self._config and self._config.displays) else True
+    async def _dispatch_upload(
+        self,
+        image_data: bytes,
+        refresh_mode: RefreshMode,
+        compress: bool,
+        compressed_data: bytes | None,
+        progress_callback: Callable[[int, int], None] | None,
+    ) -> None:
+        """Choose compressed or uncompressed upload protocol and execute it."""
+        display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
+        supports_compression = display_cfg.supports_zip if display_cfg else True
+        max_compressed = (
+            MAX_COMPRESSED_SIZE_ZIPXL if (display_cfg and display_cfg.supports_zipxl) else MAX_COMPRESSED_SIZE
         )
-        if compress and supports_compression and compressed_data and len(compressed_data) < MAX_COMPRESSED_SIZE:
+        if compress and supports_compression and compressed_data and len(compressed_data) < max_compressed:
             _LOGGER.info("Using compressed upload protocol (size: %d bytes)", len(compressed_data))
             await self._execute_upload(
                 image_data,
@@ -973,14 +978,12 @@ class OpenDisplayDevice:
             if compress and not supports_compression:
                 _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
             elif compress and compressed_data:
-                _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
+                _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", max_compressed)
             else:
                 _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
             await self._execute_upload(
                 image_data, refresh_mode, use_compression=False, progress_callback=progress_callback
             )
-
-        _LOGGER.info("Prepared image upload complete")
 
     async def _execute_upload(
         self,
@@ -1005,17 +1008,37 @@ class OpenDisplayDevice:
         """
         # 1. Send START command (different for each protocol)
         if use_compression:
-            assert uncompressed_size is not None and compressed_data is not None
-            start_cmd, remaining_compressed = build_direct_write_start_compressed(uncompressed_size, compressed_data)
+            if uncompressed_size is None or compressed_data is None:
+                raise ValueError("uncompressed_size and compressed_data are required when use_compression=True")
+            max_start = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else MAX_START_PAYLOAD
+            start_cmd, remaining_compressed = build_direct_write_start_compressed(
+                uncompressed_size, compressed_data, max_start_payload=max_start
+            )
         else:
             start_cmd = build_direct_write_start_uncompressed()
             remaining_compressed = None
 
         await self._write(start_cmd)
 
-        # 2. Wait for START ACK (identical for both protocols)
-        response = await self._read(self.TIMEOUT_ACK)
-        validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
+        # 2. Wait for START ACK — firmware initializes display hardware here, which can be slow
+        response = await self._read(self.TIMEOUT_FIRST_CHUNK)
+        try:
+            validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
+        except InvalidResponseError:
+            if not use_compression:
+                raise
+            # Device rejected the compressed START (e.g., compressedDataBuffer is NULL —
+            # ZIPXL bit set in config but firmware not built with PSRAM support).
+            # Fall back to uncompressed protocol and retry.
+            _LOGGER.warning(
+                "Compressed START rejected by device (0x%04x); falling back to uncompressed",
+                int.from_bytes(response[:2], "big"),
+            )
+            use_compression = False
+            start_cmd = build_direct_write_start_uncompressed()
+            await self._write(start_cmd)
+            response = await self._read(self.TIMEOUT_FIRST_CHUNK)
+            validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
 
         # 3. Send data chunks
         auto_completed = False
@@ -1023,14 +1046,20 @@ class OpenDisplayDevice:
             if remaining_compressed:
                 auto_completed = await self._send_data_chunks(remaining_compressed, progress_callback)
         else:
-            auto_completed = await self._send_data_chunks(image_data, progress_callback)
+            auto_completed = await self._send_data_chunks(
+                image_data, progress_callback, chunk_timeout=self.TIMEOUT_UNCOMPRESSED_DATA_ACK
+            )
 
         # 4. Send END (unless device auto-triggered refresh), then wait for 0x73
         if not auto_completed:
             end_cmd = build_direct_write_end_command(refresh_mode.value)
             await self._write(end_cmd)
 
-            response = await self._read(self.TIMEOUT_ACK)
+            # Compressed END triggers decompression + full SPI write to display IC, which
+            # can block for ~60s on slow displays (Spectra/ACeP). Use the same ceiling as
+            # uncompressed data chunks.
+            end_ack_timeout = self.TIMEOUT_COMPRESSED_END_ACK if use_compression else self.TIMEOUT_ACK
+            response = await self._read(end_ack_timeout)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
         _LOGGER.debug("Display refresh started, waiting for completion...")
 
@@ -1046,6 +1075,7 @@ class OpenDisplayDevice:
         self,
         image_data: bytes,
         progress_callback: Callable[[int, int], None] | None = None,
+        chunk_timeout: float | None = None,
     ) -> bool:
         """Send image data chunks, waiting for ACK after each.
 
@@ -1057,8 +1087,9 @@ class OpenDisplayDevice:
 
         Raises:
             ProtocolError: If device responds with an unexpected code
-            BLETimeoutError: If no response within TIMEOUT_ACK
+            BLETimeoutError: If no response within chunk_timeout
         """
+        timeout = chunk_timeout if chunk_timeout is not None else self.TIMEOUT_ACK
         bytes_sent = 0
         chunks_sent = 0
 
@@ -1073,7 +1104,7 @@ class OpenDisplayDevice:
             if progress_callback is not None:
                 progress_callback(bytes_sent, len(image_data))
 
-            response = await self._read(self.TIMEOUT_ACK)
+            response = await self._read(timeout)
             command, _ = check_response_type(response)
 
             if command == CommandCode.DIRECT_WRITE_END:

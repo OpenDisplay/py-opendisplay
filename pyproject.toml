@@ -76,7 +76,7 @@ warn_unused_configs = true
 
 [tool.pylint.format]
 max-line-length = 120
-max-module-lines = 1150
+max-module-lines = 1500
 
 [tool.pylint.basic]
 # Allow unit-suffixed names (e.g. full_update_mC for milli-Coulombs)
