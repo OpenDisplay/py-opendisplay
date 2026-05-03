@@ -135,12 +135,12 @@ class TestBuilders:
         stream = bytes(range(200))
         packet, remaining = build_direct_write_partial_start(
             old_etag=0xDEADBEEF,
+            new_etag=0x01020304,
             flags=PARTIAL_FLAG_COMPRESSED,
             x=8,
             y=9,
             width=16,
             height=10,
-            uncompressed_size=40,
             stream_bytes=stream,
         )
 
@@ -148,16 +148,16 @@ class TestBuilders:
         assert packet[:2] == b"\x00\x76"
         assert packet[2] == PARTIAL_FLAG_COMPRESSED
         assert int.from_bytes(packet[3:7], "big") == 0xDEADBEEF
-        assert int.from_bytes(packet[7:9], "big") == 8
-        assert int.from_bytes(packet[9:11], "big") == 9
-        assert int.from_bytes(packet[11:13], "big") == 16
-        assert int.from_bytes(packet[13:15], "big") == 10
-        assert int.from_bytes(packet[15:18], "big") == 40
-        assert packet[18:] == stream[:182]
-        assert remaining == stream[182:]
+        assert int.from_bytes(packet[7:11], "big") == 0x01020304
+        assert int.from_bytes(packet[11:13], "big") == 8
+        assert int.from_bytes(packet[13:15], "big") == 9
+        assert int.from_bytes(packet[15:17], "big") == 16
+        assert int.from_bytes(packet[17:19], "big") == 10
+        assert packet[19:] == stream[:181]
+        assert remaining == stream[181:]
 
     def test_partial_start_allows_zero_etag(self):
-        packet, _ = build_direct_write_partial_start(0, 0, 0, 0, 8, 1, 2)
+        packet, _ = build_direct_write_partial_start(0, 0x01020304, 0, 0, 0, 8, 1)
         assert packet[3:7] == b"\x00\x00\x00\x00"
 
     def test_end_with_etag(self):

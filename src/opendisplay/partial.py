@@ -26,7 +26,7 @@ ERR_MIXED_DATA      = 0x02   # aborted; etag cleared on device
 ERR_RECT_OOB        = 0x03   # on 0x76: rectangle out of display bounds
 ERR_RECT_ALIGN      = 0x04   # on 0x76: x or width not aligned to byte boundary
 ERR_PARTIAL_FLAGS   = 0x05   # on 0x76: unsupported or reserved flags set
-ERR_PARTIAL_SIZE    = 0x06   # on 0x76: uncompressed_size does not match geometry
+ERR_PARTIAL_SIZE    = 0x06   # on 0x76: derived stream size does not fit
 ERR_PARTIAL_STREAM  = 0x07   # on 0x71/0x72: stream byte count or content error
 ERR_PARTIAL_UNSUPPORTED = 0x08   # on 0x76: partial update unsupported for panel mode
 

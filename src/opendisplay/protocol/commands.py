@@ -141,22 +141,22 @@ def build_direct_write_start_uncompressed() -> bytes:
 
 def build_direct_write_partial_start(
     old_etag: int,
+    new_etag: int,
     flags: int,
     x: int,
     y: int,
     width: int,
     height: int,
-    uncompressed_size: int,
     stream_bytes: bytes = b"",
 ) -> tuple[bytes, bytes]:
     """Build 0x76 partial START packet.
 
-    Fixed payload is 16 bytes; optional initial stream bytes are appended up
+    Fixed payload is 17 bytes; optional initial stream bytes are appended up
     to MAX_START_PAYLOAD total packet size (including the 2-byte command).
 
-    Wire v1 fixed payload:
-      flags(1) + old_etag(4BE) + x(2BE) + y(2BE) +
-      width(2BE) + height(2BE) + uncompressed_size(3BE)
+    Wire fixed payload:
+      flags(1) + old_etag(4BE) + new_etag(4BE) + x(2BE) + y(2BE) +
+      width(2BE) + height(2BE)
 
     Returns:
         (start_packet, remaining_stream_bytes) — send start_packet as the
@@ -166,18 +166,18 @@ def build_direct_write_partial_start(
         raise ValueError(f"partial flags out of uint8 range: {flags}")
     if not 0 <= old_etag <= 0xFFFFFFFF:
         raise ValueError(f"old_etag must be uint32, got {old_etag}")
-    if not 0 <= uncompressed_size <= 0xFFFFFF:
-        raise ValueError(f"partial uncompressed_size out of uint24 range: {uncompressed_size}")
+    if not 0 <= new_etag <= 0xFFFFFFFF:
+        raise ValueError(f"new_etag must be uint32, got {new_etag}")
 
     fixed = (
         struct.pack(">B", flags)
         + struct.pack(">I", old_etag)
+        + struct.pack(">I", new_etag)
         + struct.pack(">HHHH", x, y, width, height)
-        + uncompressed_size.to_bytes(3, byteorder="big")
-    )  # 1+4+2+2+2+2+3 = 16 bytes
+    )  # 1+4+4+2+2+2+2 = 17 bytes
 
     cmd = CommandCode.DIRECT_WRITE_PARTIAL_START.to_bytes(2, byteorder="big")
-    max_initial = MAX_START_PAYLOAD - 2 - len(fixed)  # 200 - 2 - 16 = 182 bytes
+    max_initial = MAX_START_PAYLOAD - 2 - len(fixed)  # 200 - 2 - 17 = 181 bytes
     initial = stream_bytes[:max_initial]
     remaining = stream_bytes[max_initial:]
     return cmd + fixed + initial, remaining

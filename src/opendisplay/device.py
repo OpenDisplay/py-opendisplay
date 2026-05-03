@@ -1169,9 +1169,9 @@ class OpenDisplayDevice:
         # 1. 0x76 partial START (initial stream bytes packed in where space allows)
         start_pkt, remaining = build_direct_write_partial_start(
             old_etag=state.etag,
+            new_etag=new_etag,
             flags=flags,
             x=rx, y=ry, width=rw, height=rh,
-            uncompressed_size=uncompressed_size,
             stream_bytes=stream_bytes,
         )
         await self._write(start_pkt)
@@ -1212,9 +1212,9 @@ class OpenDisplayDevice:
             if progress_callback is not None:
                 progress_callback(bytes_sent, total_stream_bytes)
 
-        # 3. 0x72 END with refresh_mode + new_etag. old_etag was non-zero,
-        # so firmware expects a replacement etag on successful refresh.
-        await self._write(build_direct_write_end_with_etag(RefreshMode.PARTIAL.value, new_etag))
+        # 3. 0x72 END with refresh_mode only. The replacement etag is part of
+        # 0x76 for partial uploads.
+        await self._write(build_direct_write_end_command(RefreshMode.PARTIAL.value))
         response = await self._read(self.TIMEOUT_ACK)
         validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
 
