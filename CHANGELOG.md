@@ -1,5 +1,23 @@
 # Changelog
 
+## [6.0.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.9.0...v6.0.0) (2026-05-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* migrate to epaper-dithering v4 API
+
+### Features
+
+* migrate to epaper-dithering v4 API ([91d3c23](https://github.com/OpenDisplay/py-opendisplay/commit/91d3c235ea9fc66a9fd658506f515afe41f920b1))
+
+
+### Bug Fixes
+
+* increase uncompressed data chunk ACK timeout for Spectra/ACeP displays ([8892ec2](https://github.com/OpenDisplay/py-opendisplay/commit/8892ec23f2f16389adc5aae40b20947c169561bd))
+* reliable upload across encrypted/slow-display device types ([6740626](https://github.com/OpenDisplay/py-opendisplay/commit/6740626bd8d941f7f1733fc4798d53796e3148b3))
+* reliable upload across encrypted/slow-display device types ([ab1b636](https://github.com/OpenDisplay/py-opendisplay/commit/ab1b636243d18c735ca0ebae7dbe4ad91666b2c8))
+
 ## [5.9.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.8.2...v5.9.0) (2026-04-02)
 
 
