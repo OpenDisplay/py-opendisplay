@@ -126,8 +126,8 @@ def prepare_image(
     saturation: float = 1.0,
     shadows: float = 0.0,
     highlights: float = 0.0,
-    tone: float | str = "auto",
-    gamut: float | str = "auto",
+    tone: float | str = 0.0,
+    gamut: float | str = 0.0,
     fit: FitMode = FitMode.CONTAIN,
     rotate: Rotation = Rotation.ROTATE_0,
 ) -> tuple[bytes, bytes | None, Image.Image]:
@@ -152,8 +152,8 @@ def prepare_image(
         saturation: Saturation multiplier, >1.0 boosts (default: 1.0)
         shadows: Shadow lift in [0.0, 1.0] (default: 0.0)
         highlights: Highlight rolloff in [0.0, 1.0] (default: 0.0)
-        tone: Dynamic range compression — "auto", "off", or 0.0–1.0 (default: "auto")
-        gamut: Gamut compression — "auto", "off", or 0.0–1.0 (default: "auto")
+        tone: Dynamic range compression — "auto", "off", or 0.0–1.0 (default: 0.0)
+        gamut: Gamut compression — "auto", "off", or 0.0–1.0 (default: 0.0)
         fit: How to map the image to display dimensions (default: CONTAIN)
         rotate: Source image rotation enum (0/90/180/270)
 
@@ -871,8 +871,8 @@ class OpenDisplayDevice:
         saturation: float = 1.0,
         shadows: float = 0.0,
         highlights: float = 0.0,
-        tone: float | str = "auto",
-        gamut: float | str = "auto",
+        tone: float | str = 0.0,
+        gamut: float | str = 0.0,
         fit: FitMode = FitMode.CONTAIN,
         rotate: Rotation = Rotation.ROTATE_0,
     ) -> tuple[bytes, bytes | None, Image.Image]:
@@ -908,8 +908,8 @@ class OpenDisplayDevice:
         saturation: float = 1.0,
         shadows: float = 0.0,
         highlights: float = 0.0,
-        tone: float | str = "auto",
-        gamut: float | str = "auto",
+        tone: float | str = 0.0,
+        gamut: float | str = 0.0,
         fit: FitMode = FitMode.CONTAIN,
         rotate: Rotation = Rotation.ROTATE_0,
         progress_callback: Callable[[int, int], None] | None = None,
@@ -933,8 +933,8 @@ class OpenDisplayDevice:
             saturation: Saturation multiplier, >1.0 boosts (default: 1.0)
             shadows: Shadow lift in [0.0, 1.0] (default: 0.0)
             highlights: Highlight rolloff in [0.0, 1.0] (default: 0.0)
-            tone: Dynamic range compression — "auto", "off", or 0.0–1.0 (default: "auto")
-            gamut: Gamut compression — "auto", "off", or 0.0–1.0 (default: "auto")
+            tone: Dynamic range compression — "auto", "off", or 0.0–1.0 (default: 0.0)
+            gamut: Gamut compression — "auto", "off", or 0.0–1.0 (default: 0.0)
             fit: How to map the image to display dimensions (default: CONTAIN).
             rotate: Source image rotation enum, applied before fit/encoding.
 

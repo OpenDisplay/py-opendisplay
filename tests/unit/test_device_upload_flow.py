@@ -441,3 +441,14 @@ def test_prepare_image_default_fit_is_contain(monkeypatch: pytest.MonkeyPatch) -
         f"_prepare_image default fit is {default_fit!r}, expected FitMode.CONTAIN. "
         "STRETCH would distort non-matching aspect ratios."
     )
+
+
+def test_prepare_image_defaults_tone_and_gamut_off() -> None:
+    """_prepare_image() should leave tone/gamut compression disabled unless requested."""
+    import inspect
+
+    from opendisplay.device import OpenDisplayDevice as _Dev
+
+    sig = inspect.signature(_Dev._prepare_image)
+    assert sig.parameters["tone"].default == 0.0
+    assert sig.parameters["gamut"].default == 0.0

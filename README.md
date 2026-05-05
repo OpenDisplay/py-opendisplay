@@ -201,18 +201,21 @@ By default, `use_measured_palettes=True` and the library will automatically use 
 
 ### Tone Compression
 
-E-paper displays can't reproduce the full luminance range of digital images. Tone compression remaps image luminance to the display's actual range before dithering, producing smoother results. It is enabled by default (`"auto"`) and only applies when using measured palettes.
+E-paper displays can't reproduce the full luminance range of digital images. Tone compression remaps image luminance to the display's actual range before dithering, producing smoother results. It is off by default (`0.0`) and only applies when using measured palettes.
 
 ```python
 async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF") as device:
-    # Default: auto tone compression (analyzes image, maximizes contrast)
+    # Default: tone/gamut compression off
     await device.upload_image(image)
 
+    # Auto tone and gamut compression for photos
+    await device.upload_image(image, tone="auto", gamut="auto")
+
     # Fixed linear compression
-    await device.upload_image(image, tone_compression=1.0)
+    await device.upload_image(image, tone=1.0)
 
     # Disable tone compression
-    await device.upload_image(image, tone_compression=0.0)
+    await device.upload_image(image, tone="off")
 ```
 
 ## Refresh Modes

@@ -512,15 +512,15 @@ def _add_upload_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
     )
     p.add_argument(
         "--tone",
-        default="auto",
+        default="0",
         metavar="VALUE",
-        help='Tone compression: "auto", "off", or 0.0–1.0 (default: auto)',
+        help='Tone compression: "auto", "off", or 0.0–1.0 (default: 0)',
     )
     p.add_argument(
         "--gamut",
-        default="auto",
+        default="0",
         metavar="VALUE",
-        help='Gamut compression: "auto", "off", or 0.0–1.0 (default: auto)',
+        help='Gamut compression: "auto", "off", or 0.0–1.0 (default: 0)',
     )
     p.set_defaults(func=_cmd_upload)
 
