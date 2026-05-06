@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.0](https://github.com/OpenDisplay/py-opendisplay/compare/v6.0.0...v6.1.0) (2026-05-06)
+
+
+### Features
+
+* pin epaper dithering 4.1 ([3fe27d8](https://github.com/OpenDisplay/py-opendisplay/commit/3fe27d8179145e596eb2f8058c2340b1432269b5))
+
 ## [6.0.0](https://github.com/OpenDisplay/py-opendisplay/compare/v5.9.0...v6.0.0) (2026-05-03)
 
 
