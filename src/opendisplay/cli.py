@@ -97,16 +97,16 @@ def _parse_hex_key(hex_str: str | None) -> bytes | None:
         _error(f"--key contains invalid hex characters: {exc}")
 
 
-def _parse_tone_compression(value: str) -> float | str:
-    """Parse tone compression value: 'auto' or a float in [0.0, 1.0]."""
-    if value == "auto":
-        return "auto"
+def _parse_compression_value(flag: str, value: str) -> float | str:
+    """Parse a compression knob value: 'auto'/'off' or a float in [0.0, 1.0]."""
+    if value in ("auto", "off"):
+        return value
     try:
         f = float(value)
     except ValueError:
-        _error(f'--tone-compression must be "auto" or a float, got {value!r}')
+        _error(f'{flag} must be "auto", "off", or a float, got {value!r}')
     if not 0.0 <= f <= 1.0:
-        _error(f"--tone-compression must be between 0.0 and 1.0, got {f}")
+        _error(f"{flag} must be between 0.0 and 1.0, got {f}")
     return f
 
 
@@ -523,11 +523,26 @@ def _add_upload_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         help="Additional image rotation in degrees on top of device config (default: 0)",
     )
     p.add_argument("--no-compress", action="store_true", help="Disable zlib compression")
+    p.add_argument("--no-serpentine", action="store_true", help="Disable serpentine scan direction")
+    p.add_argument("--exposure", type=float, default=1.0, metavar="VALUE", help="Exposure multiplier (default: 1.0)")
     p.add_argument(
-        "--tone-compression",
-        default="auto",
+        "--saturation", type=float, default=1.0, metavar="VALUE", help="Saturation multiplier (default: 1.0)"
+    )
+    p.add_argument("--shadows", type=float, default=0.0, metavar="VALUE", help="Shadow lift 0.0–1.0 (default: 0.0)")
+    p.add_argument(
+        "--highlights", type=float, default=0.0, metavar="VALUE", help="Highlight rolloff 0.0–1.0 (default: 0.0)"
+    )
+    p.add_argument(
+        "--tone",
+        default="0",
         metavar="VALUE",
-        help='Dynamic range compression: "auto" or 0.0–1.0 (default: auto)',
+        help='Tone compression: "auto", "off", or 0.0–1.0 (default: 0)',
+    )
+    p.add_argument(
+        "--gamut",
+        default="0",
+        metavar="VALUE",
+        help='Gamut compression: "auto", "off", or 0.0–1.0 (default: 0)',
     )
     p.add_argument(
         "--state-file",
@@ -542,7 +557,8 @@ def _add_upload_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
 
 def _cmd_upload(args: argparse.Namespace) -> None:
     key = _parse_hex_key(args.key)
-    tone = _parse_tone_compression(args.tone_compression)
+    tone = _parse_compression_value("--tone", args.tone)
+    gamut = _parse_compression_value("--gamut", args.gamut)
     _run(
         _upload(
             _device_kwargs(args.device, key, args.timeout),
@@ -552,7 +568,13 @@ def _cmd_upload(args: argparse.Namespace) -> None:
             _FIT_CHOICES[args.fit],
             _ROTATE_CHOICES[args.rotate],
             not args.no_compress,
+            not args.no_serpentine,
+            args.exposure,
+            args.saturation,
+            args.shadows,
+            args.highlights,
             tone,
+            gamut,
             args.state_file,
         )
     )
@@ -566,7 +588,13 @@ async def _upload(
     fit: FitMode,
     rotate: Rotation,
     compress: bool,
-    tone_compression: float | str,
+    serpentine: bool,
+    exposure: float,
+    saturation: float,
+    shadows: float,
+    highlights: float,
+    tone: float | str,
+    gamut: float | str,
     state_file: str | None,
 ) -> None:
     try:
@@ -622,7 +650,13 @@ async def _upload(
                     refresh_mode=refresh_mode,
                     dither_mode=dither_mode,
                     compress=compress,
-                    tone_compression=tone_compression,
+                    serpentine=serpentine,
+                    exposure=exposure,
+                    saturation=saturation,
+                    shadows=shadows,
+                    highlights=highlights,
+                    tone=tone,
+                    gamut=gamut,
                     fit=fit,
                     rotate=rotate,
                     progress_callback=on_progress,

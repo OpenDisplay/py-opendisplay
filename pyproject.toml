@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "py-opendisplay"
-version = "5.9.0"
+version = "6.1.0"
 description = "Python library for OpenDisplay BLE e-paper displays"
 readme = "README.md"
 license = "MIT"
@@ -34,7 +34,7 @@ dependencies = [
     "pillow>=10.0.0",
     "numpy>=1.24.0,!=2.4.0",
     "bleak-retry-connector>=3.5.0",
-    "epaper-dithering==0.6.4",
+    "epaper-dithering==4.1.0",
     "cryptography>=41.0.0",
 ]
 
@@ -76,7 +76,7 @@ warn_unused_configs = true
 
 [tool.pylint.format]
 max-line-length = 120
-max-module-lines = 1150
+max-module-lines = 1500
 
 [tool.pylint.basic]
 # Allow unit-suffixed names (e.g. full_update_mC for milli-Coulombs)
@@ -85,8 +85,8 @@ argument-rgx = "^[a-zA-Z_][a-zA-Z0-9_]*$"
 attr-rgx = "^[a-zA-Z_][a-zA-Z0-9_]*$"
 
 [tool.pylint.design]
-max-args = 12
-max-positional-arguments = 12
+max-args = 16
+max-positional-arguments = 16
 max-locals = 28              # _build_info_tree renders a complex tree with many conditional vars
 max-attributes = 22          # config dataclasses have many fields by nature
 max-branches = 25

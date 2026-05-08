@@ -263,9 +263,14 @@ class DisplayConfig:
     reserved: bytes  # 13 bytes
 
     @property
-    def supports_raw(self) -> bool:
-        """Check if display supports raw image transmission (TRANSMISSION_MODE_RAW)."""
+    def supports_zipxl(self) -> bool:
+        """Check if display supports ZIP-XL (large compressed buffer up to 512KB, ESP32/PSRAM devices)."""
         return bool(self.transmission_modes & 0x01)
+
+    @property
+    def supports_raw(self) -> bool:
+        """Alias for supports_zipxl (bit 0x01 was previously named TRANSMISSION_MODE_RAW)."""
+        return self.supports_zipxl
 
     @property
     def supports_zip(self) -> bool:
