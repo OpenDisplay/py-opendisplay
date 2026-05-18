@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.1](https://github.com/OpenDisplay/py-opendisplay/compare/v6.1.0...v6.1.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* add missing ColorScheme.GRAYSCALE_8 encoding ([ac4bf3d](https://github.com/OpenDisplay/py-opendisplay/commit/ac4bf3dc5e78ea81c18c49e2a35714b41f913869))
+
 ## [6.1.0](https://github.com/OpenDisplay/py-opendisplay/compare/v6.0.0...v6.1.0) (2026-05-06)
 
 
