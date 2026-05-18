@@ -89,6 +89,8 @@ def encode_image(
         return encode_4bpp(image, bwgbry_mapping=True)
     if color_scheme == ColorScheme.GRAYSCALE_4:
         return encode_2bpp(image)
+    if color_scheme == ColorScheme.GRAYSCALE_8:
+        return encode_4bpp(image)
     if color_scheme == ColorScheme.GRAYSCALE_16:
         # 16-level grayscale uses 4bpp; palette indices 0-15 map directly (0=black, 15=white)
         return encode_4bpp(image)
