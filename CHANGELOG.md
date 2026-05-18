@@ -1,5 +1,16 @@
 # Changelog
 
+## [7.0.0](https://github.com/OpenDisplay/py-opendisplay/compare/v6.1.1...v7.0.0) (2026-05-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* depends on epaper-dithering 5.0.0 which swapped GRAYSCALE_8 and GRAYSCALE_16 firmware values to match the actual firmware convention (GRAYSCALE_16=6, GRAYSCALE_8=7 reserved).
+
+### Bug Fixes
+
+* bump epaper-dithering to 5.0.0 and fix GRAYSCALE_16 encoding ([b964696](https://github.com/OpenDisplay/py-opendisplay/commit/b96469667861386bbf749881dda025151f718e97))
+
 ## [6.1.1](https://github.com/OpenDisplay/py-opendisplay/compare/v6.1.0...v6.1.1) (2026-05-18)
 
 
