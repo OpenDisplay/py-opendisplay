@@ -5,6 +5,7 @@ import pytest
 from opendisplay.models.advertisement import (
     AdvertisementData,
     AdvertisementTracker,
+    TouchTracker,
     decode_button_event,
     parse_advertisement,
 )
@@ -223,3 +224,207 @@ class TestParseAdvertisement:
         assert [e.event_type for e in third_events] == ["button_up"]
         assert third_events[0].button_id == 2
         assert third_events[0].pressed is False
+
+
+class TestTouchEventData:
+    """Test TouchEventData parsing from dynamic data bytes."""
+
+    def _adv_with_touch(
+        self, contact_count: int, track_id: int, x: int, y: int, start_byte: int = 0
+    ) -> AdvertisementData:
+        """Build a v1 advertisement with touch data at the given offset."""
+        dynamic = bytearray(11)
+        dynamic[start_byte] = (contact_count & 0x0F) | ((track_id & 0x0F) << 4)
+        dynamic[start_byte + 1] = x & 0xFF
+        dynamic[start_byte + 2] = (x >> 8) & 0xFF
+        dynamic[start_byte + 3] = y & 0xFF
+        dynamic[start_byte + 4] = (y >> 8) & 0xFF
+        payload = _v1_payload(bytes(dynamic))
+        return parse_advertisement(payload)
+
+    def test_touch_event_idle(self) -> None:
+        """contact_count=0 → touch_idle, coordinates accessible."""
+        adv = self._adv_with_touch(contact_count=0, track_id=0, x=100, y=200)
+        event = adv.touch_event(0)
+        assert event is not None
+        assert event.contact_count == 0
+        assert event.event_type == "touch_idle"
+        assert not event.is_touching
+
+    def test_touch_event_active(self) -> None:
+        """contact_count=1 → touch_down with correct x/y/track_id."""
+        adv = self._adv_with_touch(contact_count=1, track_id=3, x=320, y=240)
+        event = adv.touch_event(0)
+        assert event is not None
+        assert event.contact_count == 1
+        assert event.track_id == 3
+        assert event.x == 320
+        assert event.y == 240
+        assert event.event_type == "touch_down"
+        assert event.is_touching
+
+    def test_touch_event_released(self) -> None:
+        """contact_count=6 → touch_up (released), coordinates latched."""
+        adv = self._adv_with_touch(contact_count=6, track_id=1, x=50, y=75)
+        event = adv.touch_event(0)
+        assert event is not None
+        assert event.contact_count == 6
+        assert event.event_type == "touch_up"
+        assert not event.is_touching
+        assert event.x == 50
+        assert event.y == 75
+
+    def test_touch_event_non_zero_start_byte(self) -> None:
+        """Touch data at start_byte=3 is parsed from the correct offset."""
+        adv = self._adv_with_touch(contact_count=2, track_id=0, x=128, y=64, start_byte=3)
+        event = adv.touch_event(3)
+        assert event is not None
+        assert event.contact_count == 2
+        assert event.x == 128
+        assert event.y == 64
+
+    def test_touch_event_returns_none_for_legacy(self) -> None:
+        """Legacy advertisements return None for touch_event()."""
+        data = bytes([0x02, 0x36, 0x00, 0x6C, 0x00, 0xC3, 0x01, 0x55, 0x0F, 0x16, 0x4D])
+        adv = parse_advertisement(data)
+        assert adv.touch_event(0) is None
+
+    def test_touch_event_out_of_range_returns_none(self) -> None:
+        """start_byte too large to fit 5-byte block returns None."""
+        payload = _v1_payload(bytes(11))
+        adv = parse_advertisement(payload)
+        assert adv.touch_event(7) is None  # 7+5=12 > 11
+
+    def test_touch_event_max_contacts(self) -> None:
+        """contact_count=5 (max) is still touch_down."""
+        adv = self._adv_with_touch(contact_count=5, track_id=0, x=10, y=10)
+        event = adv.touch_event(0)
+        assert event is not None
+        assert event.event_type == "touch_down"
+        assert event.is_touching
+
+
+class TestTouchTracker:
+    """Test TouchTracker state machine transitions."""
+
+    ADDRESS = "AA:BB:CC:DD:EE:FF"
+
+    def _adv(self, contact_count: int, x: int = 0, y: int = 0) -> AdvertisementData:
+        """Build v1 advertisement with touch data at start_byte=0."""
+        dynamic = bytearray(11)
+        dynamic[0] = contact_count & 0x0F
+        dynamic[1] = x & 0xFF
+        dynamic[2] = (x >> 8) & 0xFF
+        dynamic[3] = y & 0xFF
+        dynamic[4] = (y >> 8) & 0xFF
+        return parse_advertisement(_v1_payload(bytes(dynamic)))
+
+    def test_first_advertisement_emits_no_events(self) -> None:
+        """First update seeds state; no events emitted."""
+        tracker = TouchTracker(instance=0, start_byte=0)
+        adv = self._adv(contact_count=0)
+        assert tracker.update(self.ADDRESS, adv, timestamp=1.0) == []
+
+    def test_touch_down_on_idle_to_active(self) -> None:
+        """Transition from idle (0) to active (1) emits touch_down."""
+        tracker = TouchTracker(instance=0, start_byte=0)
+        tracker.update(self.ADDRESS, self._adv(0), timestamp=1.0)
+
+        events = tracker.update(self.ADDRESS, self._adv(1, x=100, y=200), timestamp=2.0)
+        assert len(events) == 1
+        assert events[0].event_type == "touch_down"
+        assert events[0].x == 100
+        assert events[0].y == 200
+        assert events[0].instance == 0
+        assert events[0].address == self.ADDRESS
+        assert events[0].timestamp == 2.0
+
+    def test_touch_up_on_active_to_released(self) -> None:
+        """Transition from active to released (6) emits touch_up."""
+        tracker = TouchTracker(instance=0, start_byte=0)
+        tracker.update(self.ADDRESS, self._adv(0), timestamp=1.0)
+        tracker.update(self.ADDRESS, self._adv(1, x=50, y=50), timestamp=2.0)
+
+        events = tracker.update(self.ADDRESS, self._adv(6, x=50, y=50), timestamp=3.0)
+        assert len(events) == 1
+        assert events[0].event_type == "touch_up"
+
+    def test_touch_up_on_active_to_idle(self) -> None:
+        """Transition directly from active to idle also emits touch_up."""
+        tracker = TouchTracker(instance=0, start_byte=0)
+        tracker.update(self.ADDRESS, self._adv(0), timestamp=1.0)
+        tracker.update(self.ADDRESS, self._adv(1, x=10, y=20), timestamp=2.0)
+
+        events = tracker.update(self.ADDRESS, self._adv(0), timestamp=3.0)
+        assert len(events) == 1
+        assert events[0].event_type == "touch_up"
+
+    def test_touch_move_on_position_change(self) -> None:
+        """Active→active with different coordinates emits touch_move."""
+        tracker = TouchTracker(instance=0, start_byte=0)
+        tracker.update(self.ADDRESS, self._adv(0), timestamp=1.0)
+        tracker.update(self.ADDRESS, self._adv(1, x=100, y=100), timestamp=2.0)
+
+        events = tracker.update(self.ADDRESS, self._adv(1, x=150, y=120), timestamp=3.0)
+        assert len(events) == 1
+        assert events[0].event_type == "touch_move"
+        assert events[0].x == 150
+        assert events[0].y == 120
+
+    def test_no_event_on_same_position(self) -> None:
+        """Active→active with same coordinates emits no event."""
+        tracker = TouchTracker(instance=0, start_byte=0)
+        tracker.update(self.ADDRESS, self._adv(0), timestamp=1.0)
+        tracker.update(self.ADDRESS, self._adv(1, x=100, y=100), timestamp=2.0)
+
+        events = tracker.update(self.ADDRESS, self._adv(1, x=100, y=100), timestamp=3.0)
+        assert events == []
+
+    def test_no_event_on_idle_to_idle(self) -> None:
+        """Idle→idle emits no event."""
+        tracker = TouchTracker(instance=0, start_byte=0)
+        tracker.update(self.ADDRESS, self._adv(0), timestamp=1.0)
+        events = tracker.update(self.ADDRESS, self._adv(0), timestamp=2.0)
+        assert events == []
+
+    def test_instance_number_in_event(self) -> None:
+        """TouchChangeEvent carries the correct instance number."""
+        tracker = TouchTracker(instance=2, start_byte=3)
+        dynamic = bytearray(11)
+        dynamic[3] = 1  # contact_count=1 at start_byte=3
+        adv_idle = parse_advertisement(_v1_payload(bytes(11)))
+        adv_touch = parse_advertisement(_v1_payload(bytes(dynamic)))
+
+        tracker.update(self.ADDRESS, adv_idle, timestamp=1.0)
+        events = tracker.update(self.ADDRESS, adv_touch, timestamp=2.0)
+        assert len(events) == 1
+        assert events[0].instance == 2
+
+    def test_reset_clears_state(self) -> None:
+        """After reset, first update for that address seeds state again."""
+        tracker = TouchTracker(instance=0, start_byte=0)
+        tracker.update(self.ADDRESS, self._adv(0), timestamp=1.0)
+        tracker.reset(self.ADDRESS)
+
+        # After reset, this should be treated as the first advertisement → no event
+        events = tracker.update(self.ADDRESS, self._adv(1, x=10, y=10), timestamp=2.0)
+        assert events == []
+
+    def test_reset_all_clears_every_address(self) -> None:
+        """reset() with no argument clears state for all tracked addresses."""
+        other = "11:22:33:44:55:66"
+        tracker = TouchTracker(instance=0, start_byte=0)
+        tracker.update(self.ADDRESS, self._adv(0), timestamp=1.0)
+        tracker.update(other, self._adv(0), timestamp=1.0)
+        tracker.reset()
+
+        # Both addresses should be treated as first advertisement → no events
+        assert tracker.update(self.ADDRESS, self._adv(1, x=5, y=5), timestamp=2.0) == []
+        assert tracker.update(other, self._adv(1, x=5, y=5), timestamp=2.0) == []
+
+    def test_legacy_advertisement_returns_no_events(self) -> None:
+        """Legacy advertisements (no dynamic_data) produce no touch events."""
+        tracker = TouchTracker(instance=0, start_byte=0)
+        legacy = bytes([0x02, 0x36, 0x00, 0x6C, 0x00, 0xC3, 0x01, 0x55, 0x0F, 0x16, 0x4D])
+        adv = parse_advertisement(legacy)
+        assert tracker.update(self.ADDRESS, adv, timestamp=1.0) == []

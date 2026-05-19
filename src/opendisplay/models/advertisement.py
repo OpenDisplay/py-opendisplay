@@ -83,6 +83,30 @@ class AdvertisementData:
             return []
         return [decode_button_event(raw, i) for i, raw in enumerate(self.dynamic_data)]
 
+    def touch_event(self, start_byte: int) -> TouchEventData | None:
+        """Parse a 5-byte touch block from dynamic_data at the given offset (v1 only).
+
+        Args:
+            start_byte: Offset within the 11-byte dynamic return block (0–6).
+
+        Returns:
+            Parsed touch data, or None if not a v1 advertisement or block out of range.
+        """
+        if self.format_version != "v1":
+            return None
+        if start_byte + 5 > len(self.dynamic_data):
+            return None
+        byte0 = self.dynamic_data[start_byte]
+        x = struct.unpack_from("<H", self.dynamic_data, start_byte + 1)[0]
+        y = struct.unpack_from("<H", self.dynamic_data, start_byte + 3)[0]
+        return TouchEventData(
+            start_byte=start_byte,
+            contact_count=byte0 & 0x0F,
+            track_id=(byte0 >> 4) & 0x0F,
+            x=x,
+            y=y,
+        )
+
 
 @dataclass(frozen=True)
 class ButtonEventData:
@@ -108,6 +132,45 @@ class ButtonChangeEvent:
     previous_press_count: int
     raw: int
     previous_raw: int
+    timestamp: float
+
+
+@dataclass(frozen=True)
+class TouchEventData:
+    """Decoded touch data from a 5-byte block in v1 dynamic return data."""
+
+    start_byte: int
+    contact_count: int
+    track_id: int
+    x: int
+    y: int
+
+    @property
+    def event_type(self) -> str:
+        """Return event type string for the current contact state."""
+        if 1 <= self.contact_count <= 5:
+            return "touch_down"
+        if self.contact_count == 6:
+            return "touch_up"
+        return "touch_idle"
+
+    @property
+    def is_touching(self) -> bool:
+        """Return True when one or more contacts are active."""
+        return 1 <= self.contact_count <= 5
+
+
+@dataclass(frozen=True)
+class TouchChangeEvent:
+    """Touch state transition emitted by TouchTracker."""
+
+    address: str
+    instance: int
+    event_type: str
+    x: int
+    y: int
+    contact_count: int
+    track_id: int
     timestamp: float
 
 
@@ -213,6 +276,71 @@ class AdvertisementTracker:
                 )
 
         return events
+
+
+class TouchTracker:
+    """Track per-device v1 touch state and emit touch transitions.
+
+    One instance per touch controller; pass the controller's instance_number
+    and touch_data_start_byte from GlobalConfig.touch_controllers[i].
+    """
+
+    def __init__(self, instance: int, start_byte: int) -> None:
+        """Initialize tracker for one touch controller."""
+        self._instance = instance
+        self._start_byte = start_byte
+        self._last_by_address: dict[str, TouchEventData] = {}
+
+    def reset(self, address: str | None = None) -> None:
+        """Reset tracker state for one device or all devices."""
+        if address is None:
+            self._last_by_address.clear()
+        else:
+            self._last_by_address.pop(address, None)
+
+    def update(
+        self,
+        address: str,
+        advertisement: AdvertisementData,
+        timestamp: float | None = None,
+    ) -> list[TouchChangeEvent]:
+        """Process one advertisement and return detected touch transitions."""
+        current = advertisement.touch_event(self._start_byte)
+        if current is None:
+            return []
+
+        previous = self._last_by_address.get(address)
+        self._last_by_address[address] = current
+
+        if previous is None:
+            return []
+
+        if not previous.is_touching and not current.is_touching:
+            return []
+
+        now = timestamp if timestamp is not None else time.time()
+
+        if not previous.is_touching and current.is_touching:
+            event_type = "touch_down"
+        elif previous.is_touching and not current.is_touching:
+            event_type = "touch_up"
+        elif previous.x != current.x or previous.y != current.y:
+            event_type = "touch_move"
+        else:
+            return []
+
+        return [
+            TouchChangeEvent(
+                address=address,
+                instance=self._instance,
+                event_type=event_type,
+                x=current.x,
+                y=current.y,
+                contact_count=current.contact_count,
+                track_id=current.track_id,
+                timestamp=now,
+            )
+        ]
 
 
 LEGACY_LENGTH = 11

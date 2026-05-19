@@ -25,6 +25,9 @@ from .models.advertisement import (
     AdvertisementTracker,
     ButtonChangeEvent,
     ButtonEventData,
+    TouchChangeEvent,
+    TouchEventData,
+    TouchTracker,
     decode_button_event,
     parse_advertisement,
 )
@@ -105,6 +108,9 @@ __all__ = [
     "AdvertisementTracker",
     "ButtonEventData",
     "ButtonChangeEvent",
+    "TouchEventData",
+    "TouchChangeEvent",
+    "TouchTracker",
     # Enums
     "ColorScheme",
     "DitherMode",
