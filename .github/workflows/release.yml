@@ -5,6 +5,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish to PyPI (e.g. v7.1.0). Leave empty to run release-please only."
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -23,37 +28,39 @@ jobs:
           bump-minor-pre-major: true
           bump-patch-for-minor-pre-major: true
 
-      # The following steps only run if a release was created
+      # The following steps only run if a release was created, or a tag was provided manually
       - name: Checkout code
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || inputs.tag }}
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || '' }}
 
       - name: Set up Python
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || inputs.tag }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install uv
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || inputs.tag }}
         uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || inputs.tag }}
         run: uv sync
 
       # - name: Run tests
-      #   if: ${{ steps.release.outputs.release_created }}
+      #   if: ${{ steps.release.outputs.release_created || inputs.tag }}
       #   run: uv run pytest tests/ -v
 
       # - name: Run linter
-      #   if: ${{ steps.release.outputs.release_created }}
+      #   if: ${{ steps.release.outputs.release_created || inputs.tag }}
       #   run: uv run ruff check .
 
       - name: Build package
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || inputs.tag }}
         run: uv build
 
       - name: Publish to PyPI
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || inputs.tag }}
         uses: pypa/gh-action-pypi-publish@release/v1
