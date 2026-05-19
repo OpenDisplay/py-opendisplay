@@ -5,7 +5,7 @@
 
 ### Features
 
-* add partial rendering support ([449e52f](https://github.com/OpenDisplay/py-opendisplay/commit/449e52f1475bd44b4967d4c73dba5c1ccb8a67cf))
+* add partial update support ([449e52f](https://github.com/OpenDisplay/py-opendisplay/commit/449e52f1475bd44b4967d4c73dba5c1ccb8a67cf))
 
 ## [7.0.0](https://github.com/OpenDisplay/py-opendisplay/compare/v6.1.1...v7.0.0) (2026-05-18)
 
