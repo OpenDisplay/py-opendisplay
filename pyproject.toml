@@ -36,7 +36,6 @@ dependencies = [
     "bleak-retry-connector>=3.5.0",
     "epaper-dithering==5.0.0",
     "cryptography>=41.0.0",
-    "pyrefly>=0.60.0",
 ]
 
 [project.optional-dependencies]
