@@ -13,11 +13,10 @@ from .models.enums import CapacityEstimator
 # ---------------------------------------------------------------------------
 # Lookup tables: list of (voltage_mv, soc_percent) sorted high → low.
 # Linear interpolation is used between breakpoints.
+# For runntime tests, please run a full discharge cycle
 # ---------------------------------------------------------------------------
 
 # Li-Ion / LiPo single cell.
-# Source: widely-used embedded reference curve (e.g. Nordic DevZone battery
-# state-of-charge article), empirically validated against standard cells.
 _SOC_LI_ION: list[tuple[int, int]] = [
     (4200, 100),
     (4150, 95),
@@ -43,9 +42,6 @@ _SOC_LI_ION: list[tuple[int, int]] = [
 ]
 
 # LiFePO4 single cell (3.2 V nominal).
-# Source: EVLithium LiFePO4 voltage chart (evlithium.com).
-# The extremely flat plateau from ~30–80 % is characteristic of this
-# chemistry — voltage alone is a poor indicator in that range.
 _SOC_LIFEPO4: list[tuple[int, int]] = [
     (3650, 100),
     (3400, 90),
@@ -60,32 +56,17 @@ _SOC_LIFEPO4: list[tuple[int, int]] = [
     (2500, 0),
 ]
 
-# ---------------------------------------------------------------------------
-# Linear-approximation placeholders — to be replaced once hardware-specific
-# data is available.
-# ---------------------------------------------------------------------------
-
-# Lithium primary (Li-SOCl₂, 3.6 V type, e.g. LS14500).
-# WARNING: Li-SOCl₂ has an almost perfectly flat discharge curve for ~95 %
-# of its capacity. Voltage-based SoC is fundamentally unreliable for this
-# chemistry. This linear approximation is a placeholder only.
-# TODO: Replace with manufacturer discharge curve once the specific cell
-#       used in OpenDisplay hardware is confirmed.
+# Lithium primary (3V type, e.g. CR2450).
 _SOC_LITHIUM_PRIMARY: list[tuple[int, int]] = [
-    (3600, 100),
-    (2800, 0),
+    (3000, 100),
+    (2600, 0),
 ]
 
 # Supercapacitor.
-# The physically correct model is quadratic: SoC = (V²−Vmin²)/(Vmax²−Vmin²)
-# because energy is proportional to V². The linear approximation below is a
-# placeholder until the actual cell voltage range for OpenDisplay hardware
-# is confirmed.
-# TODO: Replace with quadratic formula using hardware-specific Vmin/Vmax
-#       once confirmed.
+# to be used with 2s capacitor packs with pmic
 _SOC_SUPERCAP: list[tuple[int, int]] = [
-    (5000, 100),
-    (2000, 0),
+    (4500, 100),
+    (3000, 0),
 ]
 
 
