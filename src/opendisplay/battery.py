@@ -13,7 +13,7 @@ from .models.enums import CapacityEstimator
 # ---------------------------------------------------------------------------
 # Lookup tables: list of (voltage_mv, soc_percent) sorted high → low.
 # Linear interpolation is used between breakpoints.
-# For runntime tests, please run a full discharge cycle
+# For runtime tests, please run a full discharge cycle
 # ---------------------------------------------------------------------------
 
 # Li-Ion / LiPo single cell.

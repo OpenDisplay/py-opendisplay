@@ -24,17 +24,17 @@ from opendisplay.models.enums import CapacityEstimator
         # LIFEPO4 — clamping
         (CapacityEstimator.LIFEPO4, 4000, 100),
         (CapacityEstimator.LIFEPO4, 2000, 0),
-        # LITHIUM_PRIMARY — endpoints and midpoint (linear placeholder)
-        (CapacityEstimator.LITHIUM_PRIMARY, 3600, 100),
-        (CapacityEstimator.LITHIUM_PRIMARY, 3200, 50),
-        (CapacityEstimator.LITHIUM_PRIMARY, 2800, 0),
+        # LITHIUM_PRIMARY — endpoints and midpoint (CR2450, 3V type)
+        (CapacityEstimator.LITHIUM_PRIMARY, 3000, 100),
+        (CapacityEstimator.LITHIUM_PRIMARY, 2800, 50),
+        (CapacityEstimator.LITHIUM_PRIMARY, 2600, 0),
         # LITHIUM_PRIMARY — clamping
         (CapacityEstimator.LITHIUM_PRIMARY, 3700, 100),
         (CapacityEstimator.LITHIUM_PRIMARY, 2000, 0),
-        # SUPERCAP — endpoints and midpoint (linear placeholder)
-        (CapacityEstimator.SUPERCAP, 5000, 100),
-        (CapacityEstimator.SUPERCAP, 3500, 50),
-        (CapacityEstimator.SUPERCAP, 2000, 0),
+        # SUPERCAP — endpoints and midpoint (2s pack with pmic)
+        (CapacityEstimator.SUPERCAP, 4500, 100),
+        (CapacityEstimator.SUPERCAP, 3750, 50),
+        (CapacityEstimator.SUPERCAP, 3000, 0),
         # SUPERCAP — clamping
         (CapacityEstimator.SUPERCAP, 6000, 100),
         (CapacityEstimator.SUPERCAP, 1000, 0),
