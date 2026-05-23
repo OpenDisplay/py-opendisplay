@@ -1,5 +1,103 @@
 # Changelog
 
+## [8.0.0](https://github.com/OpenDisplay/py-opendisplay/compare/py-opendisplay-v7.2.4...py-opendisplay-v8.0.0) (2026-05-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* depends on epaper-dithering 5.0.0 which swapped GRAYSCALE_8 and GRAYSCALE_16 firmware values to match the actual firmware convention (GRAYSCALE_16=6, GRAYSCALE_8=7 reserved).
+* migrate to epaper-dithering v4 API
+* change upload rotation semantics to be clockwise
+* make core config packets non-optional across models and serialization
+* add FitMode image fitting strategies (contain, cover, crop, stretch)
+* Dithering functionality moved to standalone epaper-dithering package
+* **connection:** Removed get_device_lock from public API. The global per-device lock mechanism has been removed in favor of simpler single-instance usage pattern.
+
+### Features
+
+* Add calibration preset for panel_ic_type 55 ([2852550](https://github.com/OpenDisplay/py-opendisplay/commit/285255061ff1189ca7c399d310b33729f5a6cfb6))
+* add cli ([5178320](https://github.com/OpenDisplay/py-opendisplay/commit/517832062a29fec0fe5c038bffe117a4fa569057))
+* add default file path to export-config cli command ([e1d52ca](https://github.com/OpenDisplay/py-opendisplay/commit/e1d52caef0a4f220711847f55b1f8f4c7edc74db))
+* add device reboot command (0x000F) ([147371d](https://github.com/OpenDisplay/py-opendisplay/commit/147371d617e92e7cf3d425c86608641eeabeea7b))
+* add discovery function ([2760ef9](https://github.com/OpenDisplay/py-opendisplay/commit/2760ef913440b8689bdc6c39d09050fc5f757b64))
+* add display diagonal inches computed property ([538a604](https://github.com/OpenDisplay/py-opendisplay/commit/538a6041f5f4dd383204a7ebfac25879b554e581))
+* add FitMode image fitting strategies (contain, cover, crop, stretch) ([786c614](https://github.com/OpenDisplay/py-opendisplay/commit/786c6144f6524f75ddb90013fa15c0d06dd1ad7f))
+* add GRAYSCALE_16 (4bpp) encoding support ([9b5983b](https://github.com/OpenDisplay/py-opendisplay/commit/9b5983ba01ed064325828e97b37efd1b0eebff6e))
+* add initial support for encryption ([28c24f9](https://github.com/OpenDisplay/py-opendisplay/commit/28c24f9622ee900ffca08f91197a79e69e1db5bc))
+* Add is_flex property to OpenDisplayDevice ([031a778](https://github.com/OpenDisplay/py-opendisplay/commit/031a7780616e9a475279851304aea88b48ab60d7))
+* add more dithering algorithms ([1b2fc6a](https://github.com/OpenDisplay/py-opendisplay/commit/1b2fc6aeef3ef6c3b81e0c23855d38a61e00a62b))
+* add partial rendering support ([449e52f](https://github.com/OpenDisplay/py-opendisplay/commit/449e52f1475bd44b4967d4c73dba5c1ccb8a67cf))
+* add py.typed marker and fix strict mypy errors ([959176b](https://github.com/OpenDisplay/py-opendisplay/commit/959176bcd275591f5d9bfbcc2922ae363f12ad3b))
+* add py.typed marker and fix strict mypy errors and add prek ([c1cf3b4](https://github.com/OpenDisplay/py-opendisplay/commit/c1cf3b4aff940518c410236e3f0fec8ef44bdb4e))
+* add python 14 to supported versions ([2d97f2f](https://github.com/OpenDisplay/py-opendisplay/commit/2d97f2f334fe76204ef1f0eb1a82d5a019c8147f))
+* add sha to firmware version parsing ([a47d58e](https://github.com/OpenDisplay/py-opendisplay/commit/a47d58e07d20b232b65b56d74edef64477497a37))
+* Add touch event parsing and TouchTracker to advertisement module ([64f1580](https://github.com/OpenDisplay/py-opendisplay/commit/64f158040431ef3d5d8015ea2c9fbcbe36f06602))
+* add typed board manufacturer API and docs ([a79eb8d](https://github.com/OpenDisplay/py-opendisplay/commit/a79eb8d9d1c9c2ed440a77930115d6c7b90f84f8))
+* add typed board type mappings and lookup helpers ([2731ee1](https://github.com/OpenDisplay/py-opendisplay/commit/2731ee1bf3371af70329f0decef8407f41f11c4c))
+* add voltage_to_percent function ([fd93f82](https://github.com/OpenDisplay/py-opendisplay/commit/fd93f8243e636e943080882b1a1d2ee7a035d5e1))
+* add way of calling prepare_image() without async context ([da53f7e](https://github.com/OpenDisplay/py-opendisplay/commit/da53f7eaba02f53e7ea5ffe992f9859d33a78d8c))
+* **advertisements:** add v1 button tracker ([386b67a](https://github.com/OpenDisplay/py-opendisplay/commit/386b67a003fe0ddd12f8fcc57bc5f5c04c047f2a))
+* bump epaper-dithering version and expose tone compression option ([c7d3dd1](https://github.com/OpenDisplay/py-opendisplay/commit/c7d3dd1cde26c81883793686e019360741004039))
+* bump epaper-dithering version to 0.5.1 ([9ff01ba](https://github.com/OpenDisplay/py-opendisplay/commit/9ff01bad1620937cac7d671a23037cbfa81451b9))
+* change upload rotation semantics to be clockwise ([d350f02](https://github.com/OpenDisplay/py-opendisplay/commit/d350f0251c2bc473f53accd5a62073080fcb32ac))
+* **config:** add device configuration writing with JSON import/export ([4665d98](https://github.com/OpenDisplay/py-opendisplay/commit/4665d98eccfdc90b419f092f43d0c03a34471860))
+* **config:** expose binary input button_data_byte_index and align 0x25 layout ([5981cfd](https://github.com/OpenDisplay/py-opendisplay/commit/5981cfd8df4537ef0c236858a02b8cf05a6fa227))
+* **config:** support wifi_config packet (0x26) ([8de1e96](https://github.com/OpenDisplay/py-opendisplay/commit/8de1e96e2b3e3f584098764c31459c2eb16e08e6))
+* **connection:** integrate bleak-retry-connector for reliable connections ([088c187](https://github.com/OpenDisplay/py-opendisplay/commit/088c187c32e6b6564ef5d12184dbe57976e60cf7))
+* enforce required config packets for parse and write ([6f2d59d](https://github.com/OpenDisplay/py-opendisplay/commit/6f2d59d740cc14510e7109b84aa5621920b605b6))
+* **epaper-dithering:** bump version for corrected palette ([2a2d5ff](https://github.com/OpenDisplay/py-opendisplay/commit/2a2d5ff7a72b7cb49d54ab82581275af591df67f))
+* make core config packets non-optional across models and serialization ([3749da6](https://github.com/OpenDisplay/py-opendisplay/commit/3749da6baf94d1be2d41328d4226522a14f7d6ac))
+* migrate to epaper-dithering v4 API ([91d3c23](https://github.com/OpenDisplay/py-opendisplay/commit/91d3c235ea9fc66a9fd658506f515afe41f920b1))
+* **models:** update config models for firmware spec v1.1 ([5bfccea](https://github.com/OpenDisplay/py-opendisplay/commit/5bfccea1d4a528dfcea7839f7d0c35ac421a5cd4))
+* **palettes:** add automatic measured palette selection ([ae35b26](https://github.com/OpenDisplay/py-opendisplay/commit/ae35b26fd83fcbc65ccd8444fc29b5a258b4e865))
+* pin epaper dithering 4.1 ([3fe27d8](https://github.com/OpenDisplay/py-opendisplay/commit/3fe27d8179145e596eb2f8058c2340b1432269b5))
+* protocol 1.2 support ([866bfce](https://github.com/OpenDisplay/py-opendisplay/commit/866bfcea3ba75f7b2b35b16580085dcfdff57f2b))
+* **protocol:** add typed LED activate API and handle legacy wifi config packet ([ed9676a](https://github.com/OpenDisplay/py-opendisplay/commit/ed9676aa2e172de6f10b1adcf352c183d0c51774))
+* **protocol:** support firmware v1 config/advertisement updates ([9e929ed](https://github.com/OpenDisplay/py-opendisplay/commit/9e929eddb3f193dd36bed731d092970a8402382d))
+* require at least one display in config parse and JSON import ([758d7a6](https://github.com/OpenDisplay/py-opendisplay/commit/758d7a6caa5d18043a65aa9480b622a775e7a3b0))
+* return processed preview image from upload_image ([54d6ddc](https://github.com/OpenDisplay/py-opendisplay/commit/54d6ddcf1736b6d151d70ce9103191d34715fad8))
+* support reauthentication ([3214ead](https://github.com/OpenDisplay/py-opendisplay/commit/3214ead07f4c4f48ede373764fb84f84993541c8))
+* **upload:** add enum-based per-image rotation before fit in pipeline ([38a06bc](https://github.com/OpenDisplay/py-opendisplay/commit/38a06bcddc4d65a85c06d1f1790b4033a163fabb))
+
+
+### Bug Fixes
+
+* add conftest ([673db99](https://github.com/OpenDisplay/py-opendisplay/commit/673db99bfa85608a2d5bcdea1a36d37b25e76b51))
+* add missing ColorScheme.GRAYSCALE_8 encoding ([ac4bf3d](https://github.com/OpenDisplay/py-opendisplay/commit/ac4bf3dc5e78ea81c18c49e2a35714b41f913869))
+* add refresh display state ([947686e](https://github.com/OpenDisplay/py-opendisplay/commit/947686e81d2051b2d596d76894cdca68b6046ad1))
+* apply device config rotation additively during image upload ([6c1363f](https://github.com/OpenDisplay/py-opendisplay/commit/6c1363fce2ea364c77b7ff153b30a2ee6eb6cadb))
+* **battery:** update voltage tables for CR2450 and 2s supercap packs with PMIC ([d2f231a](https://github.com/OpenDisplay/py-opendisplay/commit/d2f231aa7d5f4bba13c0693bc5615f97300be1a3))
+* bump epaper-dithering to 5.0.0 and fix GRAYSCALE_16 encoding ([b964696](https://github.com/OpenDisplay/py-opendisplay/commit/b96469667861386bbf749881dda025151f718e97))
+* bump epaper-dithering to 5.0.4 (adds musllinux x86_64 wheels) ([b298c87](https://github.com/OpenDisplay/py-opendisplay/commit/b298c8749940262b4df4ec4abbd89742fe725385))
+* bump epaper-dithering to 5.0.5 (adds musllinux aarch64 wheels) ([4c6d87c](https://github.com/OpenDisplay/py-opendisplay/commit/4c6d87c3161476e081a9d95d0efd7a2ea5fa2de4))
+* bump epaper-dithering to 5.0.6 (fixes missing manylinux x86_64 wheels) ([d6a43b9](https://github.com/OpenDisplay/py-opendisplay/commit/d6a43b90bbe4d9ca5c153c049d7d633ae4cbede9))
+* bump epaper-dithering version ([2dfd846](https://github.com/OpenDisplay/py-opendisplay/commit/2dfd8461ae6e02fe3e01c3f5cbf3b22af8b12049))
+* bump epaper-dithering version to support GRAYSCALE_8 and GRAYSCALE_16 ([eb80b94](https://github.com/OpenDisplay/py-opendisplay/commit/eb80b94a0c4e0b5418546cd35e435f020751caf2))
+* **ci:** scope uv cache key per Python version to avoid matrix race ([40aa266](https://github.com/OpenDisplay/py-opendisplay/commit/40aa26623e56405febf383153cbeff46434e5385))
+* correct advertisement data ([ec152ba](https://github.com/OpenDisplay/py-opendisplay/commit/ec152ba53ec7c543957db2b6f618f4485c927b68))
+* correct test voltage values and typo for new battery tables ([5971081](https://github.com/OpenDisplay/py-opendisplay/commit/59710819dbf43b9af908d217cee044bc6f3ac553))
+* fix compressed image upload with chunking ([5d1b48a](https://github.com/OpenDisplay/py-opendisplay/commit/5d1b48a3ce8e7fae27526fa1d7495f81ef0bd65d)), closes [#5](https://github.com/OpenDisplay/py-opendisplay/issues/5)
+* fix encryption ([fd2ed20](https://github.com/OpenDisplay/py-opendisplay/commit/fd2ed207a2723fccbe088569f482a343764c2b77))
+* increase uncompressed data chunk ACK timeout for Spectra/ACeP displays ([8892ec2](https://github.com/OpenDisplay/py-opendisplay/commit/8892ec23f2f16389adc5aae40b20947c169561bd))
+* progress bar starts at left edge ([d580f17](https://github.com/OpenDisplay/py-opendisplay/commit/d580f17c6112c027c784fc433662052ec531b2c2))
+* reliable upload across encrypted/slow-display device types ([6740626](https://github.com/OpenDisplay/py-opendisplay/commit/6740626bd8d941f7f1733fc4798d53796e3148b3))
+* reliable upload across encrypted/slow-display device types ([ab1b636](https://github.com/OpenDisplay/py-opendisplay/commit/ab1b636243d18c735ca0ebae7dbe4ad91666b2c8))
+* remove pyrefly from runtime dependencies ([0ec0e0d](https://github.com/OpenDisplay/py-opendisplay/commit/0ec0e0d29c80b2091eea6e4cb7c5086ab74e319e))
+* resolve display color scheme enum using from_value ([a2931db](https://github.com/OpenDisplay/py-opendisplay/commit/a2931db06f69e85528ca1ec40db3823d86d6779f))
+* respect device supports_zip when choosing upload protocol ([5320a5a](https://github.com/OpenDisplay/py-opendisplay/commit/5320a5a6a7a6ebbb34a78e8eac813cb3db8c3fc5))
+* show rotation degrees correctly ([1f67c5b](https://github.com/OpenDisplay/py-opendisplay/commit/1f67c5b01b4fa10467c784c90e6fcec4126f0080))
+
+
+### Documentation
+
+* add git commit SHA documentation ([0e2ef50](https://github.com/OpenDisplay/py-opendisplay/commit/0e2ef50b7b813e87aceaa7620e7759325dcce0e7))
+* improve README.md ([e90a612](https://github.com/OpenDisplay/py-opendisplay/commit/e90a6128fe20b1bbbfcbaa0b303c72e8ab5359d8))
+
+
+### Code Refactoring
+
+* extract dithering to epaper-dithering package ([95aa3c1](https://github.com/OpenDisplay/py-opendisplay/commit/95aa3c1700cad438b36146443e01f1fb8bcb00f3))
+
 ## [7.2.4](https://github.com/OpenDisplay/py-opendisplay/compare/v7.2.3...v7.2.4) (2026-05-23)
 
 
