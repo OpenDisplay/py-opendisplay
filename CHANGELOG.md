@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.3.1](https://github.com/OpenDisplay/py-opendisplay/compare/v7.3.0...v7.3.1) (2026-05-25)
+
+
+### Bug Fixes
+
+* increase uncompressed END ACK timeout to 90s ([0bf6868](https://github.com/OpenDisplay/py-opendisplay/commit/0bf6868b2527332a9ed2af815cb3e279fbf55a2f))
+* update test to expect TIMEOUT_UNCOMPRESSED_END_ACK for end ACK ([229bd3e](https://github.com/OpenDisplay/py-opendisplay/commit/229bd3ec3e25d34d98ddbbfecb683c26b7c7bb3e))
+
 ## [7.3.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.2.5...v7.3.0) (2026-05-25)
 
 
