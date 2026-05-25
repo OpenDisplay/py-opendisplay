@@ -278,6 +278,7 @@ class OpenDisplayDevice:
     TIMEOUT_CONFIG_CHUNK = 2.0  # Subsequent config read chunks (interrogate)
     TIMEOUT_ACK = 5.0  # Command acknowledgments
     TIMEOUT_UNCOMPRESSED_DATA_ACK = 90.0  # Uncompressed DATA: bbepWriteData() blocks SPI on Spectra/ACeP (~60s max)
+    TIMEOUT_UNCOMPRESSED_END_ACK = 90.0  # Uncompressed END: some firmware variants refresh before replying (~60s max)
     TIMEOUT_COMPRESSED_END_ACK = 90.0  # Compressed END: decompression + full SPI write to IC (~60s on Spectra/ACeP)
     TIMEOUT_REFRESH = 90.0  # Display refresh (firmware spec: up to 60s)
 
@@ -1394,10 +1395,9 @@ class OpenDisplayDevice:
             )
             await self._write(end_cmd)
 
-            # Compressed END triggers decompression + full SPI write to display IC, which
-            # can block for ~60s on slow displays (Spectra/ACeP). Use the same ceiling as
-            # uncompressed data chunks.
-            end_ack_timeout = self.TIMEOUT_COMPRESSED_END_ACK if use_compression else self.TIMEOUT_ACK
+            # END triggers the SPI write and/or refresh on device before the ACK is sent.
+            # Both paths can block up to ~60s on slow displays (Spectra/ACeP).
+            end_ack_timeout = self.TIMEOUT_COMPRESSED_END_ACK if use_compression else self.TIMEOUT_UNCOMPRESSED_END_ACK
             response = await self._read(end_ack_timeout)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
         _LOGGER.debug("Display refresh started, waiting for completion...")
