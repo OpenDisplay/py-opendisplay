@@ -157,7 +157,7 @@ async def test_read_long_frame_decrypted_during_session(monkeypatch: pytest.Monk
 
 @pytest.mark.asyncio
 async def test_uncompressed_data_chunks_use_90s_timeout() -> None:
-    """DATA chunk ACKs must use TIMEOUT_UNCOMPRESSED_DATA_ACK (90s) — not the 5s general ACK."""
+    """DATA and END ACKs must use the 90s uncompressed timeouts, not the 5s general ACK."""
     image_data = b"\x00" * 10
     device = _make_device()
     fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
@@ -165,7 +165,7 @@ async def test_uncompressed_data_chunks_use_90s_timeout() -> None:
     await device._execute_upload(image_data, RefreshMode.FULL, use_compression=False)
     assert fake.timeouts[0] == device.TIMEOUT_FIRST_CHUNK
     assert fake.timeouts[1] == device.TIMEOUT_UNCOMPRESSED_DATA_ACK
-    assert fake.timeouts[2] == device.TIMEOUT_ACK
+    assert fake.timeouts[2] == device.TIMEOUT_UNCOMPRESSED_END_ACK
     assert fake.timeouts[3] == device.TIMEOUT_REFRESH
 
 
