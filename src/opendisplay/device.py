@@ -1,4 +1,5 @@
 """Main OpenDisplay BLE device class."""
+# pylint: disable=too-many-lines,too-many-public-methods
 
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ from .exceptions import (
     InvalidResponseError,
     ProtocolError,
 )
+from .models.buzzer_activate import BuzzerActivateConfig
 from .models.capabilities import DeviceCapabilities
 from .models.config import GlobalConfig
 from .models.enums import BoardManufacturer, FitMode, RefreshMode, Rotation
@@ -58,6 +60,7 @@ from .protocol import (
     CommandCode,
     build_authenticate_step1,
     build_authenticate_step2,
+    build_buzzer_activate_command,
     build_direct_write_data_command,
     build_direct_write_end_command,
     build_direct_write_end_with_etag,
@@ -767,6 +770,45 @@ class OpenDisplayDevice:
             raise ProtocolError(f"LED activate failed: firmware error code 0x{error_code:02x}")
 
         validate_ack_response(response, CommandCode.LED_ACTIVATE)
+        return response
+
+    async def activate_buzzer(
+        self,
+        buzzer_instance: int,
+        config: BuzzerActivateConfig,
+        timeout: float | None = None,
+    ) -> bytes:
+        """Activate buzzer via firmware command 0x0075 (firmware 1.0+).
+
+        Args:
+            buzzer_instance: Buzzer instance index (0-based)
+            config: Typed buzzer activation config
+            timeout: Optional response timeout in seconds.
+
+        Returns:
+            Raw ACK response bytes from the device.
+
+        Raises:
+            RuntimeError: If device is not connected.
+            ValueError: If command arguments are invalid.
+            ProtocolError: If firmware version is too old for this command.
+            InvalidResponseError: If ACK response is malformed or mismatched.
+        """
+        if self._connection is None:
+            raise RuntimeError("Device not connected")
+
+        fw = self._fw_version
+        if fw is None:
+            fw = await self.read_firmware_version()
+        if (fw["major"], fw["minor"]) < (1, 0):
+            raise ProtocolError(f"Buzzer activate requires firmware >= 1.0, got {fw['major']}.{fw['minor']}")
+
+        cmd = build_buzzer_activate_command(buzzer_instance=buzzer_instance, config=config)
+        await self._write(cmd)
+
+        response_timeout = self.TIMEOUT_REFRESH if timeout is None else timeout
+        response = await self._read(response_timeout)
+        validate_ack_response(response, CommandCode.BUZZER_ACTIVATE)
         return response
 
     async def write_config(self, config: GlobalConfig) -> None:

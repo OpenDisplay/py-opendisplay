@@ -27,6 +27,7 @@ class ICType(IntEnum):
     ESP32_C3 = 3
     ESP32_C6 = 4
     NRF52811 = 5
+    EFR32BG22 = 6  # EFR32BG22C222F352GM40 — Silabs-based boards (e.g. Solum M3)
 
 
 class BoardManufacturer(IntEnum):

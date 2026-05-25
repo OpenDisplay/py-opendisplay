@@ -13,6 +13,7 @@ from opendisplay.models.enums import (
     get_board_type_name,
     get_manufacturer_name,
 )
+from opendisplay.models.firmware import firmware_release_repo
 
 
 class TestRefreshMode:
@@ -38,11 +39,14 @@ class TestICType:
         assert ICType.ESP32_S3 == 2
         assert ICType.ESP32_C3 == 3
         assert ICType.ESP32_C6 == 4
+        assert ICType.NRF52811 == 5
+        assert ICType.EFR32BG22 == 6
 
     def test_ic_type_names(self):
         """Test IC type names."""
         assert ICType.NRF52840.name == "NRF52840"
         assert ICType.ESP32_S3.name == "ESP32_S3"
+        assert ICType.EFR32BG22.name == "EFR32BG22"
 
 
 class TestPowerMode:
@@ -142,3 +146,25 @@ class TestRotation:
         """Test all 4 rotations are defined."""
         rotations = list(Rotation)
         assert len(rotations) == 4
+
+
+class TestFirmwareReleaseRepo:
+    """Test firmware_release_repo() mapping."""
+
+    def test_nrf52840_maps_to_main_firmware(self):
+        assert firmware_release_repo(ICType.NRF52840) == "OpenDisplay/Firmware"
+
+    def test_esp32_variants_map_to_main_firmware(self):
+        assert firmware_release_repo(ICType.ESP32_S3) == "OpenDisplay/Firmware"
+        assert firmware_release_repo(ICType.ESP32_C3) == "OpenDisplay/Firmware"
+        assert firmware_release_repo(ICType.ESP32_C6) == "OpenDisplay/Firmware"
+
+    def test_nrf52811_maps_to_nrf_repo(self):
+        assert firmware_release_repo(ICType.NRF52811) == "OpenDisplay/Firmware_NRF"
+
+    def test_efr32bg22_maps_to_silabs_repo(self):
+        assert firmware_release_repo(ICType.EFR32BG22) == "OpenDisplay/Firmware_Silabs"
+
+    def test_unknown_ic_type_returns_none(self):
+        assert firmware_release_repo(99) is None
+        assert firmware_release_repo(0) is None

@@ -8,6 +8,7 @@ from .advertisement import (
     decode_button_event,
     parse_advertisement,
 )
+from .buzzer_activate import BuzzerActivateConfig, BuzzerPattern, BuzzerStep
 from .capabilities import DeviceCapabilities
 from .config import (
     BinaryInputs,
@@ -42,7 +43,7 @@ from .enums import (
     get_board_type_name,
     get_manufacturer_name,
 )
-from .firmware import FirmwareVersion
+from .firmware import FirmwareVersion, firmware_release_repo
 from .led_flash import LedFlashConfig, LedFlashStep
 
 __all__ = [
@@ -54,6 +55,9 @@ __all__ = [
     "decode_button_event",
     "BinaryInputs",
     "BoardManufacturer",
+    "BuzzerActivateConfig",
+    "BuzzerPattern",
+    "BuzzerStep",
     "BusType",
     "DIYBoardType",
     "config_from_json",
@@ -62,6 +66,7 @@ __all__ = [
     "DeviceCapabilities",
     "DisplayConfig",
     "FirmwareVersion",
+    "firmware_release_repo",
     "FitMode",
     "GlobalConfig",
     "ICType",

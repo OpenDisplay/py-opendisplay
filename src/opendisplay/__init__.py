@@ -31,6 +31,7 @@ from .models.advertisement import (
     decode_button_event,
     parse_advertisement,
 )
+from .models.buzzer_activate import BuzzerActivateConfig, BuzzerPattern, BuzzerStep
 from .models.capabilities import DeviceCapabilities
 from .models.config import (
     BinaryInputs,
@@ -64,6 +65,7 @@ from .models.enums import (
     get_board_type_name,
     get_manufacturer_name,
 )
+from .models.firmware import firmware_release_repo
 from .models.led_flash import LedFlashConfig, LedFlashStep
 from .protocol import MANUFACTURER_ID, SERVICE_UUID
 
@@ -93,8 +95,12 @@ __all__ = [
     "PowerOption",
     "DisplayConfig",
     "LedConfig",
+    "BuzzerActivateConfig",
+    "BuzzerPattern",
+    "BuzzerStep",
     "LedFlashConfig",
     "LedFlashStep",
+    "firmware_release_repo",
     "SensorData",
     "DataBus",
     "BinaryInputs",

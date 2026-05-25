@@ -5,6 +5,7 @@ from __future__ import annotations
 import struct
 from enum import IntEnum
 
+from ..models.buzzer_activate import BuzzerActivateConfig
 from ..models.led_flash import LedFlashConfig
 
 
@@ -32,6 +33,7 @@ class CommandCode(IntEnum):
         0x0073  # Device→host: refresh finished (same code as LED_ACTIVATE, different direction)
     )
     DIRECT_WRITE_REFRESH_TIMEOUT = 0x0074  # Device→host: refresh timed out
+    BUZZER_ACTIVATE = 0x0075  # Host→device: trigger buzzer pattern (firmware 1.0+)
     DIRECT_WRITE_PARTIAL_START = 0x0076  # Start a partial update transfer (stream via 0x71)
 
 
@@ -261,6 +263,24 @@ def build_led_activate_command(
         )
 
     return cmd + payload + flash_config.to_bytes()
+
+
+def build_buzzer_activate_command(buzzer_instance: int, config: BuzzerActivateConfig) -> bytes:
+    """Build buzzer activate command (firmware 1.0+, command 0x0075).
+
+    Firmware command format: [cmd:2][instance:1][outer_repeats:1][n_patterns:1][patterns...]
+
+    Args:
+        buzzer_instance: Buzzer instance index (0-based)
+        config: Typed buzzer activation config
+
+    Returns:
+        Command bytes for 0x0075
+    """
+    if not 0 <= buzzer_instance <= 0xFF:
+        raise ValueError(f"Buzzer instance out of range: {buzzer_instance} (must be 0-255)")
+    cmd = CommandCode.BUZZER_ACTIVATE.to_bytes(2, byteorder="big")
+    return cmd + bytes([buzzer_instance]) + config.to_bytes()
 
 
 def build_write_config_command(config_data: bytes) -> tuple[bytes, list[bytes]]:
