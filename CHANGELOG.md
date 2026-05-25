@@ -1,5 +1,15 @@
 # Changelog
 
+## [7.3.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.2.5...v7.3.0) (2026-05-25)
+
+
+### Features
+
+* add BuzzerActivateConfig for command 0x0075 ([a67a07c](https://github.com/OpenDisplay/py-opendisplay/commit/a67a07c0fc19c50c08f38c62f5c51f75b1710cd2))
+* add EFR32BG22 to ICType enum ([6eb020c](https://github.com/OpenDisplay/py-opendisplay/commit/6eb020ceb95f1dc9155f3b3654e94a8bf02da90e))
+* add firmware_release_repo() mapping by IC type ([a5a0454](https://github.com/OpenDisplay/py-opendisplay/commit/a5a045432c7b7d87d4718c4a8bc18ea7b32455b7))
+* implement activate_buzzer() BLE command (0x0075) ([b809423](https://github.com/OpenDisplay/py-opendisplay/commit/b809423f132089f4c3a80ceff8d08cf0545582af))
+
 ## [7.2.5](https://github.com/OpenDisplay/py-opendisplay/compare/v7.2.4...v7.2.5) (2026-05-23)
 
 
