@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.3.2](https://github.com/OpenDisplay/py-opendisplay/compare/v7.3.1...v7.3.2) (2026-05-25)
+
+
+### Bug Fixes
+
+* change buzzer command ID from 0x0075 to 0x0077, remove firmware version guard ([2695351](https://github.com/OpenDisplay/py-opendisplay/commit/26953516e2c52affbaf62313ce95e653ca9ab148))
+
 ## [7.3.1](https://github.com/OpenDisplay/py-opendisplay/compare/v7.3.0...v7.3.1) (2026-05-25)
 
 
