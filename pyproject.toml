@@ -42,6 +42,9 @@ dependencies = [
 cli = [
     "rich>=13.0.0",
 ]
+nrf-ota = [
+    "nrf-ota>=0.3.0",
+]
 test = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
@@ -73,6 +76,10 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["nrf_ota.*"]
+ignore_missing_imports = true
 
 [tool.pylint.format]
 max-line-length = 120

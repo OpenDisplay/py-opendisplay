@@ -67,6 +67,7 @@ from .protocol import (
     build_direct_write_partial_start,
     build_direct_write_start_compressed,
     build_direct_write_start_uncompressed,
+    build_enter_dfu_command,
     build_led_activate_command,
     build_read_config_command,
     build_read_fw_version_command,
@@ -719,6 +720,30 @@ class OpenDisplayDevice:
 
         # Device will reset immediately - no ACK expected
         _LOGGER.info("Reboot command sent to %s - device will reset (connection will drop)", self.mac_address)
+
+    async def trigger_dfu_bootloader(self) -> None:
+        """Trigger the DFU bootloader on nRF devices (command 0x0051).
+
+        On nRF52840/nRF52811 devices this causes the firmware to disconnect BLE,
+        write Nordic GPREGRET magic byte 0xB1, disable the SoftDevice, and jump
+        directly to the bootloader. The device will reappear advertising the
+        Nordic Legacy DFU GATT service (UUID 00001530-...) within a few seconds.
+
+        The command is sent encrypted if an active session exists (required when
+        the device has encryption enabled).
+
+        No ACK response is sent — the firmware resets before it can respond.
+        The BLE connection will drop immediately after this call returns.
+
+        Raises:
+            BLEConnectionError: If the command cannot be sent
+        """
+        _LOGGER.debug("Triggering DFU bootloader on device %s", self.mac_address)
+        await self._write(build_enter_dfu_command())
+        _LOGGER.info(
+            "DFU bootloader trigger sent to %s — device will disconnect and enter DFU mode",
+            self.mac_address,
+        )
 
     async def activate_led(
         self,

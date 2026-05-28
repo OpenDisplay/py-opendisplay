@@ -35,6 +35,7 @@ class CommandCode(IntEnum):
     DIRECT_WRITE_REFRESH_TIMEOUT = 0x0074  # Device→host: refresh timed out
     DIRECT_WRITE_PARTIAL_START = 0x0076  # Start a partial update transfer (stream via 0x71)
     BUZZER_ACTIVATE = 0x0077  # Host→device: trigger buzzer pattern (firmware 1.61+)
+    ENTER_DFU = 0x0051  # Trigger DFU bootloader mode (nRF only)
 
 
 # Protocol constants
@@ -83,6 +84,18 @@ def build_reboot_command() -> bytes:
         Command bytes: 0x000F (2 bytes, big-endian)
     """
     return CommandCode.REBOOT.to_bytes(2, byteorder="big")
+
+
+def build_enter_dfu_command() -> bytes:
+    """Build command to trigger DFU bootloader mode (nRF devices only).
+
+    The device will disconnect BLE, set the Nordic GPREGRET magic byte 0xB1,
+    disable the SoftDevice, and jump to the bootloader. No ACK is sent.
+
+    Returns:
+        Command bytes: 0x0051 (2 bytes, big-endian)
+    """
+    return CommandCode.ENTER_DFU.to_bytes(2, byteorder="big")
 
 
 def build_direct_write_start_compressed(

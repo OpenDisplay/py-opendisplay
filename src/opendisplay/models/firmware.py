@@ -21,6 +21,20 @@ def firmware_release_repo(ic_type: int) -> str | None:
     return _FIRMWARE_REPOS.get(ic_type)
 
 
+def firmware_ota_asset(ic_type: int, tag: str) -> str | None:
+    """Return the expected OTA asset filename for a given IC type and release tag.
+
+    Returns None for IC types without a BLE OTA path (ESP32 variants).
+    """
+    if ic_type == ICType.NRF52840:
+        return "NRF52840.zip"
+    if ic_type == ICType.NRF52811:
+        return f"EPD-nRF52-{tag}-ota.zip"
+    if ic_type == ICType.EFR32BG22:
+        return f"opendisplay-bg22-{tag}.gbl"
+    return None
+
+
 class FirmwareVersion(TypedDict):
     """Firmware version information.
 
