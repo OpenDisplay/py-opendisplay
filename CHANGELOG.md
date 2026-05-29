@@ -1,5 +1,19 @@
 # Changelog
 
+## [7.4.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.3.2...v7.4.0) (2026-05-29)
+
+
+### Features
+
+* add BLE OTA firmware update support for nRF devices ([40db8d7](https://github.com/OpenDisplay/py-opendisplay/commit/40db8d7b96db52ea2652768f4c654e886d64e142))
+* add Silabs EFR32BG22 OTA support and document firmware update paths ([271742a](https://github.com/OpenDisplay/py-opendisplay/commit/271742a42f545233d1986d75f42e61a45fbfdc1f))
+* encode GRAYSCALE_4 as two 1-bit planes host-side ([12b7e0e](https://github.com/OpenDisplay/py-opendisplay/commit/12b7e0ef61e03cb871de9a52eb6b96f085949123))
+
+
+### Documentation
+
+* add macOS OTA limitation note to README ([f6ff268](https://github.com/OpenDisplay/py-opendisplay/commit/f6ff268794b2943321752083ad97cf6f6e8b2728))
+
 ## [7.3.2](https://github.com/OpenDisplay/py-opendisplay/compare/v7.3.1...v7.3.2) (2026-05-25)
 
 
