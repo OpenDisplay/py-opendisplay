@@ -235,21 +235,14 @@ async def test_find_nrf_dfu_device_mac_plus1_wraps_ff() -> None:
 @pytest.mark.asyncio
 async def test_nrf_dfu_missing_dependency_raises() -> None:
     """OTAError with install hint when nrf-ota is not installed."""
-    import sys
+    from opendisplay.ota import perform_nrf_dfu
 
-    # Temporarily hide nrf_ota from imports
-    saved = {k: v for k, v in sys.modules.items() if k.startswith("nrf_ota")}
-    for key in list(sys.modules):
-        if key.startswith("nrf_ota"):
-            sys.modules[key] = None  # type: ignore[assignment]
-
-    try:
-        from opendisplay.ota import perform_nrf_dfu
-
+    blocked = {
+        "nrf_ota": None,
+        "nrf_ota._const": None,
+        "nrf_ota._zip": None,
+        "nrf_ota.dfu": None,
+    }
+    with patch.dict("sys.modules", blocked):
         with pytest.raises(OTAError, match="nrf-ota is required"):
             await perform_nrf_dfu(b"", _make_ble_device())
-    finally:
-        for key in list(sys.modules):
-            if key.startswith("nrf_ota"):
-                del sys.modules[key]
-        sys.modules.update(saved)
