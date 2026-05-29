@@ -17,7 +17,11 @@ import pytest
 from epaper_dithering import ColorScheme
 
 from opendisplay import OpenDisplayDevice
-from opendisplay.exceptions import AuthenticationRequiredError
+from opendisplay.exceptions import (
+    AuthenticationRequiredError,
+    InvalidResponseError,
+    ProtocolError,
+)
 from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.config import (
     DisplayConfig,
@@ -452,3 +456,42 @@ def test_prepare_image_defaults_tone_and_gamut_off() -> None:
     sig = inspect.signature(_Dev._prepare_image)
     assert sig.parameters["tone"].default == 0.0
     assert sig.parameters["gamut"].default == 0.0
+
+
+# ─── GRAYSCALE_4: compressed-only enforcement ────────────────────────────────
+
+
+def _make_gray4_device(transmission_modes: int = 0x02) -> OpenDisplayDevice:
+    """Device reporting a 4-gray panel (uploads must be compressed split planes)."""
+    config = _make_config(transmission_modes=transmission_modes, width=8, height=8)
+    caps = DeviceCapabilities(width=8, height=8, color_scheme=ColorScheme.GRAYSCALE_4)
+    return OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config, capabilities=caps)
+
+
+@pytest.mark.asyncio
+async def test_gray4_uncompressed_dispatch_raises_before_start() -> None:
+    """4-gray has no uncompressed protocol; _dispatch_upload raises before any 0x70."""
+    device = _make_gray4_device()
+    fake = _FakeConnection([])
+    device._connection = fake
+    with pytest.raises(ProtocolError, match="must be compressed"):
+        # compress=False forces the uncompressed branch, which is invalid for 4-gray
+        await device._dispatch_upload(b"\x00" * 16, RefreshMode.FULL, False, None, None)
+    assert fake.written == []  # nothing sent to the device
+
+
+@pytest.mark.asyncio
+async def test_gray4_compressed_start_rejected_does_not_fall_back() -> None:
+    """A rejected compressed START for 4-gray surfaces directly (no uncompressed retry)."""
+    device = _make_gray4_device()
+    fake = _FakeConnection([ERR_FRAME])  # reject compressed START, offer no retry response
+    device._connection = fake
+    with pytest.raises(InvalidResponseError):
+        await device._execute_upload(
+            b"\x00" * 16,
+            RefreshMode.FULL,
+            use_compression=True,
+            compressed_data=b"\xff" * 5,
+            uncompressed_size=16,
+        )
+    assert len(fake.written) == 1  # only the compressed START; no bare-START retry

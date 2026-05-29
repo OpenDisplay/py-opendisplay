@@ -85,7 +85,9 @@ def compute_partial_region(
     if not display.partial_update_support:
         return "fallback_full"
 
-    if color_scheme in (ColorScheme.BWR, ColorScheme.BWY):
+    # Firmware only supports partial refresh on 1bpp panels; 4-gray (and the
+    # 3-color schemes) are rejected, so don't attempt a doomed partial round-trip.
+    if color_scheme in (ColorScheme.BWR, ColorScheme.BWY, ColorScheme.GRAYSCALE_4):
         return "fallback_full"
 
     width, height = processed_image.size

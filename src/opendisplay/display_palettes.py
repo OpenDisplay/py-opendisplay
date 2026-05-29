@@ -14,6 +14,7 @@ PANELS_4GRAY: frozenset[int] = frozenset(
     {
         0x0008,  # EP295_128x296_4GRAY
         0x0015,  # EP75_800x480_4GRAY
+        0x0016,  # EP75_800x480_4GRAY_V2
         0x0018,  # EP29_128x296_4GRAY
         0x0028,  # EP426_800x480_4GRAY
         0x002F,  # EP29Z_128x296_4GRAY
@@ -21,6 +22,24 @@ PANELS_4GRAY: frozenset[int] = frozenset(
         0x003C,  # EP75_800x480_4GRAY_GEN2
     }
 )
+
+# Per-panel 4-gray code tables, mirroring bb_epaper's pColorLookup (bb_ep.inl).
+# Maps dither level (0=black .. 3=white) -> the 2-bit code stored in the panel's
+# two controller planes; plane0 = code bit0, plane1 = code bit1 (bbepSetPixel4Gray).
+# Both endpoints map black->3 and white->0; only EP426 swaps the mid-grays (v2).
+_GRAY4_CODES_BASE: tuple[int, int, int, int] = (3, 1, 2, 0)  # u8Colors_4gray
+_GRAY4_CODES_V2: tuple[int, int, int, int] = (3, 2, 1, 0)  # u8Colors_4gray_v2
+_GRAY4_CODES_BY_PANEL: dict[int, tuple[int, int, int, int]] = {
+    0x0028: _GRAY4_CODES_V2,  # EP426_800x480_4GRAY
+}
+
+
+def get_gray4_codes(panel_ic_type: int | None) -> tuple[int, int, int, int]:
+    """Return the 4-gray level->stored-code table for a panel (bb_epaper parity)."""
+    if panel_ic_type is None:
+        return _GRAY4_CODES_BASE
+    return _GRAY4_CODES_BY_PANEL.get(panel_ic_type, _GRAY4_CODES_BASE)
+
 
 # Map: (panel_ic_type, color_scheme) -> measured ColorPalette
 # panel_ic_type identifies the e-paper panel model

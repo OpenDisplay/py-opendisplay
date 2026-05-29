@@ -20,10 +20,11 @@ from .crypto import (
     encrypt_command,
     generate_client_nonce,
 )
-from .display_palettes import PANELS_4GRAY, get_palette_for_display
+from .display_palettes import PANELS_4GRAY, get_gray4_codes, get_palette_for_display
 from .encoding import (
     compress_image_data,
     encode_bitplanes,
+    encode_gray4_bitplanes,
     encode_image,
     fit_image,
 )
@@ -236,6 +237,9 @@ def prepare_image(
     if color_scheme in (ColorScheme.BWR, ColorScheme.BWY):
         plane1, plane2 = encode_bitplanes(dithered, color_scheme)
         image_data = plane1 + plane2
+    elif color_scheme == ColorScheme.GRAYSCALE_4:
+        # Two pre-split 1-bit planes concatenated; firmware streams the halves to PLANE_0/PLANE_1.
+        image_data = b"".join(encode_gray4_bitplanes(dithered, get_gray4_codes(panel_ic_type)))
     else:
         image_data = encode_image(dithered, color_scheme)
 
@@ -1133,6 +1137,14 @@ class OpenDisplayDevice:
                 new_etag=new_etag,
             )
         else:
+            if self.color_scheme == ColorScheme.GRAYSCALE_4:
+                # 4-gray ships two split planes that only the firmware's compressed
+                # path accepts; an uncompressed upload is rejected outright (and the
+                # split-plane shape is incompatible with older packed-2bpp firmware).
+                raise ProtocolError(
+                    "GRAYSCALE_4 uploads must be compressed; enable ZIP transport and "
+                    "ensure the compressed image fits the device buffer"
+                )
             if compress and not supports_compression:
                 _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
             elif compress and compressed_data:
@@ -1354,7 +1366,9 @@ class OpenDisplayDevice:
         try:
             validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
         except InvalidResponseError:
-            if not use_compression:
+            # 4-gray has no uncompressed protocol to fall back to (firmware rejects it),
+            # so surface the compressed START failure directly instead of retrying.
+            if not use_compression or self.color_scheme == ColorScheme.GRAYSCALE_4:
                 raise
             # Device rejected the compressed START (e.g., compressedDataBuffer is NULL —
             # ZIPXL bit set in config but firmware not built with PSRAM support).

@@ -66,3 +66,47 @@ def encode_bitplanes(
             # else: palette_idx == 0 (black) - both planes stay 0
 
     return bytes(plane1), bytes(plane2)
+
+
+def encode_gray4_bitplanes(
+    image: Image.Image,
+    gray_codes: tuple[int, int, int, int],
+) -> tuple[bytes, bytes]:
+    """Encode a 4-gray palette image to two 1-bit controller planes.
+
+    Each pixel's dither level (palette index 0=black..3=white) is mapped through
+    the panel's gray-code table to a 2-bit stored code; plane0 carries the code's
+    bit0 and plane1 its bit1, matching the firmware's bbepSetPixel4Gray. The
+    firmware streams these planes straight to PLANE_0/PLANE_1, so no on-device
+    de-interleave is needed.
+
+    Args:
+        image: Dithered palette image (mode "P", indices 0..3)
+        gray_codes: level -> stored 2-bit code (see display_palettes.get_gray4_codes)
+
+    Returns:
+        Tuple of (plane0_bytes, plane1_bytes)
+
+    Raises:
+        ValueError: If image is not a palette image
+    """
+    if image.mode != "P":
+        raise ValueError(f"Expected palette image, got {image.mode}")
+
+    pixels = np.array(image)
+    height, width = pixels.shape
+    bytes_per_row = (width + 7) // 8
+    plane0 = bytearray(bytes_per_row * height)
+    plane1 = bytearray(bytes_per_row * height)
+
+    for y in range(height):
+        for x in range(width):
+            byte_idx = y * bytes_per_row + x // 8
+            bit = 1 << (7 - (x % 8))  # MSB first
+            code = gray_codes[int(pixels[y, x]) & 0x03]
+            if code & 0x01:
+                plane0[byte_idx] |= bit
+            if code & 0x02:
+                plane1[byte_idx] |= bit
+
+    return bytes(plane0), bytes(plane1)
