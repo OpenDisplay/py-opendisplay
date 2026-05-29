@@ -1,11 +1,15 @@
 """Tests for 4-gray bitplane encoding (host-side de-interleave for GRAYSCALE_4)."""
 
 import numpy as np
+import pytest
+from epaper_dithering import ColorScheme
 from PIL import Image
 
-from opendisplay.display_palettes import get_gray4_codes
+from opendisplay import prepare_image
+from opendisplay.display_palettes import _GRAY4_CODES_BASE, get_gray4_codes
 from opendisplay.encoding.bitplanes import encode_gray4_bitplanes
 from opendisplay.encoding.images import encode_2bpp
+from opendisplay.models.capabilities import DeviceCapabilities
 
 EP426_PANEL_IC = 0x0028  # uses the v2 gray-code table
 BASE_PANEL_IC = 0x0008  # EP295: uses the base gray-code table
@@ -96,3 +100,26 @@ def test_v2_and_base_differ_on_midgrays():
     base = get_gray4_codes(BASE_PANEL_IC)
     assert v2[0] == base[0] and v2[3] == base[3]
     assert v2[1] != base[1] and v2[2] != base[2]
+
+
+def test_get_gray4_codes_none_defaults_to_base():
+    """An unknown panel (None) falls back to the base table, not a crash."""
+    assert get_gray4_codes(None) == _GRAY4_CODES_BASE
+
+
+def test_encode_gray4_rejects_non_palette_image():
+    """Only palette ('P') images carry dither levels; anything else is a caller error."""
+    with pytest.raises(ValueError, match="palette image"):
+        encode_gray4_bitplanes(Image.new("L", (8, 1)), get_gray4_codes(EP426_PANEL_IC))
+
+
+def test_prepare_image_gray4_concatenates_planes():
+    """prepare_image routes GRAYSCALE_4 through the two-plane encoder and concatenates plane0+plane1."""
+    levels = np.tile(np.array([0, 64, 128, 192, 255, 128, 64, 0], dtype=np.uint8), (2, 1))
+    src = Image.fromarray(levels, mode="L")
+    caps = DeviceCapabilities(width=8, height=2, color_scheme=ColorScheme.GRAYSCALE_4)
+
+    data, _, dithered = prepare_image(src, capabilities=caps, panel_ic_type=EP426_PANEL_IC, compress=False)
+
+    p0, p1 = encode_gray4_bitplanes(dithered, get_gray4_codes(EP426_PANEL_IC))
+    assert data == p0 + p1

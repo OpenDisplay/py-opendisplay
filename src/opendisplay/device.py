@@ -238,9 +238,8 @@ def prepare_image(
         plane1, plane2 = encode_bitplanes(dithered, color_scheme)
         image_data = plane1 + plane2
     elif color_scheme == ColorScheme.GRAYSCALE_4:
-        # Two pre-split 1-bit planes; firmware streams them to PLANE_0/PLANE_1.
-        plane0, plane1 = encode_gray4_bitplanes(dithered, get_gray4_codes(panel_ic_type))
-        image_data = plane0 + plane1
+        # Two pre-split 1-bit planes concatenated; firmware streams the halves to PLANE_0/PLANE_1.
+        image_data = b"".join(encode_gray4_bitplanes(dithered, get_gray4_codes(panel_ic_type)))
     else:
         image_data = encode_image(dithered, color_scheme)
 
