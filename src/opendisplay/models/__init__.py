@@ -43,7 +43,7 @@ from .enums import (
     get_board_type_name,
     get_manufacturer_name,
 )
-from .firmware import FirmwareVersion, firmware_release_repo
+from .firmware import FirmwareVersion, firmware_ota_asset, firmware_release_repo
 from .led_flash import LedFlashConfig, LedFlashStep
 
 __all__ = [
@@ -66,6 +66,7 @@ __all__ = [
     "DeviceCapabilities",
     "DisplayConfig",
     "FirmwareVersion",
+    "firmware_ota_asset",
     "firmware_release_repo",
     "FitMode",
     "GlobalConfig",

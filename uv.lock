@@ -654,6 +654,18 @@ wheels = [
 ]
 
 [[package]]
+name = "nrf-ota"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "bleak" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/64/c5/ecdb03b45f0d64d43894898120a775a9bd77ba6d8fc56cd1cbb5a142e7d3/nrf_ota-0.3.0.tar.gz", hash = "sha256:d0010efbb193057cbf0921cb748056b482c16445638a2f6fd9560d96ec9b2dea", size = 76145, upload-time = "2026-02-23T23:12:29.422Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dc/da/5141bc9288a46a133e7644e188dc2c667b2e23f90a59003b6ca043c1d6a4/nrf_ota-0.3.0-py3-none-any.whl", hash = "sha256:f4eaf7a3f05974c4430b640782eaae98d0d36bdef60e118db00d70309722de01", size = 22046, upload-time = "2026-02-23T23:12:28.057Z" },
+]
+
+[[package]]
 name = "numpy"
 version = "2.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -881,7 +893,7 @@ wheels = [
 
 [[package]]
 name = "py-opendisplay"
-version = "7.2.5"
+version = "7.3.2"
 source = { editable = "." }
 dependencies = [
     { name = "bleak" },
@@ -895,6 +907,9 @@ dependencies = [
 [package.optional-dependencies]
 cli = [
     { name = "rich" },
+]
+nrf-ota = [
+    { name = "nrf-ota" },
 ]
 test = [
     { name = "hypothesis" },
@@ -919,6 +934,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=41.0.0" },
     { name = "epaper-dithering", specifier = "==5.0.6" },
     { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.148.8" },
+    { name = "nrf-ota", marker = "extra == 'nrf-ota'", specifier = ">=0.3.0" },
     { name = "numpy", specifier = ">=1.24.0,!=2.4.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.2" },
@@ -927,7 +943,7 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
 ]
-provides-extras = ["cli", "test"]
+provides-extras = ["cli", "nrf-ota", "test"]
 
 [package.metadata.requires-dev]
 dev = [

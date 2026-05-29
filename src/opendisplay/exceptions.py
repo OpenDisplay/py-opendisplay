@@ -79,3 +79,15 @@ class ImageEncodingError(OpenDisplayError):
     """Failed to encode image."""
 
     pass
+
+
+class OTANotSupportedError(OpenDisplayError):
+    """OTA firmware update is not supported for this IC type."""
+
+    pass
+
+
+class OTAError(OpenDisplayError):
+    """Firmware update failed."""
+
+    pass

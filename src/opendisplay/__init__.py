@@ -18,6 +18,8 @@ from .exceptions import (
     ImageEncodingError,
     InvalidResponseError,
     OpenDisplayError,
+    OTAError,
+    OTANotSupportedError,
     ProtocolError,
 )
 from .models.advertisement import (
@@ -65,8 +67,9 @@ from .models.enums import (
     get_board_type_name,
     get_manufacturer_name,
 )
-from .models.firmware import firmware_release_repo
+from .models.firmware import firmware_ota_asset, firmware_release_repo
 from .models.led_flash import LedFlashConfig, LedFlashStep
+from .ota import find_nrf_dfu_device, perform_nrf_dfu, perform_silabs_ota
 from .protocol import MANUFACTURER_ID, SERVICE_UUID
 
 __version__ = "0.1.0"
@@ -88,6 +91,11 @@ __all__ = [
     "ConfigParseError",
     "InvalidResponseError",
     "ImageEncodingError",
+    "OTAError",
+    "OTANotSupportedError",
+    "find_nrf_dfu_device",
+    "perform_nrf_dfu",
+    "perform_silabs_ota",
     # Models - Config
     "GlobalConfig",
     "SystemConfig",
@@ -100,6 +108,7 @@ __all__ = [
     "BuzzerStep",
     "LedFlashConfig",
     "LedFlashStep",
+    "firmware_ota_asset",
     "firmware_release_repo",
     "SensorData",
     "DataBus",
