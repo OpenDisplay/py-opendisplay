@@ -568,6 +568,8 @@ async with OpenDisplayDevice(
 
 py-opendisplay supports over-the-air firmware updates for nRF52 and EFR32BG22 devices via BLE. ESP32 variants do not have a BLE OTA path.
 
+> **macOS not supported for OTA.** CoreBluetooth caches GATT services and provides no API to invalidate the cache. After the device reboots into bootloader/AppLoader mode its GATT service table changes, but macOS continues to serve the stale cached services — making the OTA service invisible to bleak. OTA works on Linux (BlueZ) and is the intended path via Home Assistant running on a Linux host.
+
 ### Installation
 
 Install the optional OTA dependencies for your device:
