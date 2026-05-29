@@ -11,6 +11,10 @@ from .exceptions import OTAError
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
 
+_SILABS_OTA_CONTROL_UUID = "f7bf3564-fb6d-4e53-88a4-5e37e0326063"
+_SILABS_OTA_DATA_UUID = "984227f3-34fc-4045-a5d0-2c581f81a153"
+_SILABS_OTA_CHUNK_SIZE = 244
+
 
 async def perform_nrf_dfu(
     zip_bytes: bytes,
@@ -71,6 +75,69 @@ async def perform_nrf_dfu(
         raise
     except Exception as exc:
         raise OTAError(f"nRF DFU failed: {exc}") from exc
+
+
+async def perform_silabs_ota(
+    gbl_bytes: bytes,
+    ble_device: BLEDevice,
+    on_progress: Callable[[float], None] | None = None,
+    on_log: Callable[[str], None] | None = None,
+) -> None:
+    """Flash an EFR32BG22 device using Silicon Labs AppLoader OTA.
+
+    Call ``OpenDisplayDevice.trigger_dfu_bootloader()`` first. This function
+    retries the connection for up to 20 s waiting for the AppLoader to boot —
+    no external sleep is required before calling.
+
+    The AppLoader exits back to the application when the BLE connection
+    drops, so the full transfer must complete in a single connection.
+
+    Args:
+        gbl_bytes: Raw .gbl firmware file bytes.
+        ble_device: BLE device (same address as app mode).
+        on_progress: Optional callback with float percentage 0–100.
+        on_log: Optional callback for human-readable status messages.
+
+    Raises:
+        OTAError: OTA transfer failed or AppLoader did not appear within 20 s.
+    """
+    from bleak import BleakClient
+
+    log = on_log or (lambda _: None)
+    file_size = len(gbl_bytes)
+
+    # Brief pause to let the device finish rebooting into AppLoader before we
+    # attempt a connection. The AppLoader waits indefinitely once running.
+    log("Waiting for AppLoader to boot…")
+    await asyncio.sleep(6.0)
+
+    try:
+        async with BleakClient(ble_device, timeout=20.0) as client:
+            char_uuids = {str(c.uuid).lower() for svc in client.services for c in svc.characteristics}
+            if _SILABS_OTA_CONTROL_UUID not in char_uuids:
+                raise OTAError(
+                    "Device is not in Silabs OTA mode — AppLoader characteristic not found after GATT rediscovery"
+                )
+
+            log("Connected to AppLoader. Starting OTA transfer…")
+            await client.write_gatt_char(_SILABS_OTA_CONTROL_UUID, bytearray([0x00]), response=True)
+
+            sent = 0
+            while sent < file_size:
+                chunk = gbl_bytes[sent : sent + _SILABS_OTA_CHUNK_SIZE]
+                await client.write_gatt_char(_SILABS_OTA_DATA_UUID, chunk, response=False)
+                sent += len(chunk)
+                if on_progress:
+                    on_progress(sent / file_size * 100)
+
+            log("Stream complete. Finalizing…")
+            await client.write_gatt_char(_SILABS_OTA_CONTROL_UUID, bytearray([0x03]), response=True)
+            log("OTA complete — device is verifying and rebooting.")
+
+    except OTAError:
+        raise
+    except Exception as exc:
+        raise OTAError(f"Silabs OTA failed: {exc}") from exc
 
 
 async def find_nrf_dfu_device(original_address: str) -> BLEDevice | None:

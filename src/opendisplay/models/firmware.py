@@ -31,7 +31,7 @@ def firmware_ota_asset(ic_type: int, tag: str) -> str | None:
     if ic_type == ICType.NRF52811:
         return f"EPD-nRF52-{tag}-ota.zip"
     if ic_type == ICType.EFR32BG22:
-        return f"opendisplay-bg22-{tag}.gbl"
+        return f"opendisplay-bg22-v{tag}.gbl"
     return None
 
 

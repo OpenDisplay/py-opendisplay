@@ -564,6 +564,103 @@ async with OpenDisplayDevice(
 
 
 
+## Firmware Updates (OTA)
+
+py-opendisplay supports over-the-air firmware updates for nRF52 and EFR32BG22 devices via BLE. ESP32 variants do not have a BLE OTA path.
+
+### Installation
+
+Install the optional OTA dependencies for your device:
+
+```bash
+# nRF52840 / nRF52811
+pip install "py-opendisplay[nrf-ota]"
+
+# EFR32BG22
+pip install "py-opendisplay[silabs-ota]"
+
+# Both
+pip install "py-opendisplay[all-ota]"
+```
+
+### nRF52840 / nRF52811 — Nordic Legacy DFU
+
+nRF devices use the Nordic Legacy DFU protocol. After triggering the bootloader, the device reboots and advertises a new DFU service (often at MAC+1). `find_nrf_dfu_device()` polls for up to 30 s to locate it.
+
+```python
+from opendisplay import OpenDisplayDevice
+from opendisplay.ota import find_nrf_dfu_device, perform_nrf_dfu
+
+# Load the .zip firmware archive
+with open("NRF52840.zip", "rb") as f:
+    firmware_bytes = f.read()
+
+# Step 1: trigger the bootloader
+async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF") as device:
+    await device.trigger_dfu_bootloader()
+
+# Step 2: wait for the DFU device to appear
+dfu_device = await find_nrf_dfu_device("AA:BB:CC:DD:EE:FF")
+if dfu_device is None:
+    raise RuntimeError("DFU device not found after 30 s")
+
+# Step 3: flash
+await perform_nrf_dfu(
+    firmware_bytes,
+    dfu_device,
+    on_progress=lambda pct: print(f"{pct:.0f}%"),
+    on_log=print,
+)
+```
+
+Requires the [`nrf-ota`](https://github.com/OpenDisplay-org/nrf-ota) package (`pip install nrf-ota`).
+
+### EFR32BG22 — Silicon Labs AppLoader OTA
+
+EFR32BG22 devices use the Silicon Labs AppLoader protocol. After the bootloader trigger, the device reboots into AppLoader mode at the **same BLE address**. `perform_silabs_ota()` waits for AppLoader to be ready automatically.
+
+```python
+from opendisplay import OpenDisplayDevice
+from opendisplay.ota import perform_silabs_ota
+
+# Load the .gbl firmware file
+with open("opendisplay-bg22-v1.2.gbl", "rb") as f:
+    firmware_bytes = f.read()
+
+# Step 1: trigger the bootloader
+ble_device = ...  # BLEDevice from BleakScanner or HA
+async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", ble_device=ble_device) as device:
+    ota_device = ...  # same BLEDevice, or re-scan after disconnect
+    await device.trigger_dfu_bootloader()
+
+# Step 2: flash (perform_silabs_ota waits for AppLoader internally)
+await perform_silabs_ota(
+    firmware_bytes,
+    ota_device,
+    on_progress=lambda pct: print(f"{pct:.0f}%"),
+    on_log=print,
+)
+```
+
+The `on_progress` callback receives a float from 0–100. Both functions raise `OTAError` on failure.
+
+### Determining IC type
+
+Use `device.config.system.ic_type` (an `ICType` enum value) to select the right OTA path:
+
+```python
+from opendisplay.models.enums import ICType
+
+async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF") as device:
+    ic = device.config.system.ic_type
+    if ic in (ICType.NRF52840, ICType.NRF52811):
+        # use Nordic DFU path
+    elif ic == ICType.EFR32BG22:
+        # use Silabs AppLoader path
+    else:
+        # ESP32 — no BLE OTA available
+```
+
 ## Development
 
 ```bash
