@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import struct
+from dataclasses import replace
 
 import pytest
 
@@ -18,8 +19,12 @@ from opendisplay.models.config import (
     PowerOption,
     SystemConfig,
 )
-from opendisplay.protocol.config_parser import parse_tlv_config
-from opendisplay.protocol.config_serializer import serialize_binary_inputs
+from opendisplay.protocol.config_parser import parse_config_response, parse_tlv_config
+from opendisplay.protocol.config_serializer import (
+    serialize_binary_inputs,
+    serialize_config,
+    serialize_display_config,
+)
 
 
 def _system_payload() -> bytes:
@@ -354,3 +359,29 @@ async def test_write_config_still_requires_display() -> None:
 
     with pytest.raises(ValueError, match="at least one display"):
         await device.write_config(cfg)
+
+
+def test_serialize_display_config_matches_firmware_struct_size() -> None:
+    """Firmware's packed DisplayConfig is 46 bytes; a shorter packet makes the device drop the display."""
+    assert len(serialize_display_config(_minimal_display())) == 46
+
+
+def test_config_roundtrip_preserves_display_and_full_update_mc() -> None:
+    """serialize_config -> parse_config_response must preserve the display.
+
+    Regression: the serializer dropped full_update_mC, truncating the 0x20 packet
+    to 44 bytes so the firmware skipped it ("No display configured").
+    """
+    display = replace(_minimal_display(), full_update_mC=12345, color_scheme=5)
+    cfg = GlobalConfig(
+        system=_minimal_system(),
+        manufacturer=_minimal_manufacturer(),
+        power=_minimal_power(),
+        displays=[display],
+    )
+
+    parsed = parse_config_response(serialize_config(cfg))
+
+    assert len(parsed.displays) == 1
+    assert parsed.displays[0].full_update_mC == 12345
+    assert parsed.displays[0].color_scheme == 5

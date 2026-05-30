@@ -237,7 +237,7 @@ class PowerOption:
 class DisplayConfig:
     """Display configuration (TLV packet type 0x20, repeatable max 4).
 
-    Size: 66 bytes (packed struct from firmware)
+    Size: 46 bytes (packed struct from firmware)
     """
 
     instance_number: int  # uint8 (0-3)
