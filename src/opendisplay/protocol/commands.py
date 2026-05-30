@@ -52,7 +52,7 @@ PIPELINE_CHUNKS = 1  # Wait for ACK after each chunk
 
 # Upload protocol constants
 MAX_COMPRESSED_SIZE = 50 * 1024  # Standard firmware buffer (nRF, ~50KB)
-MAX_COMPRESSED_SIZE_ZIPXL = 512 * 1024  # Extended buffer for ZIPXL-capable devices (ESP32 with PSRAM)
+MAX_COMPRESSED_SIZE_ZIPXL = 512 * 1024  # Historical ZIPXL limit; current ZIPXL uses a 512-byte zlib window
 MAX_START_PAYLOAD = 200  # Maximum bytes in START command (prevents MTU issues)
 
 

@@ -337,29 +337,60 @@ async def test_after_fallback_data_chunks_use_uncompressed_timeout() -> None:
     assert device.TIMEOUT_UNCOMPRESSED_DATA_ACK in fake.timeouts
 
 
-# ─── _dispatch_upload: ZIPXL extended size limit ──────────────────────────────
+# ─── _dispatch_upload: ZIPXL zlib window and size semantics ──────────────────
 
 
 @pytest.mark.asyncio
 async def test_dispatch_zipxl_accepts_large_compressed_data(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ZIPXL devices (bit 0x01) use a 512KB limit instead of 50KB."""
-    from opendisplay.protocol.commands import MAX_COMPRESSED_SIZE, MAX_COMPRESSED_SIZE_ZIPXL
+    """ZIPXL devices (bit 0x01) do not apply the legacy 50KB compressed-size limit."""
+    import random
+
+    from opendisplay.encoding import ZIPXL_ZLIB_WINDOW_BITS, compress_image_data, zlib_window_bits
+    from opendisplay.protocol.commands import MAX_COMPRESSED_SIZE
 
     # transmission_modes=0x03 → ZIPXL (bit 0) + ZIP (bit 1)
     device = _make_device(transmission_modes=0x03)
-    # 60KB: larger than MAX_COMPRESSED_SIZE (50KB) but within MAX_COMPRESSED_SIZE_ZIPXL (512KB)
-    compressed_size = MAX_COMPRESSED_SIZE + 10 * 1024
-    assert compressed_size < MAX_COMPRESSED_SIZE_ZIPXL
     captured: dict = {}
 
     async def fake_execute(image_data, refresh_mode, use_compression=False, **kwargs):
         captured["use_compression"] = use_compression
+        captured["compressed_data"] = kwargs["compressed_data"]
 
     monkeypatch.setattr(device, "_execute_upload", fake_execute)
-    image_data = b"\x00" * 100
-    compressed_data = b"\xff" * compressed_size
+    image_data = random.Random(0).randbytes(MAX_COMPRESSED_SIZE + 10 * 1024)
+    compressed_data = compress_image_data(image_data, window_bits=ZIPXL_ZLIB_WINDOW_BITS)
+    assert len(compressed_data) > MAX_COMPRESSED_SIZE
     await device._dispatch_upload(image_data, RefreshMode.FULL, True, compressed_data, None)
     assert captured["use_compression"] is True
+    assert zlib_window_bits(captured["compressed_data"]) == ZIPXL_ZLIB_WINDOW_BITS
+
+
+@pytest.mark.asyncio
+async def test_dispatch_zipxl_recompresses_prepared_data_with_512_byte_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prepared data for ZIPXL is repaired to the firmware's 512-byte zlib window."""
+    from opendisplay.encoding import (
+        DEFAULT_ZLIB_WINDOW_BITS,
+        ZIPXL_ZLIB_WINDOW_BITS,
+        compress_image_data,
+        zlib_window_bits,
+    )
+
+    device = _make_device(transmission_modes=0x03)
+    captured: dict = {}
+
+    async def fake_execute(image_data, refresh_mode, use_compression=False, **kwargs):
+        captured["compressed_data"] = kwargs["compressed_data"]
+
+    monkeypatch.setattr(device, "_execute_upload", fake_execute)
+    image_data = b"abc123" * 100
+    compressed_data = compress_image_data(image_data, window_bits=DEFAULT_ZLIB_WINDOW_BITS)
+    assert zlib_window_bits(compressed_data) == DEFAULT_ZLIB_WINDOW_BITS
+
+    await device._dispatch_upload(image_data, RefreshMode.FULL, True, compressed_data, None)
+
+    assert zlib_window_bits(captured["compressed_data"]) == ZIPXL_ZLIB_WINDOW_BITS
 
 
 # ─── _execute_upload: error paths ────────────────────────────────────────────

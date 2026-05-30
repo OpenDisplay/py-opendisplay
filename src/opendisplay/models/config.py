@@ -264,7 +264,7 @@ class DisplayConfig:
 
     @property
     def supports_zipxl(self) -> bool:
-        """Check if display supports ZIP-XL (large compressed buffer up to 512KB, ESP32/PSRAM devices)."""
+        """Check if display supports ZIP-XL (compressed streams use a 512-byte zlib window)."""
         return bool(self.transmission_modes & 0x01)
 
     @property

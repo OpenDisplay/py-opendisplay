@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import time
-import zlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -22,11 +21,14 @@ from .crypto import (
 )
 from .display_palettes import PANELS_4GRAY, get_gray4_codes, get_palette_for_display
 from .encoding import (
+    DEFAULT_ZLIB_WINDOW_BITS,
+    ZIPXL_ZLIB_WINDOW_BITS,
     compress_image_data,
     encode_bitplanes,
     encode_gray4_bitplanes,
     encode_image,
     fit_image,
+    zlib_window_bits,
 )
 from .exceptions import (
     AuthenticationRequiredError,
@@ -56,7 +58,6 @@ from .protocol import (
     CHUNK_SIZE,
     ENCRYPTED_CHUNK_SIZE,
     MAX_COMPRESSED_SIZE,
-    MAX_COMPRESSED_SIZE_ZIPXL,
     MAX_START_PAYLOAD,
     CommandCode,
     build_authenticate_step1,
@@ -247,7 +248,11 @@ def prepare_image(
     # Optionally compress
     compressed_data = None
     if compress:
-        compressed_data = compress_image_data(image_data, level=6)
+        display_cfg = config.displays[0] if (config and config.displays) else None
+        window_bits = (
+            ZIPXL_ZLIB_WINDOW_BITS if (display_cfg and display_cfg.supports_zipxl) else DEFAULT_ZLIB_WINDOW_BITS
+        )
+        compressed_data = compress_image_data(image_data, level=6, window_bits=window_bits)
 
     return image_data, compressed_data, dithered
 
@@ -1147,11 +1152,21 @@ class OpenDisplayDevice:
         """Choose compressed or uncompressed upload protocol and execute it."""
         display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
         supports_compression = display_cfg.supports_zip if display_cfg else True
-        max_compressed = (
-            MAX_COMPRESSED_SIZE_ZIPXL if (display_cfg and display_cfg.supports_zipxl) else MAX_COMPRESSED_SIZE
+        uses_zipxl_window = bool(display_cfg and display_cfg.supports_zipxl)
+        if compress and supports_compression and uses_zipxl_window:
+            if compressed_data is None or zlib_window_bits(compressed_data) != ZIPXL_ZLIB_WINDOW_BITS:
+                compressed_data = compress_image_data(image_data, level=6, window_bits=ZIPXL_ZLIB_WINDOW_BITS)
+
+        within_compressed_limit = (
+            compressed_data is not None
+            and (uses_zipxl_window or len(compressed_data) < MAX_COMPRESSED_SIZE)
         )
-        if compress and supports_compression and compressed_data and len(compressed_data) < max_compressed:
-            _LOGGER.info("Using compressed upload protocol (size: %d bytes)", len(compressed_data))
+        if compress and supports_compression and compressed_data and within_compressed_limit:
+            _LOGGER.info(
+                "Using compressed upload protocol (size: %d bytes, zlib window: %d bits)",
+                len(compressed_data),
+                zlib_window_bits(compressed_data) or 0,
+            )
             await self._execute_upload(
                 image_data,
                 refresh_mode,
@@ -1168,7 +1183,7 @@ class OpenDisplayDevice:
             if compress and not supports_compression:
                 _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
             elif compress and compressed_data:
-                _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", max_compressed)
+                _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
             else:
                 _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
             await self._execute_upload(
@@ -1274,7 +1289,8 @@ class OpenDisplayDevice:
         )
 
         logical_stream = build_partial_logical_stream(old_rect_bytes, new_rect_bytes)
-        compressed_stream = zlib.compress(logical_stream, level=6)
+        window_bits = ZIPXL_ZLIB_WINDOW_BITS if display.supports_zipxl else DEFAULT_ZLIB_WINDOW_BITS
+        compressed_stream = compress_image_data(logical_stream, level=6, window_bits=window_bits)
         use_compression = display.supports_zip and len(compressed_stream) < len(logical_stream)
         stream_bytes = compressed_stream if use_compression else logical_stream
 
@@ -1389,10 +1405,9 @@ class OpenDisplayDevice:
             # If we weren't using compression there's nothing to fall back to.
             if not use_compression:
                 raise
-            # Device rejected the compressed START (e.g., compressedDataBuffer is NULL —
-            # ZIPXL bit set in config but firmware not built with PSRAM support). Fall
-            # back to the uncompressed protocol and retry; the same image_data (for
-            # 4-gray, the two split planes) streams fine uncompressed.
+            # Device rejected the compressed START. Fall back to the uncompressed
+            # protocol and retry; the same image_data (for 4-gray, the two split
+            # planes) streams fine uncompressed.
             _LOGGER.warning(
                 "Compressed START rejected by device (0x%04x); falling back to uncompressed",
                 int.from_bytes(response[:2], "big"),
