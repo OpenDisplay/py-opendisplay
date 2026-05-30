@@ -1162,14 +1162,9 @@ class OpenDisplayDevice:
                 new_etag=new_etag,
             )
         else:
-            if self.color_scheme == ColorScheme.GRAYSCALE_4:
-                # 4-gray ships two split planes that only the firmware's compressed
-                # path accepts; an uncompressed upload is rejected outright (and the
-                # split-plane shape is incompatible with older packed-2bpp firmware).
-                raise ProtocolError(
-                    "GRAYSCALE_4 uploads must be compressed; enable ZIP transport and "
-                    "ensure the compressed image fits the device buffer"
-                )
+            # 4-gray ships the same two split planes (plane0 ++ plane1) over either
+            # transport; the firmware streams them to PLANE_0/PLANE_1 whether they
+            # arrive compressed or as raw 0x71 chunks, so no special-casing here.
             if compress and not supports_compression:
                 _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
             elif compress and compressed_data:
@@ -1391,13 +1386,13 @@ class OpenDisplayDevice:
         try:
             validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
         except InvalidResponseError:
-            # 4-gray has no uncompressed protocol to fall back to (firmware rejects it),
-            # so surface the compressed START failure directly instead of retrying.
-            if not use_compression or self.color_scheme == ColorScheme.GRAYSCALE_4:
+            # If we weren't using compression there's nothing to fall back to.
+            if not use_compression:
                 raise
             # Device rejected the compressed START (e.g., compressedDataBuffer is NULL —
-            # ZIPXL bit set in config but firmware not built with PSRAM support).
-            # Fall back to uncompressed protocol and retry.
+            # ZIPXL bit set in config but firmware not built with PSRAM support). Fall
+            # back to the uncompressed protocol and retry; the same image_data (for
+            # 4-gray, the two split planes) streams fine uncompressed.
             _LOGGER.warning(
                 "Compressed START rejected by device (0x%04x); falling back to uncompressed",
                 int.from_bytes(response[:2], "big"),

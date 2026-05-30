@@ -19,8 +19,6 @@ from epaper_dithering import ColorScheme
 from opendisplay import OpenDisplayDevice
 from opendisplay.exceptions import (
     AuthenticationRequiredError,
-    InvalidResponseError,
-    ProtocolError,
 )
 from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.config import (
@@ -458,40 +456,42 @@ def test_prepare_image_defaults_tone_and_gamut_off() -> None:
     assert sig.parameters["gamut"].default == 0.0
 
 
-# ─── GRAYSCALE_4: compressed-only enforcement ────────────────────────────────
+# ─── GRAYSCALE_4: split planes over either transport ─────────────────────────
 
 
 def _make_gray4_device(transmission_modes: int = 0x02) -> OpenDisplayDevice:
-    """Device reporting a 4-gray panel (uploads must be compressed split planes)."""
+    """Device reporting a 4-gray panel (uploads ship two split planes, plane0 ++ plane1)."""
     config = _make_config(transmission_modes=transmission_modes, width=8, height=8)
     caps = DeviceCapabilities(width=8, height=8, color_scheme=ColorScheme.GRAYSCALE_4)
     return OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config, capabilities=caps)
 
 
 @pytest.mark.asyncio
-async def test_gray4_uncompressed_dispatch_raises_before_start() -> None:
-    """4-gray has no uncompressed protocol; _dispatch_upload raises before any 0x70."""
+async def test_gray4_uncompressed_dispatch_uses_uncompressed_protocol() -> None:
+    """4-gray with compress=False streams the split planes via the bare-0x70 protocol."""
     device = _make_gray4_device()
-    fake = _FakeConnection([])
+    fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
     device._connection = fake
-    with pytest.raises(ProtocolError, match="must be compressed"):
-        # compress=False forces the uncompressed branch, which is invalid for 4-gray
-        await device._dispatch_upload(b"\x00" * 16, RefreshMode.FULL, False, None, None)
-    assert fake.written == []  # nothing sent to the device
+    # compress=False forces the uncompressed branch; the two planes stream as 0x71 chunks.
+    await device._dispatch_upload(b"\x00" * 16, RefreshMode.FULL, False, None, None)
+    assert fake.written[0][:2] == b"\x00\x70"  # bare START (no size header)
+    assert fake.written[0] == b"\x00\x70"  # no payload → firmware infers uncompressed
+    assert fake.written[1][:2] == b"\x00\x71"  # DATA
 
 
 @pytest.mark.asyncio
-async def test_gray4_compressed_start_rejected_does_not_fall_back() -> None:
-    """A rejected compressed START for 4-gray surfaces directly (no uncompressed retry)."""
+async def test_gray4_compressed_start_rejected_falls_back_to_uncompressed() -> None:
+    """A rejected compressed START for 4-gray falls back to the bare-0x70 protocol like any scheme."""
     device = _make_gray4_device()
-    fake = _FakeConnection([ERR_FRAME])  # reject compressed START, offer no retry response
+    # Reject compressed START, then accept the uncompressed retry.
+    fake = _FakeConnection([ERR_FRAME, ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
     device._connection = fake
-    with pytest.raises(InvalidResponseError):
-        await device._execute_upload(
-            b"\x00" * 16,
-            RefreshMode.FULL,
-            use_compression=True,
-            compressed_data=b"\xff" * 5,
-            uncompressed_size=16,
-        )
-    assert len(fake.written) == 1  # only the compressed START; no bare-START retry
+    await device._execute_upload(
+        b"\x00" * 16,
+        RefreshMode.FULL,
+        use_compression=True,
+        compressed_data=b"\xff" * 5,
+        uncompressed_size=16,
+    )
+    assert len(fake.written[0]) > 2  # compressed START (size + data embedded)
+    assert fake.written[1] == b"\x00\x70"  # bare uncompressed START retry
