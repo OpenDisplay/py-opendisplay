@@ -133,6 +133,33 @@ class BLEConnection:
             finally:
                 self._client = None
 
+    async def clear_cache(self) -> bool:
+        """Clear the GATT services cache for this device.
+
+        On an ESPHome Bluetooth proxy this clears the proxy's cached per-MAC
+        GATT table so the next connection re-discovers services — needed when
+        the device's GATT changes without changing address (e.g. rebooting into
+        the Silabs AppLoader for OTA). Requires an active connection; the
+        on-device clear only works if the proxy firmware supports it (otherwise
+        only the in-memory cache is cleared).
+
+        Returns:
+            True if a cache was cleared, False if the backend has no cache
+            support (e.g. direct BlueZ on a bleak build without ``clear_cache``).
+
+        Raises:
+            BLEConnectionError: If not connected.
+        """
+        if not self._client or not self._client.is_connected:
+            raise BLEConnectionError("Not connected")
+        # The concrete client (BleakClientWithServiceCache) has clear_cache, but
+        # the declared BleakClient type does not — resolve it dynamically.
+        clear_cache_fn = getattr(self._client, "clear_cache", None)
+        if not callable(clear_cache_fn):
+            return False
+        # Guarded by callable() above; pylint can't infer through getattr.
+        return bool(await clear_cache_fn())  # pylint: disable=not-callable
+
     async def _setup_notifications(self) -> None:
         """Set up BLE notifications for responses.
 

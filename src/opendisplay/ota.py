@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 _SILABS_OTA_CONTROL_UUID = "f7bf3564-fb6d-4e53-88a4-5e37e0326063"
 _SILABS_OTA_DATA_UUID = "984227f3-34fc-4045-a5d0-2c581f81a153"
 _SILABS_OTA_CHUNK_SIZE = 244
+_SILABS_APPLOADER_BOOT_DELAY = 6.0  # seconds to wait before the first connect
+_SILABS_CONNECT_ATTEMPTS = 5  # establish_connection retries while AppLoader boots
 
 
 async def perform_nrf_dfu(
@@ -86,11 +88,18 @@ async def perform_silabs_ota(
     """Flash an EFR32BG22 device using Silicon Labs AppLoader OTA.
 
     Call ``OpenDisplayDevice.trigger_dfu_bootloader()`` first. This function
-    retries the connection for up to 20 s waiting for the AppLoader to boot —
-    no external sleep is required before calling.
+    retries the *connection* while the AppLoader boots — no external sleep is
+    required before calling.
 
     The AppLoader exits back to the application when the BLE connection
-    drops, so the full transfer must complete in a single connection.
+    drops, so the full transfer must complete in a single connection. We
+    therefore only retry failed connects (which do not arm the reboot) and
+    never reconnect once connected.
+
+    Through an ESPHome Bluetooth proxy, clear the proxy's stale per-MAC GATT
+    cache *before* this call — while still connected in app mode — via
+    ``OpenDisplayDevice.clear_gatt_cache()``, so this connection re-discovers
+    the AppLoader's OTA service instead of the cached app-firmware table.
 
     Args:
         gbl_bytes: Raw .gbl firmware file bytes.
@@ -101,43 +110,73 @@ async def perform_silabs_ota(
     Raises:
         OTAError: OTA transfer failed or AppLoader did not appear within 20 s.
     """
-    from bleak import BleakClient
+    from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
     log = on_log or (lambda _: None)
     file_size = len(gbl_bytes)
 
-    # Brief pause to let the device finish rebooting into AppLoader before we
-    # attempt a connection. The AppLoader waits indefinitely once running.
+    # Brief pause to let the device begin booting into AppLoader before the
+    # first connection attempt. establish_connection then retries the connect
+    # itself (max_attempts) — failed/incomplete connects are harmless because
+    # the AppLoader only arms its reboot-on-disconnect after a *successful*
+    # connection. We therefore retry the connect but NEVER reconnect once
+    # connected: this single connection is our only chance to flash.
     log("Waiting for AppLoader to boot…")
-    await asyncio.sleep(6.0)
+    await asyncio.sleep(_SILABS_APPLOADER_BOOT_DELAY)
 
     try:
-        async with BleakClient(ble_device, timeout=20.0) as client:
-            char_uuids = {str(c.uuid).lower() for svc in client.services for c in svc.characteristics}
-            if _SILABS_OTA_CONTROL_UUID not in char_uuids:
-                raise OTAError(
-                    "Device is not in Silabs OTA mode — AppLoader characteristic not found after GATT rediscovery"
-                )
+        # use_services_cache=False forces a fresh GATT discovery rather than
+        # reusing the app-firmware service table. On an ESPHome Bluetooth proxy
+        # the stale per-MAC GATT cache must additionally be cleared on the proxy
+        # *before* this call (while still connected in app mode) via
+        # OpenDisplayDevice.clear_gatt_cache(); see that method.
+        client = await establish_connection(
+            BleakClientWithServiceCache,
+            ble_device,
+            ble_device.name or "AppLoader",
+            use_services_cache=False,
+            max_attempts=_SILABS_CONNECT_ATTEMPTS,
+        )
+    except Exception as exc:
+        raise OTAError(f"Could not connect to AppLoader: {exc}") from exc
 
-            log("Connected to AppLoader. Starting OTA transfer…")
-            await client.write_gatt_char(_SILABS_OTA_CONTROL_UUID, bytearray([0x00]), response=True)
+    try:
+        # Identify the OTA service by its control/data characteristics rather
+        # than the service UUID, which varies between AppLoader builds.
+        char_uuids = {str(c.uuid).lower() for svc in client.services for c in svc.characteristics}
+        if _SILABS_OTA_CONTROL_UUID not in char_uuids or _SILABS_OTA_DATA_UUID not in char_uuids:
+            raise OTAError(
+                "Device is not in Silabs OTA mode — AppLoader OTA characteristics "
+                "not found. Cannot recover on this connection (reconnecting would "
+                "reboot the device out of OTA mode); re-trigger the bootloader and retry."
+            )
 
-            sent = 0
-            while sent < file_size:
-                chunk = gbl_bytes[sent : sent + _SILABS_OTA_CHUNK_SIZE]
-                await client.write_gatt_char(_SILABS_OTA_DATA_UUID, chunk, response=False)
-                sent += len(chunk)
-                if on_progress:
-                    on_progress(sent / file_size * 100)
+        log("Connected to AppLoader. Starting OTA transfer…")
+        await client.write_gatt_char(_SILABS_OTA_CONTROL_UUID, bytearray([0x00]), response=True)
 
-            log("Stream complete. Finalizing…")
-            await client.write_gatt_char(_SILABS_OTA_CONTROL_UUID, bytearray([0x03]), response=True)
-            log("OTA complete — device is verifying and rebooting.")
+        sent = 0
+        while sent < file_size:
+            chunk = gbl_bytes[sent : sent + _SILABS_OTA_CHUNK_SIZE]
+            await client.write_gatt_char(_SILABS_OTA_DATA_UUID, chunk, response=False)
+            sent += len(chunk)
+            if on_progress:
+                on_progress(sent / file_size * 100)
+
+        log("Stream complete. Finalizing…")
+        await client.write_gatt_char(_SILABS_OTA_CONTROL_UUID, bytearray([0x03]), response=True)
+        log("OTA complete — device is verifying and rebooting.")
 
     except OTAError:
         raise
     except Exception as exc:
         raise OTAError(f"Silabs OTA failed: {exc}") from exc
+    finally:
+        # The device reboots out of AppLoader on disconnect anyway; disconnect
+        # explicitly so we don't leak the connection if the transfer raised.
+        try:
+            await client.disconnect()
+        except Exception:  # noqa: BLE001 - best-effort cleanup
+            pass
 
 
 async def find_nrf_dfu_device(original_address: str) -> BLEDevice | None:

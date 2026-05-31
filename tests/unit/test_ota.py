@@ -8,6 +8,7 @@ import pytest
 
 from opendisplay.exceptions import OTAError
 from opendisplay.ota import (
+    _SILABS_APPLOADER_BOOT_DELAY,
     _SILABS_OTA_CHUNK_SIZE,
     _SILABS_OTA_CONTROL_UUID,
     _SILABS_OTA_DATA_UUID,
@@ -21,15 +22,27 @@ from opendisplay.ota import (
 
 
 def _make_bleak_client(char_uuids: list[str]) -> MagicMock:
-    """Return a mock BleakClient whose services expose the given char UUIDs."""
+    """Return a mock client (as returned by establish_connection) whose services
+    expose the given char UUIDs. write_gatt_char/disconnect are AsyncMocks."""
     char_mocks = [MagicMock(uuid=uuid) for uuid in char_uuids]
     svc = MagicMock()
     svc.characteristics = char_mocks
     client = AsyncMock()
     client.services = [svc]
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
     return client
+
+
+def _patch_connect(client_or_exc) -> object:
+    """Patch establish_connection to return a client (or raise an exception)."""
+    if isinstance(client_or_exc, BaseException):
+        return patch(
+            "bleak_retry_connector.establish_connection",
+            new=AsyncMock(side_effect=client_or_exc),
+        )
+    return patch(
+        "bleak_retry_connector.establish_connection",
+        new=AsyncMock(return_value=client_or_exc),
+    )
 
 
 def _make_ble_device(address: str = "AA:BB:CC:DD:EE:FF") -> MagicMock:
@@ -45,16 +58,20 @@ def _make_ble_device(address: str = "AA:BB:CC:DD:EE:FF") -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_silabs_ota_happy_path() -> None:
-    """Full OTA transfer: start write, all data chunks, finalize write."""
+    """Full OTA transfer: start write, all data chunks, finalize write, disconnect."""
     gbl = bytes(range(256)) * 2  # 512 bytes → 3 chunks of 244/244/24
     client = _make_bleak_client([_SILABS_OTA_CONTROL_UUID, _SILABS_OTA_DATA_UUID])
     progress: list[float] = []
+    connect = AsyncMock(return_value=client)
 
     with (
         patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
-        patch("bleak.BleakClient", return_value=client),
+        patch("bleak_retry_connector.establish_connection", new=connect),
     ):
         await perform_silabs_ota(gbl, _make_ble_device(), on_progress=progress.append)
+
+    # Fresh GATT discovery, not the cached app-firmware service table.
+    assert connect.await_args.kwargs["use_services_cache"] is False
 
     calls = client.write_gatt_char.call_args_list
     # First call: OTA start (0x00)
@@ -78,48 +95,79 @@ async def test_silabs_ota_happy_path() -> None:
     assert progress[0] > 0
     assert progress[-1] == pytest.approx(100.0)
 
+    # The single connection is always closed.
+    client.disconnect.assert_awaited_once()
+
 
 @pytest.mark.asyncio
-async def test_silabs_ota_sleeps_before_connect() -> None:
-    """perform_silabs_ota waits for AppLoader to boot before connecting."""
+async def test_silabs_ota_waits_for_apploader_boot() -> None:
+    """perform_silabs_ota waits for the AppLoader to boot before connecting."""
     sleep_mock = AsyncMock()
     client = _make_bleak_client([_SILABS_OTA_CONTROL_UUID, _SILABS_OTA_DATA_UUID])
 
     with (
         patch("opendisplay.ota.asyncio.sleep", new=sleep_mock),
-        patch("bleak.BleakClient", return_value=client),
+        _patch_connect(client),
     ):
         await perform_silabs_ota(b"\x00" * 10, _make_ble_device())
 
-    sleep_mock.assert_awaited_once_with(6.0)
+    sleep_mock.assert_awaited_once_with(_SILABS_APPLOADER_BOOT_DELAY)
 
 
 @pytest.mark.asyncio
 async def test_silabs_ota_missing_control_char_raises() -> None:
     """OTAError when the AppLoader OTA control characteristic is absent."""
-    client = _make_bleak_client(["some-other-uuid"])
+    client = _make_bleak_client([_SILABS_OTA_DATA_UUID, "some-other-uuid"])
 
     with (
         patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
-        patch("bleak.BleakClient", return_value=client),
+        _patch_connect(client),
+    ):
+        with pytest.raises(OTAError, match="not in Silabs OTA mode"):
+            await perform_silabs_ota(b"\x00" * 10, _make_ble_device())
+
+    # Even on failure the one-shot connection is closed.
+    client.disconnect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_silabs_ota_missing_data_char_raises() -> None:
+    """OTAError when the OTA data characteristic is absent (control present)."""
+    client = _make_bleak_client([_SILABS_OTA_CONTROL_UUID])
+
+    with (
+        patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
+        _patch_connect(client),
     ):
         with pytest.raises(OTAError, match="not in Silabs OTA mode"):
             await perform_silabs_ota(b"\x00" * 10, _make_ble_device())
 
 
 @pytest.mark.asyncio
-async def test_silabs_ota_connection_error_wrapped() -> None:
-    """Non-OTA exceptions from BleakClient are wrapped in OTAError."""
-    client = MagicMock()
-    client.__aenter__ = AsyncMock(side_effect=RuntimeError("connection refused"))
-    client.__aexit__ = AsyncMock(return_value=False)
+async def test_silabs_ota_connect_failure_wrapped() -> None:
+    """A failed connection is wrapped in OTAError with a connect-specific message."""
+    with (
+        patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
+        _patch_connect(RuntimeError("connection refused")),
+    ):
+        with pytest.raises(OTAError, match="Could not connect to AppLoader"):
+            await perform_silabs_ota(b"\x00" * 10, _make_ble_device())
+
+
+@pytest.mark.asyncio
+async def test_silabs_ota_transfer_error_wrapped() -> None:
+    """An error mid-transfer is wrapped in OTAError and the connection still closed."""
+    client = _make_bleak_client([_SILABS_OTA_CONTROL_UUID, _SILABS_OTA_DATA_UUID])
+    client.write_gatt_char = AsyncMock(side_effect=RuntimeError("gatt write failed"))
 
     with (
         patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
-        patch("bleak.BleakClient", return_value=client),
+        _patch_connect(client),
     ):
         with pytest.raises(OTAError, match="Silabs OTA failed"):
             await perform_silabs_ota(b"\x00" * 10, _make_ble_device())
+
+    client.disconnect.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -129,7 +177,7 @@ async def test_silabs_ota_no_progress_callback() -> None:
 
     with (
         patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
-        patch("bleak.BleakClient", return_value=client),
+        _patch_connect(client),
     ):
         await perform_silabs_ota(b"\x00" * 10, _make_ble_device(), on_progress=None)
 
@@ -142,7 +190,7 @@ async def test_silabs_ota_log_callback() -> None:
 
     with (
         patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
-        patch("bleak.BleakClient", return_value=client),
+        _patch_connect(client),
     ):
         await perform_silabs_ota(b"\x00" * 10, _make_ble_device(), on_log=logs.append)
 

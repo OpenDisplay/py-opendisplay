@@ -745,6 +745,28 @@ class OpenDisplayDevice:
             self.mac_address,
         )
 
+    async def clear_gatt_cache(self) -> bool:
+        """Clear the cached GATT table for this device on the active connection.
+
+        Use this on the Silabs (EFR32BG22) OTA path *before* calling
+        ``trigger_dfu_bootloader()``, while still connected in app mode: it
+        clears an ESPHome Bluetooth proxy's stale per-MAC GATT cache so that the
+        post-reboot connection to the AppLoader re-discovers the OTA service
+        instead of returning the cached app-firmware table. The device keeps the
+        same address across the reboot, so without this the proxy would serve
+        the wrong GATT and the OTA characteristics would not be found.
+
+        No-op (returns False) on backends without cache support (e.g. direct
+        BlueZ on a bleak build lacking ``clear_cache``).
+
+        Returns:
+            True if a cache was cleared, False if unsupported by the backend.
+
+        Raises:
+            BLEConnectionError: If the device is not connected.
+        """
+        return await self._conn.clear_cache()
+
     async def activate_led(
         self,
         led_instance: int,
