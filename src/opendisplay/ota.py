@@ -157,7 +157,13 @@ async def perform_silabs_ota(
         sent = 0
         while sent < file_size:
             chunk = gbl_bytes[sent : sent + _SILABS_OTA_CHUNK_SIZE]
-            await client.write_gatt_char(_SILABS_OTA_DATA_UUID, chunk, response=False)
+            # Write WITH response: each chunk round-trips to the device, which
+            # paces the stream to the BLE link speed and provides backpressure.
+            # Write-without-response is fire-and-forget over an ESPHome BT proxy
+            # (no backpressure) — the proxy is fed faster than it can forward
+            # over BLE, the device never receives the full image, and the link
+            # drops before finalize ("Not connected"). response=True avoids that.
+            await client.write_gatt_char(_SILABS_OTA_DATA_UUID, chunk, response=True)
             sent += len(chunk)
             if on_progress:
                 on_progress(sent / file_size * 100)

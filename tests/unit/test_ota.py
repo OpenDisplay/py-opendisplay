@@ -84,7 +84,8 @@ async def test_silabs_ota_happy_path() -> None:
     total_sent = sum(len(c.args[1]) for c in data_calls)
     assert total_sent == len(gbl)
     assert all(len(c.args[1]) <= _SILABS_OTA_CHUNK_SIZE for c in data_calls)
-    assert all(c.kwargs["response"] is False for c in data_calls)
+    # Write-with-response paces the stream and provides backpressure over BT proxies.
+    assert all(c.kwargs["response"] is True for c in data_calls)
 
     # Last call: OTA finalize (0x03)
     assert calls[-1].args[0] == _SILABS_OTA_CONTROL_UUID
