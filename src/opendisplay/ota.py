@@ -11,32 +11,6 @@ from .exceptions import OTAError
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
 
-_SILABS_OTA_CONTROL_UUID = "f7bf3564-fb6d-4e53-88a4-5e37e0326063"
-_SILABS_OTA_DATA_UUID = "984227f3-34fc-4045-a5d0-2c581f81a153"
-_SILABS_OTA_CHUNK_SIZE = 244
-_SILABS_APPLOADER_BOOT_DELAY = 6.0  # seconds to wait before the first connect
-_SILABS_CONNECT_ATTEMPTS = 5  # establish_connection retries while AppLoader boots
-# Window of data chunks sent write-without-response before forcing one
-# write-with-response (whose ATT ack gates the sender).
-#
-# Set to 1 = EVERY chunk is write-with-response. This is required for reliability
-# over a BT proxy: write-without-response (ATT Write Command) has no delivery
-# guarantee — if the device's buffer is briefly full it SILENTLY DROPS the chunk
-# (no ack, no error). Over a proxy (no backpressure) some chunks get dropped, the
-# stream still "completes" (the periodic sync writes are acked), but the image is
-# incomplete and the 0x03 finalize fails verification with "Application error"
-# (observed: window=8 stalled ~20% from buffer overrun; window=2 reached 100% but
-# finalize rejected the gappy image). The Silabs AppLoader has no packet-receipt
-# mechanism to detect/recover drops, so the only safe option is to acknowledge
-# every write. Slower, but it guarantees a complete image. (>1 is only safe on a
-# direct connection, where the link layer makes Write Commands reliable.)
-_SILABS_OTA_WINDOW = 1
-# Adaptive flow control: a BT proxy returns "Congested" when its BLE TX buffer
-# fills under the write-without-response burst (worse on a weak/busy link). It
-# means "slow down", not failure — back off and resend the same chunk.
-_SILABS_OTA_CONGESTION_RETRIES = 6
-_SILABS_OTA_CONGESTION_BACKOFF = 0.15  # seconds, to let the proxy queue drain
-
 
 async def perform_nrf_dfu(
     zip_bytes: bytes,
@@ -105,123 +79,39 @@ async def perform_silabs_ota(
     on_progress: Callable[[float], None] | None = None,
     on_log: Callable[[str], None] | None = None,
 ) -> None:
-    """Flash an EFR32BG22 device using Silicon Labs AppLoader OTA.
+    """Flash an EFR32 device in the Silicon Labs AppLoader (delegates to silabs-ble-ota).
 
-    Call ``OpenDisplayDevice.trigger_dfu_bootloader()`` first. This function
-    retries the *connection* while the AppLoader boots — no external sleep is
-    required before calling.
+    Thin wrapper over the standalone :mod:`silabs_ble_ota` library (an optional
+    dependency, installed via the ``silabs-ota`` extra), mirroring how
+    :func:`perform_nrf_dfu` wraps ``nrf-ota``.
 
-    The AppLoader exits back to the application when the BLE connection
-    drops, so the full transfer must complete in a single connection. We
-    therefore only retry failed connects (which do not arm the reboot) and
-    never reconnect once connected.
-
-    Through an ESPHome Bluetooth proxy, clear the proxy's stale per-MAC GATT
-    cache *before* this call — while still connected in app mode — via
-    ``OpenDisplayDevice.clear_gatt_cache()``, so this connection re-discovers
-    the AppLoader's OTA service instead of the cached app-firmware table.
+    Call ``OpenDisplayDevice.trigger_dfu_bootloader()`` first, then pass the
+    AppLoader's ``BLEDevice`` (same address as app mode). Over an ESPHome
+    Bluetooth proxy, clear the proxy's stale per-MAC GATT cache first via
+    ``OpenDisplayDevice.clear_gatt_cache()`` so this connection re-discovers the
+    AppLoader's OTA service instead of the cached app-firmware table.
 
     Args:
         gbl_bytes: Raw .gbl firmware file bytes.
-        ble_device: BLE device (same address as app mode).
+        ble_device: BLE device in (or booting into) the AppLoader.
         on_progress: Optional callback with float percentage 0–100.
         on_log: Optional callback for human-readable status messages.
 
     Raises:
-        OTAError: OTA transfer failed or AppLoader did not appear within 20 s.
+        OTAError: silabs-ble-ota is not installed, or the OTA failed.
     """
-    from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
-
-    log = on_log or (lambda _: None)
-    file_size = len(gbl_bytes)
-
-    # Brief pause to let the device begin booting into AppLoader before the
-    # first connection attempt. establish_connection then retries the connect
-    # itself (max_attempts) — failed/incomplete connects are harmless because
-    # the AppLoader only arms its reboot-on-disconnect after a *successful*
-    # connection. We therefore retry the connect but NEVER reconnect once
-    # connected: this single connection is our only chance to flash.
-    log("Waiting for AppLoader to boot…")
-    await asyncio.sleep(_SILABS_APPLOADER_BOOT_DELAY)
+    try:
+        from silabs_ble_ota import SilabsOTAError
+        from silabs_ble_ota import perform_silabs_ota as _perform_silabs_ota
+    except ImportError as exc:
+        raise OTAError(
+            "silabs-ble-ota is required for Silabs firmware updates; install it with: pip install silabs-ble-ota"
+        ) from exc
 
     try:
-        # use_services_cache=False forces a fresh GATT discovery rather than
-        # reusing the app-firmware service table. On an ESPHome Bluetooth proxy
-        # the stale per-MAC GATT cache must additionally be cleared on the proxy
-        # *before* this call (while still connected in app mode) via
-        # OpenDisplayDevice.clear_gatt_cache(); see that method.
-        client = await establish_connection(
-            BleakClientWithServiceCache,
-            ble_device,
-            ble_device.name or "AppLoader",
-            use_services_cache=False,
-            max_attempts=_SILABS_CONNECT_ATTEMPTS,
-        )
-    except Exception as exc:
-        raise OTAError(f"Could not connect to AppLoader: {exc}") from exc
-
-    try:
-        # Identify the OTA service by its control/data characteristics rather
-        # than the service UUID, which varies between AppLoader builds.
-        char_uuids = {str(c.uuid).lower() for svc in client.services for c in svc.characteristics}
-        if _SILABS_OTA_CONTROL_UUID not in char_uuids or _SILABS_OTA_DATA_UUID not in char_uuids:
-            raise OTAError(
-                "Device is not in Silabs OTA mode — AppLoader OTA characteristics "
-                "not found. Cannot recover on this connection (reconnecting would "
-                "reboot the device out of OTA mode); re-trigger the bootloader and retry."
-            )
-
-        log("Connected to AppLoader. Starting OTA transfer…")
-        await client.write_gatt_char(_SILABS_OTA_CONTROL_UUID, bytearray([0x00]), response=True)
-
-        # Windowed flow control. Write-without-response is fire-and-forget over an
-        # ESPHome BT proxy (no backpressure): feeding it the whole image faster
-        # than it forwards over BLE overruns it and the link drops before finalize.
-        # Fully synchronous writes (response on every chunk) avoid that but are
-        # painfully slow (a round-trip per chunk through the proxy). Instead we
-        # stream a window of chunks write-without-response, then force one
-        # write-with-response whose ATT ack drains the proxy's queue — bounding
-        # in-flight writes while paying the latency only once per window. The
-        # final chunk is always synced so the data is acked before the 0x03
-        # finalize. (Same idea as nRF DFU's PRN, but the Silabs AppLoader has no
-        # receipt-notification characteristic, so the ATT ack is the sync point.)
-        sent = 0
-        index = 0
-        while sent < file_size:
-            chunk = gbl_bytes[sent : sent + _SILABS_OTA_CHUNK_SIZE]
-            sent += len(chunk)
-            index += 1
-            sync = index % _SILABS_OTA_WINDOW == 0 or sent >= file_size
-            # Resend on proxy congestion ("Congested" = ESP TX buffer full): the
-            # write hasn't been delivered, so back off briefly and retry the same
-            # chunk rather than abort the transfer.
-            for congestion_attempt in range(_SILABS_OTA_CONGESTION_RETRIES):
-                try:
-                    await client.write_gatt_char(_SILABS_OTA_DATA_UUID, chunk, response=sync)
-                    break
-                except Exception as exc:  # noqa: BLE001 - inspect message for congestion
-                    is_congested = "congest" in str(exc).lower()
-                    if not is_congested or congestion_attempt == _SILABS_OTA_CONGESTION_RETRIES - 1:
-                        raise
-                    await asyncio.sleep(_SILABS_OTA_CONGESTION_BACKOFF)
-            if on_progress:
-                on_progress(sent / file_size * 100)
-
-        log("Stream complete. Finalizing…")
-        await client.write_gatt_char(_SILABS_OTA_CONTROL_UUID, bytearray([0x03]), response=True)
-        log("OTA complete — device is verifying and rebooting.")
-
-    except OTAError:
-        raise
-    except Exception as exc:
-        raise OTAError(f"Silabs OTA failed: {exc}") from exc
-    finally:
-        # The device reboots out of AppLoader on disconnect anyway; disconnect
-        # explicitly so we don't leak the connection if the transfer raised.
-        try:
-            await client.disconnect()
-        except Exception:  # noqa: BLE001 - best-effort cleanup
-            pass
+        await _perform_silabs_ota(gbl_bytes, ble_device, on_progress, on_log)
+    except SilabsOTAError as exc:
+        raise OTAError(str(exc)) from exc
 
 
 async def find_nrf_dfu_device(original_address: str) -> BLEDevice | None:

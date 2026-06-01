@@ -45,6 +45,8 @@ cli = [
 nrf-ota = [
     "nrf-ota>=0.3.0",
 ]
+# silabs-ota extra (silabs-ble-ota) is added once that package is published to
+# PyPI; until then the perform_silabs_ota wrapper imports it lazily.
 test = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
@@ -78,7 +80,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["nrf_ota.*"]
+module = ["nrf_ota.*", "silabs_ble_ota.*"]
 ignore_missing_imports = true
 
 [tool.pylint.format]
