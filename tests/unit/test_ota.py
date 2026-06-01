@@ -85,9 +85,8 @@ async def test_silabs_ota_happy_path() -> None:
     total_sent = sum(len(c.args[1]) for c in data_calls)
     assert total_sent == len(gbl)
     assert all(len(c.args[1]) <= _SILABS_OTA_CHUNK_SIZE for c in data_calls)
-    # Windowed flow control: earlier chunks stream write-without-response; the
-    # final chunk is synced (response=True) so data is acked before finalize.
-    assert data_calls[0].kwargs["response"] is False
+    # The final chunk is always synced (response=True) so data is acked before
+    # finalize. (With _SILABS_OTA_WINDOW=1 every chunk is synced.)
     assert data_calls[-1].kwargs["response"] is True
 
     # Last call: OTA finalize (0x03)

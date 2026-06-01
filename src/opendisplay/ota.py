@@ -16,18 +16,21 @@ _SILABS_OTA_DATA_UUID = "984227f3-34fc-4045-a5d0-2c581f81a153"
 _SILABS_OTA_CHUNK_SIZE = 244
 _SILABS_APPLOADER_BOOT_DELAY = 6.0  # seconds to wait before the first connect
 _SILABS_CONNECT_ATTEMPTS = 5  # establish_connection retries while AppLoader boots
-# Windowed flow control: stream this many data chunks write-without-response
-# (fast), then force one write-with-response whose ATT ack makes the AppLoader
-# drain/process the batch before we send more. Bounds the in-flight writes.
+# Window of data chunks sent write-without-response before forcing one
+# write-with-response (whose ATT ack gates the sender).
 #
-# Kept SMALL: unlike the nRF bootloader (which has a packet-receipt notification
-# to truly gate the sender, allowing PRN≈8-10), the Silabs AppLoader has no such
-# flow control. Over a BT proxy the ESP forwards the whole burst with no
-# backpressure, and a deep window overruns the AppLoader's buffer mid-stream —
-# it stops responding and the next sync write times out (observed: stalled ~20%
-# with window=8). A window of 2 keeps the AppLoader caught up. On direct BlueZ
-# any value works (the link layer paces write-without-response).
-_SILABS_OTA_WINDOW = 2
+# Set to 1 = EVERY chunk is write-with-response. This is required for reliability
+# over a BT proxy: write-without-response (ATT Write Command) has no delivery
+# guarantee — if the device's buffer is briefly full it SILENTLY DROPS the chunk
+# (no ack, no error). Over a proxy (no backpressure) some chunks get dropped, the
+# stream still "completes" (the periodic sync writes are acked), but the image is
+# incomplete and the 0x03 finalize fails verification with "Application error"
+# (observed: window=8 stalled ~20% from buffer overrun; window=2 reached 100% but
+# finalize rejected the gappy image). The Silabs AppLoader has no packet-receipt
+# mechanism to detect/recover drops, so the only safe option is to acknowledge
+# every write. Slower, but it guarantees a complete image. (>1 is only safe on a
+# direct connection, where the link layer makes Write Commands reliable.)
+_SILABS_OTA_WINDOW = 1
 # Adaptive flow control: a BT proxy returns "Congested" when its BLE TX buffer
 # fills under the write-without-response burst (worse on a weak/busy link). It
 # means "slow down", not failure — back off and resend the same chunk.
