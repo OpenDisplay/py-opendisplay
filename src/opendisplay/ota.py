@@ -17,10 +17,17 @@ _SILABS_OTA_CHUNK_SIZE = 244
 _SILABS_APPLOADER_BOOT_DELAY = 6.0  # seconds to wait before the first connect
 _SILABS_CONNECT_ATTEMPTS = 5  # establish_connection retries while AppLoader boots
 # Windowed flow control: stream this many data chunks write-without-response
-# (fast), then force one write-with-response whose ATT ack drains the queue.
-# Bounds in-flight writes so we never overrun a BT proxy, but only pay the
-# round-trip latency once per window. Analogous to nRF DFU's PRN (≈8–10).
-_SILABS_OTA_WINDOW = 8
+# (fast), then force one write-with-response whose ATT ack makes the AppLoader
+# drain/process the batch before we send more. Bounds the in-flight writes.
+#
+# Kept SMALL: unlike the nRF bootloader (which has a packet-receipt notification
+# to truly gate the sender, allowing PRN≈8-10), the Silabs AppLoader has no such
+# flow control. Over a BT proxy the ESP forwards the whole burst with no
+# backpressure, and a deep window overruns the AppLoader's buffer mid-stream —
+# it stops responding and the next sync write times out (observed: stalled ~20%
+# with window=8). A window of 2 keeps the AppLoader caught up. On direct BlueZ
+# any value works (the link layer paces write-without-response).
+_SILABS_OTA_WINDOW = 2
 # Adaptive flow control: a BT proxy returns "Congested" when its BLE TX buffer
 # fills under the write-without-response burst (worse on a weak/busy link). It
 # means "slow down", not failure — back off and resend the same chunk.
