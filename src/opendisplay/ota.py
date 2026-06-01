@@ -21,6 +21,11 @@ _SILABS_CONNECT_ATTEMPTS = 5  # establish_connection retries while AppLoader boo
 # Bounds in-flight writes so we never overrun a BT proxy, but only pay the
 # round-trip latency once per window. Analogous to nRF DFU's PRN (≈8–10).
 _SILABS_OTA_WINDOW = 8
+# Adaptive flow control: a BT proxy returns "Congested" when its BLE TX buffer
+# fills under the write-without-response burst (worse on a weak/busy link). It
+# means "slow down", not failure — back off and resend the same chunk.
+_SILABS_OTA_CONGESTION_RETRIES = 6
+_SILABS_OTA_CONGESTION_BACKOFF = 0.15  # seconds, to let the proxy queue drain
 
 
 async def perform_nrf_dfu(
@@ -177,7 +182,18 @@ async def perform_silabs_ota(
             sent += len(chunk)
             index += 1
             sync = index % _SILABS_OTA_WINDOW == 0 or sent >= file_size
-            await client.write_gatt_char(_SILABS_OTA_DATA_UUID, chunk, response=sync)
+            # Resend on proxy congestion ("Congested" = ESP TX buffer full): the
+            # write hasn't been delivered, so back off briefly and retry the same
+            # chunk rather than abort the transfer.
+            for congestion_attempt in range(_SILABS_OTA_CONGESTION_RETRIES):
+                try:
+                    await client.write_gatt_char(_SILABS_OTA_DATA_UUID, chunk, response=sync)
+                    break
+                except Exception as exc:  # noqa: BLE001 - inspect message for congestion
+                    is_congested = "congest" in str(exc).lower()
+                    if not is_congested or congestion_attempt == _SILABS_OTA_CONGESTION_RETRIES - 1:
+                        raise
+                    await asyncio.sleep(_SILABS_OTA_CONGESTION_BACKOFF)
             if on_progress:
                 on_progress(sent / file_size * 100)
 

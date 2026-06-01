@@ -125,6 +125,29 @@ async def test_silabs_ota_windowed_flow_control() -> None:
 
 
 @pytest.mark.asyncio
+async def test_silabs_ota_retries_on_congestion() -> None:
+    """A 'Congested' proxy error on a data write is retried, not fatal."""
+    client = _make_bleak_client([_SILABS_OTA_CONTROL_UUID, _SILABS_OTA_DATA_UUID])
+    fails = {"n": 0}
+
+    async def write(uuid, data, response=False):  # noqa: ARG001
+        if uuid == _SILABS_OTA_DATA_UUID and fails["n"] < 2:
+            fails["n"] += 1
+            raise RuntimeError("Bluetooth GATT Error ... description=Congested")
+
+    client.write_gatt_char = AsyncMock(side_effect=write)
+
+    with (
+        patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
+        _patch_connect(client),
+    ):
+        await perform_silabs_ota(b"\x00" * (_SILABS_OTA_CHUNK_SIZE * 2), _make_ble_device())
+
+    # The first data chunk was resent twice (Congested) then succeeded.
+    assert fails["n"] == 2
+
+
+@pytest.mark.asyncio
 async def test_silabs_ota_waits_for_apploader_boot() -> None:
     """perform_silabs_ota waits for the AppLoader to boot before connecting."""
     sleep_mock = AsyncMock()
