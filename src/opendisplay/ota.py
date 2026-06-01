@@ -17,6 +17,8 @@ async def perform_nrf_dfu(
     dfu_ble_device: BLEDevice,
     on_progress: Callable[[float], None] | None = None,
     on_log: Callable[[str], None] | None = None,
+    *,
+    fast: bool = False,
 ) -> None:
     """Flash an nRF device that is already in Nordic Legacy DFU mode.
 
@@ -30,6 +32,11 @@ async def perform_nrf_dfu(
         dfu_ble_device: BLE device already in DFU mode.
         on_progress: Optional callback with float percentage 0–100.
         on_log: Optional callback for human-readable status messages.
+        fast: Stream firmware packets unpaced for a much faster transfer. Only
+            safe on a direct connection — over an ESPHome Bluetooth proxy the
+            unpaced write-without-response burst is silently dropped and the DFU
+            stalls. Leave ``False`` (paced) when flashing through a proxy, which
+            is always the case on HA OS. Defaults to ``False``.
 
     Raises:
         OTAError: DFU transfer failed or DFU service not present.
@@ -75,10 +82,19 @@ async def perform_nrf_dfu(
         except Exception:  # noqa: BLE001
             log("Warning: could not read DFU version")
 
+        # Pace packets within each PRN batch unless fast: the DFU Packet
+        # characteristic is write-without-response, which a Bluetooth proxy can
+        # silently drop when bursted (0.02s ≈ one packet per connection interval,
+        # the rate init_dfu already uses successfully through a proxy).
+        inter_packet_delay = 0.0 if fast else 0.02
         await dfu.start()
         await dfu.start_dfu(len(zip_info.firmware), TYPE_APPLICATION)
         await dfu.init_dfu(zip_info.init_packet)
-        await dfu.send_firmware(zip_info.firmware, packets_per_notification=DEFAULT_PRN)
+        await dfu.send_firmware(
+            zip_info.firmware,
+            packets_per_notification=DEFAULT_PRN,
+            inter_packet_delay=inter_packet_delay,
+        )
         await dfu.activate_and_reset()
         log("DFU complete — device is rebooting with new firmware.")
 
