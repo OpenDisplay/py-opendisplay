@@ -35,7 +35,7 @@ async def perform_nrf_dfu(
         OTAError: DFU transfer failed or DFU service not present.
     """
     try:
-        from bleak import BleakClient
+        from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
         from nrf_ota._const import DEFAULT_PRN, LEGACY_DFU_SERVICE_UUID, TYPE_APPLICATION
         from nrf_ota._zip import _parse_zip_bytes
         from nrf_ota.dfu import LegacyDFU
@@ -45,32 +45,54 @@ async def perform_nrf_dfu(
     log = on_log or (lambda _: None)
     zip_info = _parse_zip_bytes(zip_bytes)
 
+    # Connect through bleak-retry-connector so the DFU transfer works over an
+    # ESPHome Bluetooth proxy too — a plain BleakClient only connects via a local
+    # adapter, which is why this previously failed on HA OS but worked on a dev
+    # Mac. use_services_cache=False forces a fresh GATT discovery: the DFU
+    # bootloader exposes a different service table than the application.
     try:
-        async with BleakClient(dfu_ble_device) as client:
-            svc_uuids = [str(s.uuid).lower() for s in client.services]
-            log(f"DFU device services: {svc_uuids}")
+        client = await establish_connection(
+            BleakClientWithServiceCache,
+            dfu_ble_device,
+            dfu_ble_device.name or "nRF DFU",
+            use_services_cache=False,
+            max_attempts=4,
+        )
+    except Exception as exc:  # noqa: BLE001 - surfaced as OTAError
+        raise OTAError(f"Could not connect to nRF DFU bootloader: {exc}") from exc
 
-            if not any(s == LEGACY_DFU_SERVICE_UUID.lower() for s in svc_uuids):
-                raise OTAError(f"Device is not in Nordic Legacy DFU mode. Services found: {svc_uuids}")
+    try:
+        svc_uuids = [str(s.uuid).lower() for s in client.services]
+        log(f"DFU device services: {svc_uuids}")
 
-            dfu = LegacyDFU(client, on_progress=on_progress, on_log=log)
-            try:
-                major, minor = await dfu.read_version()
-                log(f"DFU bootloader version: {major}.{minor}")
-            except Exception:  # noqa: BLE001
-                log("Warning: could not read DFU version")
+        if not any(s == LEGACY_DFU_SERVICE_UUID.lower() for s in svc_uuids):
+            raise OTAError(f"Device is not in Nordic Legacy DFU mode. Services found: {svc_uuids}")
 
-            await dfu.start()
-            await dfu.start_dfu(len(zip_info.firmware), TYPE_APPLICATION)
-            await dfu.init_dfu(zip_info.init_packet)
-            await dfu.send_firmware(zip_info.firmware, packets_per_notification=DEFAULT_PRN)
-            await dfu.activate_and_reset()
-            log("DFU complete — device is rebooting with new firmware.")
+        dfu = LegacyDFU(client, on_progress=on_progress, on_log=log)
+        try:
+            major, minor = await dfu.read_version()
+            log(f"DFU bootloader version: {major}.{minor}")
+        except Exception:  # noqa: BLE001
+            log("Warning: could not read DFU version")
+
+        await dfu.start()
+        await dfu.start_dfu(len(zip_info.firmware), TYPE_APPLICATION)
+        await dfu.init_dfu(zip_info.init_packet)
+        await dfu.send_firmware(zip_info.firmware, packets_per_notification=DEFAULT_PRN)
+        await dfu.activate_and_reset()
+        log("DFU complete — device is rebooting with new firmware.")
 
     except OTAError:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - surfaced as OTAError
         raise OTAError(f"nRF DFU failed: {exc}") from exc
+    finally:
+        # The device reboots out of DFU on activate/disconnect anyway; disconnect
+        # explicitly so we don't leak the connection if the transfer raised.
+        try:
+            await client.disconnect()
+        except Exception:  # noqa: BLE001 - best-effort cleanup
+            pass
 
 
 async def perform_silabs_ota(

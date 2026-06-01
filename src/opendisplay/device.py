@@ -738,8 +738,24 @@ class OpenDisplayDevice:
         Raises:
             BLEConnectionError: If the command cannot be sent
         """
+        from .exceptions import BLEConnectionError
+
         _LOGGER.debug("Triggering DFU bootloader on device %s", self.mac_address)
-        await self._write(build_enter_dfu_command())
+        try:
+            await self._write(build_enter_dfu_command())
+        except BLEConnectionError as exc:
+            # The firmware resets before it can ACK this command — it has no time
+            # to send a write response — so the confirmation never arrives. With a
+            # write-with-response transport, especially over a Bluetooth proxy,
+            # that surfaces as a GATT/disconnect error (e.g. error 133) even though
+            # the command was delivered and the device is already entering DFU.
+            # Treat a write failure here as expected rather than fatal; whether the
+            # device actually entered DFU is determined by the subsequent scan for
+            # the DFU-mode device.
+            _LOGGER.debug(
+                "DFU trigger write did not ACK (expected — device resets before responding): %s",
+                exc,
+            )
         _LOGGER.info(
             "DFU bootloader trigger sent to %s — device will disconnect and enter DFU mode",
             self.mac_address,
