@@ -82,17 +82,23 @@ async def perform_nrf_dfu(
         except Exception:  # noqa: BLE001
             log("Warning: could not read DFU version")
 
-        # Pace packets within each PRN batch unless fast: the DFU Packet
-        # characteristic is write-without-response, which a Bluetooth proxy can
-        # silently drop when bursted (0.02s ≈ one packet per connection interval,
-        # the rate init_dfu already uses successfully through a proxy).
+        # Tune the firmware stream for a Bluetooth proxy unless fast. The DFU
+        # Packet characteristic is write-without-response, which a proxy silently
+        # drops when its buffer overruns — and HA may route through a distant/busy
+        # proxy with low throughput. Small PRN batches make the receipt round-trip
+        # pace the sender *adaptively* to the link (a slow proxy returns receipts
+        # slower, throttling us) and fully drain the proxy buffer between batches;
+        # the small inter-packet delay guards the within-batch burst. A direct
+        # connection has real flow control, so fast mode uses the larger default
+        # PRN and no delay.
         inter_packet_delay = 0.0 if fast else 0.02
+        prn = DEFAULT_PRN if fast else 4
         await dfu.start()
         await dfu.start_dfu(len(zip_info.firmware), TYPE_APPLICATION)
         await dfu.init_dfu(zip_info.init_packet)
         await dfu.send_firmware(
             zip_info.firmware,
-            packets_per_notification=DEFAULT_PRN,
+            packets_per_notification=prn,
             inter_packet_delay=inter_packet_delay,
         )
         await dfu.activate_and_reset()
