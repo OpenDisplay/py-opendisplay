@@ -12,6 +12,7 @@ from opendisplay.ota import (
     _SILABS_OTA_CHUNK_SIZE,
     _SILABS_OTA_CONTROL_UUID,
     _SILABS_OTA_DATA_UUID,
+    _SILABS_OTA_WINDOW,
     find_nrf_dfu_device,
     perform_silabs_ota,
 )
@@ -84,8 +85,10 @@ async def test_silabs_ota_happy_path() -> None:
     total_sent = sum(len(c.args[1]) for c in data_calls)
     assert total_sent == len(gbl)
     assert all(len(c.args[1]) <= _SILABS_OTA_CHUNK_SIZE for c in data_calls)
-    # Write-with-response paces the stream and provides backpressure over BT proxies.
-    assert all(c.kwargs["response"] is True for c in data_calls)
+    # Windowed flow control: earlier chunks stream write-without-response; the
+    # final chunk is synced (response=True) so data is acked before finalize.
+    assert data_calls[0].kwargs["response"] is False
+    assert data_calls[-1].kwargs["response"] is True
 
     # Last call: OTA finalize (0x03)
     assert calls[-1].args[0] == _SILABS_OTA_CONTROL_UUID
@@ -98,6 +101,27 @@ async def test_silabs_ota_happy_path() -> None:
 
     # The single connection is always closed.
     client.disconnect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_silabs_ota_windowed_flow_control() -> None:
+    """Data chunks sync (response=True) every WINDOW chunks and on the last chunk."""
+    n_chunks = _SILABS_OTA_WINDOW * 2 + 3  # spans 2 full windows + a partial tail
+    gbl = b"\x00" * (_SILABS_OTA_CHUNK_SIZE * n_chunks)
+    client = _make_bleak_client([_SILABS_OTA_CONTROL_UUID, _SILABS_OTA_DATA_UUID])
+
+    with (
+        patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
+        _patch_connect(client),
+    ):
+        await perform_silabs_ota(gbl, _make_ble_device())
+
+    data_calls = [c for c in client.write_gatt_char.call_args_list if c.args[0] == _SILABS_OTA_DATA_UUID]
+    assert len(data_calls) == n_chunks
+    # 1-based chunk indices that were synced.
+    synced = [i for i, c in enumerate(data_calls, start=1) if c.kwargs["response"] is True]
+    expected = sorted(set(range(_SILABS_OTA_WINDOW, n_chunks + 1, _SILABS_OTA_WINDOW)) | {n_chunks})
+    assert synced == expected
 
 
 @pytest.mark.asyncio

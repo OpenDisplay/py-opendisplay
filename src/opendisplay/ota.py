@@ -16,6 +16,11 @@ _SILABS_OTA_DATA_UUID = "984227f3-34fc-4045-a5d0-2c581f81a153"
 _SILABS_OTA_CHUNK_SIZE = 244
 _SILABS_APPLOADER_BOOT_DELAY = 6.0  # seconds to wait before the first connect
 _SILABS_CONNECT_ATTEMPTS = 5  # establish_connection retries while AppLoader boots
+# Windowed flow control: stream this many data chunks write-without-response
+# (fast), then force one write-with-response whose ATT ack drains the queue.
+# Bounds in-flight writes so we never overrun a BT proxy, but only pay the
+# round-trip latency once per window. Analogous to nRF DFU's PRN (≈8–10).
+_SILABS_OTA_WINDOW = 8
 
 
 async def perform_nrf_dfu(
@@ -154,17 +159,25 @@ async def perform_silabs_ota(
         log("Connected to AppLoader. Starting OTA transfer…")
         await client.write_gatt_char(_SILABS_OTA_CONTROL_UUID, bytearray([0x00]), response=True)
 
+        # Windowed flow control. Write-without-response is fire-and-forget over an
+        # ESPHome BT proxy (no backpressure): feeding it the whole image faster
+        # than it forwards over BLE overruns it and the link drops before finalize.
+        # Fully synchronous writes (response on every chunk) avoid that but are
+        # painfully slow (a round-trip per chunk through the proxy). Instead we
+        # stream a window of chunks write-without-response, then force one
+        # write-with-response whose ATT ack drains the proxy's queue — bounding
+        # in-flight writes while paying the latency only once per window. The
+        # final chunk is always synced so the data is acked before the 0x03
+        # finalize. (Same idea as nRF DFU's PRN, but the Silabs AppLoader has no
+        # receipt-notification characteristic, so the ATT ack is the sync point.)
         sent = 0
+        index = 0
         while sent < file_size:
             chunk = gbl_bytes[sent : sent + _SILABS_OTA_CHUNK_SIZE]
-            # Write WITH response: each chunk round-trips to the device, which
-            # paces the stream to the BLE link speed and provides backpressure.
-            # Write-without-response is fire-and-forget over an ESPHome BT proxy
-            # (no backpressure) — the proxy is fed faster than it can forward
-            # over BLE, the device never receives the full image, and the link
-            # drops before finalize ("Not connected"). response=True avoids that.
-            await client.write_gatt_char(_SILABS_OTA_DATA_UUID, chunk, response=True)
             sent += len(chunk)
+            index += 1
+            sync = index % _SILABS_OTA_WINDOW == 0 or sent >= file_size
+            await client.write_gatt_char(_SILABS_OTA_DATA_UUID, chunk, response=sync)
             if on_progress:
                 on_progress(sent / file_size * 100)
 
