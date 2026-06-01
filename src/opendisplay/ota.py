@@ -78,6 +78,8 @@ async def perform_silabs_ota(
     ble_device: BLEDevice,
     on_progress: Callable[[float], None] | None = None,
     on_log: Callable[[str], None] | None = None,
+    *,
+    fast: bool = False,
 ) -> None:
     """Flash an EFR32 device in the Silicon Labs AppLoader (delegates to silabs-ble-ota).
 
@@ -96,6 +98,9 @@ async def perform_silabs_ota(
         ble_device: BLE device in (or booting into) the AppLoader.
         on_progress: Optional callback with float percentage 0–100.
         on_log: Optional callback for human-readable status messages.
+        fast: Use the faster write-without-response transfer. Only safe on a
+            direct connection (no Bluetooth proxy). Leave ``False`` when flashing
+            through an ESPHome Bluetooth proxy. Defaults to ``False``.
 
     Raises:
         OTAError: silabs-ble-ota is not installed, or the OTA failed.
@@ -109,7 +114,7 @@ async def perform_silabs_ota(
         ) from exc
 
     try:
-        await _perform_silabs_ota(gbl_bytes, ble_device, on_progress, on_log)
+        await _perform_silabs_ota(gbl_bytes, ble_device, on_progress, on_log, fast=fast)
     except SilabsOTAError as exc:
         raise OTAError(str(exc)) from exc
 
