@@ -7,7 +7,7 @@ AppLoader connection re-discovers the OTA service.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -63,6 +63,52 @@ async def test_clear_cache_not_connected_raises() -> None:
     conn2 = _connected(client)
     with pytest.raises(BLEConnectionError, match="Not connected"):
         await conn2.clear_cache()
+
+
+def _client_with_service(has_service: bool) -> MagicMock:
+    """A connected client whose GATT does/doesn't expose the app service."""
+    client = AsyncMock()
+    client.is_connected = True
+    svc = MagicMock()
+    svc.characteristics = [MagicMock()]
+    services = MagicMock()
+    services.get_service.return_value = svc if has_service else None
+    client.services = services
+    return client
+
+
+@pytest.mark.asyncio
+async def test_connect_clears_cache_and_retries_on_stale_service() -> None:
+    """A stale proxy GATT cache (app service missing) → clear_cache + reconnect once."""
+    from opendisplay.transport import connection as conn_mod
+
+    stale = _client_with_service(False)  # proxy serving stale GATT (no app service)
+    fresh = _client_with_service(True)  # fresh discovery after the cache clear
+    clients = [stale, fresh]
+
+    async def fake_establish(*_a, **_k):
+        return clients.pop(0)
+
+    conn = BLEConnection("AA:BB:CC:DD:EE:FF", ble_device=MagicMock())
+    with patch.object(conn_mod, "establish_connection", fake_establish):
+        await conn.connect()
+
+    stale.clear_cache.assert_awaited_once()  # poisoned cache was cleared
+    assert conn._client is fresh  # ended up connected via fresh discovery
+
+
+@pytest.mark.asyncio
+async def test_connect_does_not_retry_on_non_service_error() -> None:
+    """A non-service failure (e.g. device not found) is not retried with a cache clear."""
+    from opendisplay.transport import connection as conn_mod
+
+    async def fake_establish(*_a, **_k):
+        raise RuntimeError("device disconnected")
+
+    conn = BLEConnection("AA:BB:CC:DD:EE:FF", ble_device=MagicMock())
+    with patch.object(conn_mod, "establish_connection", fake_establish):
+        with pytest.raises(BLEConnectionError, match="Failed to connect"):
+            await conn.connect()
 
 
 @pytest.mark.asyncio
