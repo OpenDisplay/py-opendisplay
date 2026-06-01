@@ -45,8 +45,9 @@ cli = [
 nrf-ota = [
     "nrf-ota>=0.3.0",
 ]
-# silabs-ota extra (silabs-ble-ota) is added once that package is published to
-# PyPI; until then the perform_silabs_ota wrapper imports it lazily.
+silabs-ota = [
+    "silabs-ble-ota>=0.1.0",
+]
 test = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",

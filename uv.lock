@@ -911,6 +911,9 @@ cli = [
 nrf-ota = [
     { name = "nrf-ota" },
 ]
+silabs-ota = [
+    { name = "silabs-ble-ota" },
+]
 test = [
     { name = "hypothesis" },
     { name = "pytest" },
@@ -942,8 +945,9 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=7.0.0" },
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
+    { name = "silabs-ble-ota", marker = "extra == 'silabs-ota'", specifier = ">=0.1.0" },
 ]
-provides-extras = ["cli", "nrf-ota", "test"]
+provides-extras = ["cli", "nrf-ota", "silabs-ota", "test"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1148,6 +1152,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ea/f9/0ae446942c846b8266059ad8a30702a35afae55f5cdc54c5adf8d7afdc27/ruff-0.15.12-py3-none-win32.whl", hash = "sha256:d0185894e038d7043ba8fd6aee7499ece6462dc0ea9f1e260c7451807c714c20", size = 10657277, upload-time = "2026-04-24T18:17:18.591Z" },
     { url = "https://files.pythonhosted.org/packages/33/f1/9614e03e1cdcbf9437570b5400ced8a720b5db22b28d8e0f1bda429f660d/ruff-0.15.12-py3-none-win_amd64.whl", hash = "sha256:c87a162d61ab3adca47c03f7f717c68672edec7d1b5499e652331780fe74950d", size = 11837758, upload-time = "2026-04-24T18:17:00.113Z" },
     { url = "https://files.pythonhosted.org/packages/c0/98/6beb4b351e472e5f4c4613f7c35a5290b8be2497e183825310c4c3a3984b/ruff-0.15.12-py3-none-win_arm64.whl", hash = "sha256:a538f7a82d061cee7be55542aca1d86d1393d55d81d4fcc314370f4340930d4f", size = 11120821, upload-time = "2026-04-24T18:16:57.979Z" },
+]
+
+[[package]]
+name = "silabs-ble-ota"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "bleak" },
+    { name = "bleak-retry-connector" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/40/d3/93c3fd8d646ba4550d1d4a95d8c4014836c05bd6e67b4d8203f2a3186c5b/silabs_ble_ota-0.1.0.tar.gz", hash = "sha256:4559504886d3cc7fd53b2ec200a86e6dadeda944ced727ce5786519817ba7e92", size = 69154, upload-time = "2026-06-01T19:16:22.11Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e4/b6/a57bae5ec8772a7ea977507aef788b0e1c162728ec58dfd7f34ae2a8912f/silabs_ble_ota-0.1.0-py3-none-any.whl", hash = "sha256:ba1add7e96dda03ffb50c1737e49fad09db764c78c2a6f84738ea40d856c7c58", size = 12101, upload-time = "2026-06-01T19:16:20.792Z" },
 ]
 
 [[package]]
