@@ -43,7 +43,7 @@ cli = [
     "rich>=13.0.0",
 ]
 nrf-ota = [
-    "nrf-ota>=0.3.0",
+    "nrf-ota>=0.4.0",
 ]
 silabs-ota = [
     "silabs-ble-ota>=0.1.0",

@@ -655,14 +655,14 @@ wheels = [
 
 [[package]]
 name = "nrf-ota"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bleak" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/64/c5/ecdb03b45f0d64d43894898120a775a9bd77ba6d8fc56cd1cbb5a142e7d3/nrf_ota-0.3.0.tar.gz", hash = "sha256:d0010efbb193057cbf0921cb748056b482c16445638a2f6fd9560d96ec9b2dea", size = 76145, upload-time = "2026-02-23T23:12:29.422Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/66/25b62e03883c589f13fe3c3793929e08178202f3d2d8e581a22c66e5afff/nrf_ota-0.4.0.tar.gz", hash = "sha256:4e645a1db9df600020ec4127e0dbfde79b684b431f7ccd71dce270f5a4f3f6a9", size = 84979, upload-time = "2026-06-02T18:04:59.85Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/da/5141bc9288a46a133e7644e188dc2c667b2e23f90a59003b6ca043c1d6a4/nrf_ota-0.3.0-py3-none-any.whl", hash = "sha256:f4eaf7a3f05974c4430b640782eaae98d0d36bdef60e118db00d70309722de01", size = 22046, upload-time = "2026-02-23T23:12:28.057Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/e4/ae471c72f2b3dc8e219002478bf90434e6f4e8ebb23d0e4513b1f7fbff99/nrf_ota-0.4.0-py3-none-any.whl", hash = "sha256:073613c7a1d58b2bf7866b13d6ccf2c435128f7e585dbc18d7d44f9939cd4972", size = 23216, upload-time = "2026-06-02T18:04:58.495Z" },
 ]
 
 [[package]]
@@ -937,7 +937,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=41.0.0" },
     { name = "epaper-dithering", specifier = "==5.0.6" },
     { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.148.8" },
-    { name = "nrf-ota", marker = "extra == 'nrf-ota'", specifier = ">=0.3.0" },
+    { name = "nrf-ota", marker = "extra == 'nrf-ota'", specifier = ">=0.4.0" },
     { name = "numpy", specifier = ">=1.24.0,!=2.4.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.2" },
