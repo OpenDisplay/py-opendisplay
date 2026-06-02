@@ -75,8 +75,9 @@ class TestNewEnumValues:
         assert get_manufacturer_name(BoardManufacturer.OPENDISPLAY) == "OpenDisplay"
 
     def test_opendisplay_board_type(self):
-        assert OpenDisplayBoardType.DEFAULT == 0
-        assert get_board_type_name(BoardManufacturer.OPENDISPLAY, 0) == "Default"
+        assert OpenDisplayBoardType.OD01 == 0
+        assert OpenDisplayBoardType.DEFAULT == 0  # backwards-compat alias
+        assert get_board_type_name(BoardManufacturer.OPENDISPLAY, 0) == "OD01"
         assert get_board_type_name(BoardManufacturer.OPENDISPLAY, 99) is None
 
     def test_seeed_reterminal_e1003(self):

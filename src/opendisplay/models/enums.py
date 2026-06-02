@@ -67,14 +67,30 @@ class WaveshareBoardType(IntEnum):
 
 
 class SolumBoardType(IntEnum):
-    """Solum board types."""
+    """Solum board types.
 
+    Mirrors the ``board_type`` ``conditional_enum`` for ``manufacturer_id: 3``
+    in the Web config tool's ``config.yaml`` (source of truth).
+    """
+
+    M3_NRF_LITE = 0
+    M3_NRF = 1
+    M3_SILABS = 2
+    M3_SILABS_CORE = 3
+    M3_SILABS_PRO = 4
+    M3_SILABS_LITE = 5
+    M3_SILABS_PEGHOOK = 6
+
+    # Backwards-compat alias for the original single Solum entry (board_type 0).
     M3 = 0
 
 
 class OpenDisplayBoardType(IntEnum):
     """OpenDisplay board types."""
 
+    OD01 = 0
+
+    # Backwards-compat alias for the original name of board_type 0.
     DEFAULT = 0
 
 
@@ -151,11 +167,17 @@ _BOARD_TYPE_NAMES_WAVESHARE: Final[dict[WaveshareBoardType, str]] = {
 }
 
 _BOARD_TYPE_NAMES_SOLUM: Final[dict[SolumBoardType, str]] = {
-    SolumBoardType.M3: "M3",
+    SolumBoardType.M3_NRF_LITE: "M3 NRF Lite",
+    SolumBoardType.M3_NRF: "M3 NRF",
+    SolumBoardType.M3_SILABS: "M3 Silabs",
+    SolumBoardType.M3_SILABS_CORE: "M3 Silabs Core",
+    SolumBoardType.M3_SILABS_PRO: "M3 Silabs Pro",
+    SolumBoardType.M3_SILABS_LITE: "M3 Silabs Lite",
+    SolumBoardType.M3_SILABS_PEGHOOK: "M3 Silabs Peghook",
 }
 
 _BOARD_TYPE_NAMES_OPENDISPLAY: Final[dict[OpenDisplayBoardType, str]] = {
-    OpenDisplayBoardType.DEFAULT: "Default",
+    OpenDisplayBoardType.OD01: "OD01",
 }
 
 

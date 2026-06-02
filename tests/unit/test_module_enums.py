@@ -9,6 +9,7 @@ from opendisplay.models.enums import (
     RefreshMode,
     Rotation,
     SeeedBoardType,
+    SolumBoardType,
     WaveshareBoardType,
     get_board_type_name,
     get_manufacturer_name,
@@ -99,6 +100,17 @@ class TestBoardTypeEnums:
         """Test Waveshare board type values."""
         assert WaveshareBoardType.ESP32_S3_PHOTOPAINTER == 0
 
+    def test_solum_board_type_values(self):
+        """Test Solum board type values (mirror config.yaml board_type enum)."""
+        assert SolumBoardType.M3_NRF_LITE == 0
+        assert SolumBoardType.M3_NRF == 1
+        assert SolumBoardType.M3_SILABS == 2
+        assert SolumBoardType.M3_SILABS_CORE == 3
+        assert SolumBoardType.M3_SILABS_PRO == 4
+        assert SolumBoardType.M3_SILABS_LITE == 5
+        assert SolumBoardType.M3_SILABS_PEGHOOK == 6
+        assert SolumBoardType.M3 == 0  # backwards-compat alias
+
     def test_board_type_name_helpers(self):
         """Test board type and manufacturer name helpers."""
         assert get_manufacturer_name(BoardManufacturer.DIY) == "DIY"
@@ -107,6 +119,12 @@ class TestBoardTypeEnums:
         assert get_board_type_name(BoardManufacturer.DIY, 0) == "Custom"
         assert get_board_type_name(BoardManufacturer.SEEED, 1) == "EN04"
         assert get_board_type_name(BoardManufacturer.WAVESHARE, 0) == "PhotoPainter"
+        # Solum: the full M3 variant set (previously only board_type 0 was known,
+        # so real devices like board_type 4 surfaced as the raw int in HA).
+        assert get_board_type_name(BoardManufacturer.SOLUM, 0) == "M3 NRF Lite"
+        assert get_board_type_name(BoardManufacturer.SOLUM, 4) == "M3 Silabs Pro"
+        assert get_board_type_name(BoardManufacturer.SOLUM, 6) == "M3 Silabs Peghook"
+        assert get_board_type_name(BoardManufacturer.OPENDISPLAY, 0) == "OD01"
         assert get_board_type_name(BoardManufacturer.SEEED, 99) is None
         assert get_board_type_name(99, 0) is None
 
