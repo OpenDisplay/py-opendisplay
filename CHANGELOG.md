@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.6.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.5.0...v7.6.0) (2026-06-02)
+
+
+### Features
+
+* sync Solum/OpenDisplay board types with config tool ([7002029](https://github.com/OpenDisplay/py-opendisplay/commit/700202998dd44a7ff495c0f62b39f3d4918d6a5c))
+* sync Solum/OpenDisplay board types with config tool ([1872016](https://github.com/OpenDisplay/py-opendisplay/commit/18720167c1582c4ca292ac1f2caf1db6d3bea3ac))
+
 ## [7.5.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.4.1...v7.5.0) (2026-06-02)
 
 
