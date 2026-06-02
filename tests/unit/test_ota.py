@@ -128,3 +128,127 @@ async def test_silabs_ota_missing_dependency_raises() -> None:
     with patch.dict("sys.modules", {"silabs_ble_ota": None}):
         with pytest.raises(OTAError, match="silabs-ble-ota is required"):
             await perform_silabs_ota(b"", _make_ble_device())
+
+
+# ---------------------------------------------------------------------------
+# perform_silabs_ota — delegates to silabs-ble-ota, maps its error
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_silabs_ota_delegates_and_maps_errors() -> None:
+    """The wrapper forwards (incl. fast=) to silabs_ble_ota and maps SilabsOTAError → OTAError."""
+    import types
+
+    from opendisplay.ota import perform_silabs_ota
+
+    fake = types.ModuleType("silabs_ble_ota")
+
+    class _SilabsOTAError(Exception):
+        pass
+
+    seen: dict[str, object] = {}
+
+    async def _flash(gbl, dev, on_progress, on_log, *, fast):  # noqa: ANN001
+        seen["call"] = (gbl, dev, fast)
+
+    fake.SilabsOTAError = _SilabsOTAError  # type: ignore[attr-defined]
+    fake.perform_silabs_ota = _flash  # type: ignore[attr-defined]
+
+    dev = _make_ble_device()
+    with patch.dict("sys.modules", {"silabs_ble_ota": fake}):
+        await perform_silabs_ota(b"GBL", dev, fast=True)
+        assert seen["call"] == (b"GBL", dev, True)
+
+        async def _flash_fail(*_a, **_k):
+            raise _SilabsOTAError("boom")
+
+        fake.perform_silabs_ota = _flash_fail  # type: ignore[attr-defined]
+        with pytest.raises(OTAError, match="boom"):
+            await perform_silabs_ota(b"", _make_ble_device())
+
+
+# ---------------------------------------------------------------------------
+# perform_nrf_dfu — connect (via establish_connection) + LegacyDFU orchestration
+# ---------------------------------------------------------------------------
+
+
+def _make_dfu_client(service_uuid: str = "00001530-1212-efde-1523-785feabcd123") -> AsyncMock:
+    """A connected DFU client exposing the Legacy DFU service UUID."""
+    client = AsyncMock()
+    svc = MagicMock()
+    svc.uuid = service_uuid
+    client.services = [svc]
+    return client
+
+
+@pytest.mark.asyncio
+async def test_perform_nrf_dfu_happy_path() -> None:
+    """Connects, runs the full LegacyDFU sequence, and disconnects."""
+    from opendisplay.ota import perform_nrf_dfu
+
+    client = _make_dfu_client()
+    dfu = AsyncMock()
+    dfu.read_version = AsyncMock(return_value=(0, 8))
+    zip_info = MagicMock(firmware=b"\x00" * 100, init_packet=b"\x01\x02")
+
+    with (
+        patch("bleak_retry_connector.establish_connection", new=AsyncMock(return_value=client)),
+        patch("nrf_ota.dfu.LegacyDFU", return_value=dfu),
+        patch("nrf_ota._zip._parse_zip_bytes", return_value=zip_info),
+    ):
+        await perform_nrf_dfu(b"zip", _make_ble_device())
+
+    dfu.start.assert_awaited_once()
+    dfu.start_dfu.assert_awaited_once()
+    dfu.init_dfu.assert_awaited_once()
+    dfu.send_firmware.assert_awaited_once()
+    dfu.activate_and_reset.assert_awaited_once()
+    client.disconnect.assert_awaited()
+    # default (not fast) paces the firmware stream
+    assert dfu.send_firmware.await_args.kwargs["inter_packet_delay"] > 0
+
+
+@pytest.mark.asyncio
+async def test_perform_nrf_dfu_fast_sends_unpaced() -> None:
+    """fast=True streams with no inter-packet delay."""
+    from opendisplay.ota import perform_nrf_dfu
+
+    client = _make_dfu_client()
+    dfu = AsyncMock()
+    dfu.read_version = AsyncMock(return_value=(0, 8))
+    with (
+        patch("bleak_retry_connector.establish_connection", new=AsyncMock(return_value=client)),
+        patch("nrf_ota.dfu.LegacyDFU", return_value=dfu),
+        patch("nrf_ota._zip._parse_zip_bytes", return_value=MagicMock(firmware=b"x" * 40, init_packet=b"i")),
+    ):
+        await perform_nrf_dfu(b"zip", _make_ble_device(), fast=True)
+    assert dfu.send_firmware.await_args.kwargs["inter_packet_delay"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_perform_nrf_dfu_not_in_dfu_mode_raises() -> None:
+    """A device without the Legacy DFU service raises OTAError and still disconnects."""
+    from opendisplay.ota import perform_nrf_dfu
+
+    client = _make_dfu_client(service_uuid="0000abcd-0000-1000-8000-00805f9b34fb")
+    with (
+        patch("bleak_retry_connector.establish_connection", new=AsyncMock(return_value=client)),
+        patch("nrf_ota._zip._parse_zip_bytes", return_value=MagicMock(firmware=b"x", init_packet=b"i")),
+    ):
+        with pytest.raises(OTAError, match="not in Nordic Legacy DFU mode"):
+            await perform_nrf_dfu(b"zip", _make_ble_device())
+    client.disconnect.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_perform_nrf_dfu_connect_failure_raises() -> None:
+    """A failed connection is wrapped in OTAError."""
+    from opendisplay.ota import perform_nrf_dfu
+
+    with (
+        patch("bleak_retry_connector.establish_connection", new=AsyncMock(side_effect=RuntimeError("nope"))),
+        patch("nrf_ota._zip._parse_zip_bytes", return_value=MagicMock(firmware=b"x", init_packet=b"i")),
+    ):
+        with pytest.raises(OTAError, match="Could not connect to nRF DFU bootloader"):
+            await perform_nrf_dfu(b"zip", _make_ble_device())

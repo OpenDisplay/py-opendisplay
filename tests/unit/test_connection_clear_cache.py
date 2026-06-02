@@ -121,3 +121,47 @@ async def test_device_clear_gatt_cache_delegates_to_connection() -> None:
 
     assert await device.clear_gatt_cache() is True
     fake_conn.clear_cache.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_trigger_dfu_bootloader_tolerates_write_error() -> None:
+    """The enter-DFU command resets the device before it can ACK, so a write error
+    (e.g. a GATT 133 over a Bluetooth proxy) is expected and tolerated, not raised —
+    whether DFU was entered is determined by the subsequent scan for the DFU device."""
+    device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
+    device._write = AsyncMock(side_effect=BLEConnectionError("Write failed: ... error=133"))
+
+    await device.trigger_dfu_bootloader()  # must not raise
+    device._write.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_clear_cache_and_drop_clears_then_disconnects() -> None:
+    """The connect-retry helper clears the proxy cache, drops the client, and resets it."""
+    client = AsyncMock(is_connected=True)
+    client.clear_cache = AsyncMock()
+    conn = _connected(client)
+
+    await conn._clear_cache_and_drop()
+
+    client.clear_cache.assert_awaited_once()
+    client.disconnect.assert_awaited_once()
+    assert conn._client is None
+
+
+@pytest.mark.asyncio
+async def test_connect_establishes_and_sets_up_notifications() -> None:
+    """connect() resolves the provided BLEDevice, establishes the client, and notifies."""
+    conn = BLEConnection("AA:BB:CC:DD:EE:FF", ble_device=MagicMock())
+    client = MagicMock(is_connected=False)
+    conn._setup_notifications = AsyncMock()
+
+    with patch(
+        "opendisplay.transport.connection.establish_connection",
+        new=AsyncMock(return_value=client),
+    ) as est:
+        await conn.connect()
+
+    assert conn._client is client
+    conn._setup_notifications.assert_awaited_once()
+    assert est.await_args.kwargs["use_services_cache"] is True
