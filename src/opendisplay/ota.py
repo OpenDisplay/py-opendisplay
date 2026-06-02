@@ -83,12 +83,13 @@ async def perform_nrf_dfu(
             log("Warning: could not read DFU version")
 
         # Over a Bluetooth proxy the DFU Packet characteristic (write-without-
-        # response) is silently dropped if bursted, so pace within each PRN batch.
-        # 0.02s is the proven-reliable value (full flash boots). 0.01s was tried
-        # and REGRESSED: it dropped a packet → the bootloader rejected the image
-        # and stayed in DFU. Legacy DFU can't retransmit, so keep the safe pace.
-        # A direct connection has real flow control, so fast mode sends unpaced.
-        inter_packet_delay = 0.0 if fast else 0.02
+        # response) is dropped if it overruns the proxy's buffer, and Legacy DFU
+        # can't retransmit, so a single drop fails the whole 11.7k-packet transfer.
+        # 0.01/0.02s both dropped intermittently; 0.05s gives the proxy far more
+        # drain time per packet (~8-10min) to test whether the drops are
+        # pacing-sensitive buffer overruns. A direct connection has real flow
+        # control, so fast mode sends unpaced.
+        inter_packet_delay = 0.0 if fast else 0.05
         await dfu.start()
         await dfu.start_dfu(len(zip_info.firmware), TYPE_APPLICATION)
         await dfu.init_dfu(zip_info.init_packet)
