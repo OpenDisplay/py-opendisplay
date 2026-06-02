@@ -84,10 +84,10 @@ async def perform_nrf_dfu(
 
         # Over a Bluetooth proxy the DFU Packet characteristic (write-without-
         # response) is silently dropped if bursted, so pace within each PRN batch.
-        # 0.02s reached 100% through a real proxy at a reasonable speed; a smaller
-        # PRN proved far too slow (receipt round-trips dominate). A direct
-        # connection has real flow control, so fast mode sends unpaced.
-        inter_packet_delay = 0.0 if fast else 0.02
+        # 0.02s reached 100% reliably; 0.01s (~2 packets per connection interval)
+        # is the tuned value — faster, with less headroom on a distant/busy proxy.
+        # A direct connection has real flow control, so fast mode sends unpaced.
+        inter_packet_delay = 0.0 if fast else 0.01
         await dfu.start()
         await dfu.start_dfu(len(zip_info.firmware), TYPE_APPLICATION)
         await dfu.init_dfu(zip_info.init_packet)
