@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.8.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.7.0...v7.8.0) (2026-06-03)
+
+
+### Features
+
+* add landing_url() device deep-link encoder ([72a8637](https://github.com/OpenDisplay/py-opendisplay/commit/72a8637d3a028d8fd571336770e222881acb5b94))
+
 ## [7.7.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.6.0...v7.7.0) (2026-06-03)
 
 
