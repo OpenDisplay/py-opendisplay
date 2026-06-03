@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.7.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.6.0...v7.7.0) (2026-06-03)
+
+
+### Features
+
+* parse nfc_config (0x2a) and flash_config (0x2b) packets ([4807bf0](https://github.com/OpenDisplay/py-opendisplay/commit/4807bf0eb0ce2bf88f2e112ac01b454ca8052154))
+
 ## [7.6.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.5.0...v7.6.0) (2026-06-02)
 
 
