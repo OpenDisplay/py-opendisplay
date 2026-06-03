@@ -36,6 +36,7 @@ from .exceptions import (
     InvalidResponseError,
     ProtocolError,
 )
+from .landing import build_landing_url
 from .models.buzzer_activate import BuzzerActivateConfig
 from .models.capabilities import DeviceCapabilities
 from .models.config import GlobalConfig
@@ -617,6 +618,47 @@ class OpenDisplayDevice:
         if not self._config:
             raise RuntimeError("Device config unknown - interrogate first or provide config")
         return self._config.manufacturer.board_type_name
+
+    def landing_url(self) -> str:
+        """Build the per-device configuration deep link (opendisplay.org/l/?...).
+
+        Encodes the same 23-byte identity payload the firmware renders as an
+        on-screen QR code: the display tag type, the device id (the "OD######"
+        name), the AES key (or zeros if unknown), and the manufacturer id. See
+        :mod:`opendisplay.landing` for the byte layout.
+
+        Reads cached state (config, GAP name, key), so it works after the
+        connection has closed -- but the device must have been interrogated, and
+        connected at least once for the correct device id (see _device_id_bytes).
+
+        Raises:
+            RuntimeError: If config is missing.
+        """
+        if not self._config:
+            raise RuntimeError("Device config unknown - interrogate first or provide config")
+        tag_type = self._config.displays[0].tag_type if self._config.displays else 0
+        return build_landing_url(
+            tag_type,
+            self._device_id_bytes(),
+            self._encryption_key,
+            self._config.manufacturer.manufacturer_id,
+        )
+
+    def _device_id_bytes(self) -> bytes:
+        """Return the 3 identity bytes behind the "OD######" name.
+
+        The firmware encodes the device's unique id here, which equals the GAP
+        name -- and is *not* always the BLE MAC: nRF parts advertise a random
+        static address (e.g. name OD5A2F4C on MAC E9:94:0D:B3:79:A6). Prefer the
+        name; fall back to the MAC's lower 3 bytes only when no name is known.
+        """
+        name = self.device_name
+        if name and len(name) == 8 and name[:2].upper() == "OD":
+            try:
+                return bytes.fromhex(name[2:])
+            except ValueError:
+                pass
+        return bytes.fromhex(self.mac_address.replace(":", ""))[-3:]
 
     async def interrogate(self) -> GlobalConfig:
         """Read device configuration from device.

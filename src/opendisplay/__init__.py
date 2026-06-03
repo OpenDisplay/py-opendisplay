@@ -22,6 +22,7 @@ from .exceptions import (
     OTANotSupportedError,
     ProtocolError,
 )
+from .landing import LANDING_URL_PREFIX, build_landing_payload, build_landing_url
 from .models.advertisement import (
     AdvertisementData,
     AdvertisementTracker,
@@ -160,6 +161,9 @@ __all__ = [
     "parse_advertisement",
     "decode_button_event",
     "voltage_to_percent",
+    "build_landing_url",
+    "build_landing_payload",
+    "LANDING_URL_PREFIX",
     # Constants
     "SERVICE_UUID",
     "MANUFACTURER_ID",
