@@ -12,9 +12,11 @@ from .config import (
     BinaryInputs,
     DataBus,
     DisplayConfig,
+    FlashConfig,
     GlobalConfig,
     LedConfig,
     ManufacturerData,
+    NfcConfig,
     PassiveBuzzer,
     PowerOption,
     SecurityConfig,
@@ -86,6 +88,10 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
                 "manufacturer_id": str(mfr.manufacturer_id),
                 "board_type": str(mfr.board_type),
                 "board_revision": f"0x{mfr.board_revision:x}",
+                "simple_config_driver_index": str(mfr.simple_config_driver_index),
+                "simple_config_display_index": str(mfr.simple_config_display_index),
+                "simple_config_power_index": str(mfr.simple_config_power_index),
+                "simple_config_configured_at": str(mfr.simple_config_configured_at),
                 "reserved": "0x0",
             },
         }
@@ -312,6 +318,58 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
             }
         )
 
+    # NFC configs (packet type 0x2a = 42)
+    for nfc in config.nfc_configs:
+        packets.append(
+            {
+                "id": "42",
+                "name": "nfc_config",
+                "fields": {
+                    "instance_number": f"0x{nfc.instance_number:x}",
+                    "nfc_ic_type": str(nfc.nfc_ic_type),
+                    "bus_instance": f"0x{nfc.bus_instance:x}",
+                    "flags": f"0x{nfc.flags:x}",
+                    "field_detect_pin": f"0x{nfc.field_detect_pin:02x}",
+                    "field_detect_mode": str(nfc.field_detect_mode),
+                    "field_detect_active": str(nfc.field_detect_active),
+                    "field_detect_debounce_ms": f"0x{nfc.field_detect_debounce_ms:x}",
+                    "power_pin": f"0x{nfc.power_pin:02x}",
+                    "power_active": str(nfc.power_active),
+                    "power_on_delay_ms": f"0x{nfc.power_on_delay_ms:x}",
+                    "power_off_delay_ms": f"0x{nfc.power_off_delay_ms:x}",
+                    "adv_button_byte_index": str(nfc.adv_button_byte_index),
+                    "adv_button_button_id": f"0x{nfc.adv_button_button_id:x}",
+                    "reserved_pin_1": f"0x{nfc.reserved_pin_1:x}",
+                    "reserved_pin_2": f"0x{nfc.reserved_pin_2:x}",
+                    "reserved": "0x0",
+                },
+            }
+        )
+
+    # Flash configs (packet type 0x2b = 43)
+    for flash in config.flash_configs:
+        packets.append(
+            {
+                "id": "43",
+                "name": "flash_config",
+                "fields": {
+                    "instance_number": f"0x{flash.instance_number:x}",
+                    "flash_ic_type": str(flash.flash_ic_type),
+                    "bus_instance": f"0x{flash.bus_instance:x}",
+                    "flags": f"0x{flash.flags:x}",
+                    "mosi_pin": f"0x{flash.mosi_pin:02x}",
+                    "sck_pin": f"0x{flash.sck_pin:02x}",
+                    "cs_pin": f"0x{flash.cs_pin:02x}",
+                    "power_pin": f"0x{flash.power_pin:02x}",
+                    "power_active": str(flash.power_active),
+                    "power_on_delay_ms": f"0x{flash.power_on_delay_ms:x}",
+                    "power_off_delay_ms": f"0x{flash.power_off_delay_ms:x}",
+                    "mode": f"0x{flash.mode:x}",
+                    "reserved": "0x0",
+                },
+            }
+        )
+
     return {
         "version": config.version,
         "minor_version": 1,  # JSON format version (not stored in device)
@@ -348,6 +406,8 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
     security_config: SecurityConfig | None = None
     touch_controllers: list[TouchController] = []
     buzzers: list[PassiveBuzzer] = []
+    nfc_configs: list[NfcConfig] = []
+    flash_configs: list[FlashConfig] = []
 
     version = data.get("version", 1)
     minor_version = data.get("minor_version", 0)
@@ -372,7 +432,11 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                 manufacturer_id=_parse_int(fields.get("manufacturer_id", "0")),
                 board_type=_parse_int(fields.get("board_type", "0")),
                 board_revision=_parse_int(fields.get("board_revision", "0")),
-                reserved=bytes(18),  # Fixed size
+                simple_config_driver_index=_parse_int(fields.get("simple_config_driver_index", "0")),
+                simple_config_display_index=_parse_int(fields.get("simple_config_display_index", "0")),
+                simple_config_power_index=_parse_int(fields.get("simple_config_power_index", "0")),
+                simple_config_configured_at=_parse_int(fields.get("simple_config_configured_at", "0")),
+                reserved=bytes(6),  # Fixed size
             )
 
         elif packet_id == 4:  # 0x04 = power_option
@@ -534,6 +598,48 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                 )
             )
 
+        elif packet_id == 42:  # 0x2a = nfc_config
+            nfc_configs.append(
+                NfcConfig(
+                    instance_number=_parse_int(fields.get("instance_number", "0")),
+                    nfc_ic_type=_parse_int(fields.get("nfc_ic_type", "0")),
+                    bus_instance=_parse_int(fields.get("bus_instance", "0")),
+                    flags=_parse_int(fields.get("flags", "0")),
+                    field_detect_pin=_parse_int(fields.get("field_detect_pin", "0xff")),
+                    field_detect_mode=_parse_int(fields.get("field_detect_mode", "0")),
+                    field_detect_active=_parse_int(fields.get("field_detect_active", "0")),
+                    field_detect_debounce_ms=_parse_int(fields.get("field_detect_debounce_ms", "0")),
+                    power_pin=_parse_int(fields.get("power_pin", "0xff")),
+                    power_active=_parse_int(fields.get("power_active", "0")),
+                    power_on_delay_ms=_parse_int(fields.get("power_on_delay_ms", "0")),
+                    power_off_delay_ms=_parse_int(fields.get("power_off_delay_ms", "0")),
+                    adv_button_byte_index=_parse_int(fields.get("adv_button_byte_index", "0")),
+                    adv_button_button_id=_parse_int(fields.get("adv_button_button_id", "0")),
+                    reserved_pin_1=_parse_int(fields.get("reserved_pin_1", "0")),
+                    reserved_pin_2=_parse_int(fields.get("reserved_pin_2", "0")),
+                    reserved=bytes(16),
+                )
+            )
+
+        elif packet_id == 43:  # 0x2b = flash_config
+            flash_configs.append(
+                FlashConfig(
+                    instance_number=_parse_int(fields.get("instance_number", "0")),
+                    flash_ic_type=_parse_int(fields.get("flash_ic_type", "0")),
+                    bus_instance=_parse_int(fields.get("bus_instance", "0")),
+                    flags=_parse_int(fields.get("flags", "0")),
+                    mosi_pin=_parse_int(fields.get("mosi_pin", "0xff")),
+                    sck_pin=_parse_int(fields.get("sck_pin", "0xff")),
+                    cs_pin=_parse_int(fields.get("cs_pin", "0xff")),
+                    power_pin=_parse_int(fields.get("power_pin", "0xff")),
+                    power_active=_parse_int(fields.get("power_active", "0")),
+                    power_on_delay_ms=_parse_int(fields.get("power_on_delay_ms", "0")),
+                    power_off_delay_ms=_parse_int(fields.get("power_off_delay_ms", "0")),
+                    mode=_parse_int(fields.get("mode", "0")),
+                    reserved=bytes(20),
+                )
+            )
+
     missing_required = []
     if system is None:
         missing_required.append("system")
@@ -563,6 +669,8 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
         security_config=security_config,
         touch_controllers=touch_controllers,
         buzzers=buzzers,
+        nfc_configs=nfc_configs,
+        flash_configs=flash_configs,
         version=version,
         minor_version=minor_version,
         loaded=True,

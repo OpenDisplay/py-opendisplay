@@ -6,9 +6,21 @@ import struct
 
 import pytest
 
-from opendisplay.models.config import PassiveBuzzer, SensorData, SystemConfig, TouchController
+from opendisplay.models.config import (
+    FlashConfig,
+    ManufacturerData,
+    NfcConfig,
+    PassiveBuzzer,
+    SensorData,
+    SystemConfig,
+    TouchController,
+)
 from opendisplay.models.enums import (
+    ActiveLevel,
     BoardManufacturer,
+    FlashIcType,
+    NfcFieldDetectMode,
+    NfcIcType,
     OpenDisplayBoardType,
     SeeedBoardType,
     SensorType,
@@ -18,6 +30,9 @@ from opendisplay.models.enums import (
 )
 from opendisplay.protocol.config_parser import parse_tlv_config
 from opendisplay.protocol.config_serializer import (
+    serialize_flash_config,
+    serialize_manufacturer_data,
+    serialize_nfc_config,
     serialize_passive_buzzer,
     serialize_sensor_data,
     serialize_system_config,
@@ -332,6 +347,244 @@ class TestPassiveBuzzer:
 
 
 # ---------------------------------------------------------------------------
+# ManufacturerData simple_config_* fields
+# ---------------------------------------------------------------------------
+
+
+class TestManufacturerSimpleConfig:
+    def _make_payload(
+        self,
+        *,
+        mfr_id: int = 4,
+        board_type: int = 0,
+        board_rev: int = 1,
+        driver: int = 5,
+        display: int = 6,
+        power: int = 7,
+        configured_at: int = 0x1234567890,
+    ) -> bytes:
+        return (
+            struct.pack("<HBBHHH", mfr_id, board_type, board_rev, driver, display, power)
+            + configured_at.to_bytes(6, "little")
+            + b"\x00" * 6
+        )
+
+    def test_from_bytes_extracts_simple_config(self):
+        mfr = ManufacturerData.from_bytes(self._make_payload())
+        assert mfr.simple_config_driver_index == 5
+        assert mfr.simple_config_display_index == 6
+        assert mfr.simple_config_power_index == 7
+        assert mfr.simple_config_configured_at == 0x1234567890
+        assert len(mfr.reserved) == 6
+
+    def test_serialize_round_trip(self):
+        original = self._make_payload(driver=1, display=2, power=3, configured_at=1700000000)
+        mfr = ManufacturerData.from_bytes(original)
+        assert serialize_manufacturer_data(mfr) == original
+
+    def test_legacy_payload_defaults_to_zero(self):
+        # An all-reserved (old-style) payload parses with simple_config fields = 0
+        legacy = struct.pack("<HBB", 1, 0, 1) + (b"\x00" * 18)
+        mfr = ManufacturerData.from_bytes(legacy)
+        assert mfr.simple_config_driver_index == 0
+        assert mfr.simple_config_configured_at == 0
+
+
+# ---------------------------------------------------------------------------
+# NfcConfig (0x2a)
+# ---------------------------------------------------------------------------
+
+
+def _nfc_payload(
+    *,
+    instance: int = 0,
+    nfc_ic: int = NfcIcType.TNB132M,
+    bus: int = 0,
+    flags: int = 0x01,
+    field_detect_pin: int = 0x32,
+    field_detect_mode: int = NfcFieldDetectMode.IRQ_LATCHED,
+    field_detect_active: int = ActiveLevel.ACTIVE_HIGH,
+    debounce: int = 0,
+    power_pin: int = 0x30,
+    power_active: int = ActiveLevel.ACTIVE_HIGH,
+    power_on: int = 0x28,
+    power_off: int = 0,
+    adv_byte: int = 1,
+    adv_id: int = 7,
+    rsv_pin_1: int = 0,
+    rsv_pin_2: int = 0,
+) -> bytes:
+    return (
+        bytes(
+            [
+                instance,
+                nfc_ic,
+                bus,
+                flags,
+                field_detect_pin,
+                field_detect_mode,
+                field_detect_active,
+                debounce,
+                power_pin,
+                power_active,
+                power_on,
+                power_off,
+                adv_byte,
+                adv_id,
+                rsv_pin_1,
+                rsv_pin_2,
+            ]
+        )
+        + b"\x00" * 16
+    )
+
+
+class TestNfcConfig:
+    def test_from_bytes_parses_all_fields(self):
+        nfc = NfcConfig.from_bytes(_nfc_payload())
+        assert nfc.instance_number == 0
+        assert nfc.nfc_ic_type == NfcIcType.TNB132M
+        assert nfc.bus_instance == 0
+        assert nfc.flags == 0x01
+        assert nfc.field_detect_pin == 0x32
+        assert nfc.field_detect_mode == NfcFieldDetectMode.IRQ_LATCHED
+        assert nfc.field_detect_active == ActiveLevel.ACTIVE_HIGH
+        assert nfc.power_pin == 0x30
+        assert nfc.power_on_delay_ms == 0x28
+        assert nfc.adv_button_byte_index == 1
+        assert nfc.adv_button_button_id == 7
+        assert len(nfc.reserved) == 16
+
+    def test_enum_properties(self):
+        nfc = NfcConfig.from_bytes(_nfc_payload())
+        assert nfc.nfc_ic_type_enum == NfcIcType.TNB132M
+        assert nfc.field_detect_mode_enum == NfcFieldDetectMode.IRQ_LATCHED
+        assert nfc.field_detect_active_enum == ActiveLevel.ACTIVE_HIGH
+        assert nfc.power_active_enum == ActiveLevel.ACTIVE_HIGH
+
+    def test_unknown_enum_returns_int(self):
+        nfc = NfcConfig.from_bytes(_nfc_payload(nfc_ic=99))
+        assert nfc.nfc_ic_type_enum == 99
+
+    def test_enabled_property(self):
+        assert NfcConfig.from_bytes(_nfc_payload(flags=0x01)).enabled is True
+        assert NfcConfig.from_bytes(_nfc_payload(flags=0x00)).enabled is False
+
+    def test_serialize_is_32_bytes(self):
+        assert len(serialize_nfc_config(NfcConfig.from_bytes(_nfc_payload()))) == 32
+
+    def test_serialize_round_trip(self):
+        original = _nfc_payload(power_pin=0x10, adv_id=3)
+        assert serialize_nfc_config(NfcConfig.from_bytes(original)) == original
+
+    def test_too_short_raises(self):
+        with pytest.raises(ValueError, match="Invalid NfcConfig size"):
+            NfcConfig.from_bytes(b"\x00" * 10)
+
+    def test_parse_from_tlv(self):
+        data = _required_tlv() + _packet(4, 0x2A, _nfc_payload())
+        cfg = parse_tlv_config(data)
+        assert len(cfg.nfc_configs) == 1
+        assert cfg.nfc_configs[0].nfc_ic_type == NfcIcType.TNB132M
+        assert cfg.nfc_configs[0].enabled is True
+
+
+# ---------------------------------------------------------------------------
+# FlashConfig (0x2b)
+# ---------------------------------------------------------------------------
+
+
+def _flash_payload(
+    *,
+    instance: int = 0,
+    flash_ic: int = FlashIcType.AUTO,
+    bus: int = 0,
+    flags: int = 0x01,
+    mosi: int = 0x21,
+    sck: int = 0x22,
+    cs: int = 0x23,
+    power_pin: int = 0xFF,
+    power_active: int = ActiveLevel.ACTIVE_HIGH,
+    power_on: int = 0,
+    power_off: int = 0,
+    mode: int = 0,
+) -> bytes:
+    return (
+        bytes([instance, flash_ic, bus, flags, mosi, sck, cs, power_pin, power_active, power_on, power_off, mode])
+        + b"\x00" * 20
+    )
+
+
+class TestFlashConfig:
+    def test_from_bytes_parses_all_fields(self):
+        flash = FlashConfig.from_bytes(_flash_payload())
+        assert flash.instance_number == 0
+        assert flash.flash_ic_type == FlashIcType.AUTO
+        assert flash.flags == 0x01
+        assert flash.mosi_pin == 0x21
+        assert flash.sck_pin == 0x22
+        assert flash.cs_pin == 0x23
+        assert flash.power_pin == 0xFF
+        assert len(flash.reserved) == 20
+
+    def test_enum_and_enabled_properties(self):
+        flash = FlashConfig.from_bytes(_flash_payload())
+        assert flash.flash_ic_type_enum == FlashIcType.AUTO
+        assert flash.power_active_enum == ActiveLevel.ACTIVE_HIGH
+        assert flash.enabled is True
+        assert FlashConfig.from_bytes(_flash_payload(flags=0x00)).enabled is False
+
+    def test_serialize_is_32_bytes(self):
+        assert len(serialize_flash_config(FlashConfig.from_bytes(_flash_payload()))) == 32
+
+    def test_serialize_round_trip(self):
+        original = _flash_payload(mosi=0x10, sck=0x11, cs=0x12)
+        assert serialize_flash_config(FlashConfig.from_bytes(original)) == original
+
+    def test_too_short_raises(self):
+        with pytest.raises(ValueError, match="Invalid FlashConfig size"):
+            FlashConfig.from_bytes(b"\x00" * 4)
+
+    def test_parse_from_tlv(self):
+        data = _required_tlv() + _packet(4, 0x2B, _flash_payload(mosi=0x21))
+        cfg = parse_tlv_config(data)
+        assert len(cfg.flash_configs) == 1
+        assert cfg.flash_configs[0].mosi_pin == 0x21
+
+
+# ---------------------------------------------------------------------------
+# Regression: 0x2a/0x2b no longer break the parse loop
+# ---------------------------------------------------------------------------
+
+
+class TestNfcFlashRegression:
+    def test_nfc_at_tail_does_not_warn_or_break(self, caplog):
+        # Reproduces the original "Unknown packet type 0x2a ... skipping" report:
+        # nfc/flash trailing the stream must parse, not truncate the config.
+        data = _required_tlv() + _packet(4, 0x2A, _nfc_payload()) + _packet(5, 0x2B, _flash_payload())
+        with caplog.at_level("WARNING"):
+            cfg = parse_tlv_config(data)
+
+        assert "Unknown packet type" not in caplog.text
+        assert len(cfg.nfc_configs) == 1
+        assert len(cfg.flash_configs) == 1
+
+    def test_packets_after_nfc_still_parsed(self):
+        # A buzzer placed *after* nfc/flash would have been dropped before the fix.
+        data = (
+            _required_tlv()
+            + _packet(4, 0x2A, _nfc_payload())
+            + _packet(5, 0x2B, _flash_payload())
+            + _packet(6, 0x29, _buzzer_payload(drive_pin=0x0C))
+        )
+        cfg = parse_tlv_config(data)
+        assert len(cfg.nfc_configs) == 1
+        assert len(cfg.flash_configs) == 1
+        assert len(cfg.buzzers) == 1
+        assert cfg.buzzers[0].drive_pin == 0x0C
+
+
+# ---------------------------------------------------------------------------
 # JSON round-trip
 # ---------------------------------------------------------------------------
 
@@ -468,3 +721,50 @@ class TestJsonRoundTrip:
 
         assert reimported.system.pwr_pin_2 == 0xAA
         assert reimported.system.pwr_pin_3 == 0xBB
+
+    def test_nfc_config_round_trip(self):
+        from opendisplay.models.config_json import config_from_json, config_to_json
+
+        nfc = NfcConfig.from_bytes(_nfc_payload(power_pin=0x30, adv_id=7))
+        cfg = self._minimal_config(nfc_configs=[nfc])
+
+        reimported = config_from_json(config_to_json(cfg))
+
+        assert len(reimported.nfc_configs) == 1
+        nfc2 = reimported.nfc_configs[0]
+        assert nfc2.nfc_ic_type == NfcIcType.TNB132M
+        assert nfc2.field_detect_mode == NfcFieldDetectMode.IRQ_LATCHED
+        assert nfc2.power_pin == 0x30
+        assert nfc2.adv_button_button_id == 7
+        assert nfc2.enabled is True
+
+    def test_flash_config_round_trip(self):
+        from opendisplay.models.config_json import config_from_json, config_to_json
+
+        flash = FlashConfig.from_bytes(_flash_payload(mosi=0x21, sck=0x22, cs=0x23))
+        cfg = self._minimal_config(flash_configs=[flash])
+
+        reimported = config_from_json(config_to_json(cfg))
+
+        assert len(reimported.flash_configs) == 1
+        flash2 = reimported.flash_configs[0]
+        assert flash2.mosi_pin == 0x21
+        assert flash2.sck_pin == 0x22
+        assert flash2.cs_pin == 0x23
+        assert flash2.enabled is True
+
+    def test_manufacturer_simple_config_round_trip(self):
+        from opendisplay.models.config_json import config_from_json, config_to_json
+
+        cfg = self._minimal_config()
+        cfg.manufacturer.simple_config_driver_index = 5
+        cfg.manufacturer.simple_config_display_index = 6
+        cfg.manufacturer.simple_config_power_index = 7
+        cfg.manufacturer.simple_config_configured_at = 1700000000
+
+        reimported = config_from_json(config_to_json(cfg))
+
+        assert reimported.manufacturer.simple_config_driver_index == 5
+        assert reimported.manufacturer.simple_config_display_index == 6
+        assert reimported.manufacturer.simple_config_power_index == 7
+        assert reimported.manufacturer.simple_config_configured_at == 1700000000

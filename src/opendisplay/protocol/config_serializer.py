@@ -10,9 +10,11 @@ if TYPE_CHECKING:
         BinaryInputs,
         DataBus,
         DisplayConfig,
+        FlashConfig,
         GlobalConfig,
         LedConfig,
         ManufacturerData,
+        NfcConfig,
         PassiveBuzzer,
         PowerOption,
         SecurityConfig,
@@ -35,6 +37,8 @@ PACKET_TYPE_WIFI_CONFIG = 0x26
 PACKET_TYPE_SECURITY_CONFIG = 0x27
 PACKET_TYPE_TOUCH_CONTROLLER = 0x28
 PACKET_TYPE_PASSIVE_BUZZER = 0x29
+PACKET_TYPE_NFC_CONFIG = 0x2A
+PACKET_TYPE_FLASH_CONFIG = 0x2B
 
 
 def calculate_config_crc(data: bytes) -> int:
@@ -105,7 +109,11 @@ def serialize_manufacturer_data(config: ManufacturerData) -> bytes:
     - manufacturer_id: uint16
     - board_type: uint8
     - board_revision: uint8
-    - reserved: 18 bytes
+    - simple_config_driver_index: uint16
+    - simple_config_display_index: uint16
+    - simple_config_power_index: uint16
+    - simple_config_configured_at: uint48 (6 bytes LE)
+    - reserved: 6 bytes
 
     Args:
         config: ManufacturerData instance
@@ -114,15 +122,21 @@ def serialize_manufacturer_data(config: ManufacturerData) -> bytes:
         22 bytes of serialized data
     """
     data = struct.pack(
-        "<HBB",
+        "<HBBHHH",
         config.manufacturer_id,
         config.board_type,
         config.board_revision,
+        config.simple_config_driver_index,
+        config.simple_config_display_index,
+        config.simple_config_power_index,
     )
 
+    # 48-bit little-endian timestamp
+    data += config.simple_config_configured_at.to_bytes(6, byteorder="little")
+
     # Pad with reserved bytes to 22 total
-    reserved = config.reserved if config.reserved else b"\x00" * 18
-    return data + reserved[:18]
+    reserved = config.reserved if config.reserved else b"\x00" * 6
+    return data + reserved[:6]
 
 
 def serialize_power_option(config: PowerOption) -> bytes:
@@ -449,6 +463,52 @@ def serialize_passive_buzzer(config: PassiveBuzzer) -> bytes:
     return data + reserved[:27]
 
 
+def serialize_nfc_config(config: NfcConfig) -> bytes:
+    """Serialize NfcConfig to 32 bytes (packet 0x2a)."""
+    data = struct.pack(
+        "<BBBBBBBBBBBBBBBB",
+        config.instance_number,
+        config.nfc_ic_type,
+        config.bus_instance,
+        config.flags,
+        config.field_detect_pin,
+        config.field_detect_mode,
+        config.field_detect_active,
+        config.field_detect_debounce_ms,
+        config.power_pin,
+        config.power_active,
+        config.power_on_delay_ms,
+        config.power_off_delay_ms,
+        config.adv_button_byte_index,
+        config.adv_button_button_id,
+        config.reserved_pin_1,
+        config.reserved_pin_2,
+    )
+    reserved = config.reserved if config.reserved else b"\x00" * 16
+    return data + reserved[:16]
+
+
+def serialize_flash_config(config: FlashConfig) -> bytes:
+    """Serialize FlashConfig to 32 bytes (packet 0x2b)."""
+    data = struct.pack(
+        "<BBBBBBBBBBBB",
+        config.instance_number,
+        config.flash_ic_type,
+        config.bus_instance,
+        config.flags,
+        config.mosi_pin,
+        config.sck_pin,
+        config.cs_pin,
+        config.power_pin,
+        config.power_active,
+        config.power_on_delay_ms,
+        config.power_off_delay_ms,
+        config.mode,
+    )
+    reserved = config.reserved if config.reserved else b"\x00" * 20
+    return data + reserved[:20]
+
+
 def serialize_wifi_config(config: WifiConfig) -> bytes:
     """Serialize WifiConfig to 160 bytes."""
     return config.to_bytes()
@@ -544,6 +604,18 @@ def serialize_config(config: GlobalConfig) -> bytes:
             break
         packet_data += bytes([i, PACKET_TYPE_PASSIVE_BUZZER])
         packet_data += serialize_passive_buzzer(bz)
+
+    for i, nfc in enumerate(config.nfc_configs):
+        if i >= 4:
+            break
+        packet_data += bytes([i, PACKET_TYPE_NFC_CONFIG])
+        packet_data += serialize_nfc_config(nfc)
+
+    for i, flash in enumerate(config.flash_configs):
+        if i >= 4:
+            break
+        packet_data += bytes([i, PACKET_TYPE_FLASH_CONFIG])
+        packet_data += serialize_flash_config(flash)
 
     # Validate size (max 4096 bytes including wrapper and CRC)
     total_size = len(packet_data) + 2  # +2 for CRC
