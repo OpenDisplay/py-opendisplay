@@ -13,12 +13,16 @@ from typing import ClassVar
 from epaper_dithering import ColorScheme
 
 from .enums import (
+    ActiveLevel,
     BoardManufacturer,
     BusType,
     CapacityEstimator,
     DIYBoardType,
+    FlashIcType,
     ICType,
     LedType,
+    NfcFieldDetectMode,
+    NfcIcType,
     OpenDisplayBoardType,
     PowerMode,
     Rotation,
@@ -100,7 +104,11 @@ class ManufacturerData:
     manufacturer_id: int  # uint16
     board_type: int  # uint8
     board_revision: int  # uint8
-    reserved: bytes  # 18 bytes
+    reserved: bytes  # 6 bytes
+    simple_config_driver_index: int = 0  # uint16 (1-based; 0 = not set)
+    simple_config_display_index: int = 0  # uint16 (1-based; 0 = not set)
+    simple_config_power_index: int = 0  # uint16 (1-based; 0 = not set)
+    simple_config_configured_at: int = 0  # uint48 LE: Unix timestamp (seconds) when applied
 
     @property
     def manufacturer_id_enum(self) -> BoardManufacturer | int:
@@ -157,7 +165,11 @@ class ManufacturerData:
             manufacturer_id=int.from_bytes(data[0:2], "little"),
             board_type=data[2],
             board_revision=data[3],
-            reserved=data[4:22],
+            simple_config_driver_index=int.from_bytes(data[4:6], "little"),
+            simple_config_display_index=int.from_bytes(data[6:8], "little"),
+            simple_config_power_index=int.from_bytes(data[8:10], "little"),
+            simple_config_configured_at=int.from_bytes(data[10:16], "little"),
+            reserved=data[16:22],
         )
 
 
@@ -809,6 +821,169 @@ class PassiveBuzzer:
 
 
 @dataclass
+class NfcConfig:
+    """NFC controller configuration (TLV packet type 0x2a, repeatable max 4).
+
+    Explicitly enables NFC init, selects the NFC IC and data_bus, and optionally
+    maps a field-detect GPIO into dynamicreturndata for advertising button-like state.
+
+    Size: 32 bytes (packed struct from firmware)
+    """
+
+    instance_number: int  # uint8 (0-3)
+    nfc_ic_type: int  # uint8
+    bus_instance: int  # uint8 (data_bus instance, I2C)
+    flags: int  # uint8 bitfield (bit 0 = enabled)
+    field_detect_pin: int  # uint8 (0xFF = disabled)
+    field_detect_mode: int  # uint8
+    field_detect_active: int  # uint8
+    field_detect_debounce_ms: int  # uint8 (0 = no debounce)
+    power_pin: int  # uint8 (0xFF = use data_bus pin_3 if present)
+    power_active: int  # uint8
+    power_on_delay_ms: int  # uint8
+    power_off_delay_ms: int  # uint8
+    adv_button_byte_index: int  # uint8 (0-10)
+    adv_button_button_id: int  # uint8 (3-bit id in lower bits)
+    reserved_pin_1: int  # uint8
+    reserved_pin_2: int  # uint8
+    reserved: bytes  # 16 bytes
+
+    SIZE: ClassVar[int] = 32
+
+    @property
+    def enabled(self) -> bool:
+        """Bit 0: NFC init is enabled (no fallback init when clear)."""
+        return bool(self.flags & 0x01)
+
+    @property
+    def nfc_ic_type_enum(self) -> NfcIcType | int:
+        """Get NFC IC type as enum, or raw int if unknown."""
+        try:
+            return NfcIcType(self.nfc_ic_type)
+        except ValueError:
+            return self.nfc_ic_type
+
+    @property
+    def field_detect_mode_enum(self) -> NfcFieldDetectMode | int:
+        """Get field-detect mode as enum, or raw int if unknown."""
+        try:
+            return NfcFieldDetectMode(self.field_detect_mode)
+        except ValueError:
+            return self.field_detect_mode
+
+    @property
+    def field_detect_active_enum(self) -> ActiveLevel | int:
+        """Get field-detect active level as enum, or raw int if unknown."""
+        try:
+            return ActiveLevel(self.field_detect_active)
+        except ValueError:
+            return self.field_detect_active
+
+    @property
+    def power_active_enum(self) -> ActiveLevel | int:
+        """Get power pin active level as enum, or raw int if unknown."""
+        try:
+            return ActiveLevel(self.power_active)
+        except ValueError:
+            return self.power_active
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> NfcConfig:
+        """Parse from TLV packet data."""
+        if len(data) < cls.SIZE:
+            raise ValueError(f"Invalid NfcConfig size: {len(data)} < {cls.SIZE}")
+
+        return cls(
+            instance_number=data[0],
+            nfc_ic_type=data[1],
+            bus_instance=data[2],
+            flags=data[3],
+            field_detect_pin=data[4],
+            field_detect_mode=data[5],
+            field_detect_active=data[6],
+            field_detect_debounce_ms=data[7],
+            power_pin=data[8],
+            power_active=data[9],
+            power_on_delay_ms=data[10],
+            power_off_delay_ms=data[11],
+            adv_button_byte_index=data[12],
+            adv_button_button_id=data[13],
+            reserved_pin_1=data[14],
+            reserved_pin_2=data[15],
+            reserved=data[16:32],
+        )
+
+
+@dataclass
+class FlashConfig:
+    """External flash configuration (TLV packet type 0x2b, repeatable max 4).
+
+    Enables flash deep-sleep pin sequencing using SPI-like pins; ignored when disabled.
+
+    Size: 32 bytes (packed struct from firmware)
+    """
+
+    instance_number: int  # uint8 (0-3)
+    flash_ic_type: int  # uint8
+    bus_instance: int  # uint8 (reserved for future bus binding)
+    flags: int  # uint8 bitfield (bit 0 = enabled)
+    mosi_pin: int  # uint8
+    sck_pin: int  # uint8
+    cs_pin: int  # uint8
+    power_pin: int  # uint8 (reserved in current firmware)
+    power_active: int  # uint8 (reserved in current firmware)
+    power_on_delay_ms: int  # uint8 (reserved in current firmware)
+    power_off_delay_ms: int  # uint8 (reserved in current firmware)
+    mode: int  # uint8 (reserved for future)
+    reserved: bytes  # 20 bytes
+
+    SIZE: ClassVar[int] = 32
+
+    @property
+    def enabled(self) -> bool:
+        """Bit 0: flash pin config / deep-sleep sequence is enabled."""
+        return bool(self.flags & 0x01)
+
+    @property
+    def flash_ic_type_enum(self) -> FlashIcType | int:
+        """Get flash IC type as enum, or raw int if unknown."""
+        try:
+            return FlashIcType(self.flash_ic_type)
+        except ValueError:
+            return self.flash_ic_type
+
+    @property
+    def power_active_enum(self) -> ActiveLevel | int:
+        """Get power pin active level as enum, or raw int if unknown."""
+        try:
+            return ActiveLevel(self.power_active)
+        except ValueError:
+            return self.power_active
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> FlashConfig:
+        """Parse from TLV packet data."""
+        if len(data) < cls.SIZE:
+            raise ValueError(f"Invalid FlashConfig size: {len(data)} < {cls.SIZE}")
+
+        return cls(
+            instance_number=data[0],
+            flash_ic_type=data[1],
+            bus_instance=data[2],
+            flags=data[3],
+            mosi_pin=data[4],
+            sck_pin=data[5],
+            cs_pin=data[6],
+            power_pin=data[7],
+            power_active=data[8],
+            power_on_delay_ms=data[9],
+            power_off_delay_ms=data[10],
+            mode=data[11],
+            reserved=data[12:32],
+        )
+
+
+@dataclass
 class GlobalConfig:
     """Complete device configuration parsed from TLV data.
 
@@ -830,6 +1005,8 @@ class GlobalConfig:
     security_config: SecurityConfig | None = None
     touch_controllers: list[TouchController] = field(default_factory=list)
     buzzers: list[PassiveBuzzer] = field(default_factory=list)
+    nfc_configs: list[NfcConfig] = field(default_factory=list)
+    flash_configs: list[FlashConfig] = field(default_factory=list)
 
     # Metadata
     version: int = 0

@@ -101,6 +101,34 @@ class TouchIcType(IntEnum):
     GT911 = 1
 
 
+class NfcIcType(IntEnum):
+    """NFC controller IC types (config packet 0x2a)."""
+
+    AUTO = 0  # Currently resolves to the TNB132M flow in firmware
+    TNB132M = 1
+
+
+class FlashIcType(IntEnum):
+    """External flash IC types (config packet 0x2b)."""
+
+    AUTO = 0  # Generic SPI flash deep-sleep command flow
+
+
+class NfcFieldDetectMode(IntEnum):
+    """NFC field-detect sampling modes (config packet 0x2a)."""
+
+    DISABLED = 0
+    GPIO_LEVEL = 1
+    IRQ_LATCHED = 2
+
+
+class ActiveLevel(IntEnum):
+    """Active polarity for a GPIO line (shared by NFC/flash power and field-detect)."""
+
+    ACTIVE_LOW = 0
+    ACTIVE_HIGH = 1
+
+
 class CapacityEstimator(IntEnum):
     """Battery chemistry estimator types."""
 

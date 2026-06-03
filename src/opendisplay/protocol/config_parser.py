@@ -10,9 +10,11 @@ from ..models.config import (
     BinaryInputs,
     DataBus,
     DisplayConfig,
+    FlashConfig,
     GlobalConfig,
     LedConfig,
     ManufacturerData,
+    NfcConfig,
     PassiveBuzzer,
     PowerOption,
     SecurityConfig,
@@ -38,6 +40,8 @@ PACKET_TYPE_WIFI_CONFIG = 0x26
 PACKET_TYPE_SECURITY_CONFIG = 0x27
 PACKET_TYPE_TOUCH_CONTROLLER = 0x28
 PACKET_TYPE_PASSIVE_BUZZER = 0x29
+PACKET_TYPE_NFC_CONFIG = 0x2A
+PACKET_TYPE_FLASH_CONFIG = 0x2B
 
 WIFI_CONFIG_SIZE = 160
 WIFI_CONFIG_LEGACY_SIZE = 65
@@ -163,6 +167,8 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     security_config = None
     touch_controllers = []
     buzzers = []
+    nfc_configs = []
+    flash_configs = []
 
     for (packet_type, packet_number), packet_data in packets.items():
         if packet_type == PACKET_TYPE_SYSTEM:
@@ -189,6 +195,10 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
             touch_controllers.append(TouchController.from_bytes(packet_data))
         elif packet_type == PACKET_TYPE_PASSIVE_BUZZER:
             buzzers.append(PassiveBuzzer.from_bytes(packet_data))
+        elif packet_type == PACKET_TYPE_NFC_CONFIG:
+            nfc_configs.append(NfcConfig.from_bytes(packet_data))
+        elif packet_type == PACKET_TYPE_FLASH_CONFIG:
+            flash_configs.append(FlashConfig.from_bytes(packet_data))
 
     missing_required = [
         name
@@ -220,6 +230,8 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         security_config=security_config,
         touch_controllers=touch_controllers,
         buzzers=buzzers,
+        nfc_configs=nfc_configs,
+        flash_configs=flash_configs,
         version=version,  # From firmware wrapper
         minor_version=1,  # Not stored in device (only single version byte exists)
         loaded=True,
@@ -248,6 +260,8 @@ def _get_packet_size(packet_type: int) -> int | None:
         PACKET_TYPE_SECURITY_CONFIG: SECURITY_CONFIG_SIZE,
         PACKET_TYPE_TOUCH_CONTROLLER: 32,
         PACKET_TYPE_PASSIVE_BUZZER: 32,
+        PACKET_TYPE_NFC_CONFIG: 32,
+        PACKET_TYPE_FLASH_CONFIG: 32,
     }
     return sizes.get(packet_type)
 

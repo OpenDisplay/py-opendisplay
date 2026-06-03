@@ -100,7 +100,7 @@ max-positional-arguments = 16
 max-locals = 28              # _build_info_tree renders a complex tree with many conditional vars
 max-attributes = 22          # config dataclasses have many fields by nature
 max-branches = 25
-max-statements = 70
+max-statements = 80          # parse_tlv_config dispatches one branch per packet type
 max-returns = 9
 max-public-methods = 21      # OpenDisplayDevice API surface grows with device features
 
