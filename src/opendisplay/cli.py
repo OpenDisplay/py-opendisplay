@@ -415,7 +415,7 @@ async def _info(device_kwargs: dict[str, Any], output_json: bool) -> None:
                 transmission_modes: list[str] = []
                 if display:
                     for flag, label in [
-                        (display.supports_raw, "RAW"),
+                        (display.supports_zipxl, "ZIPXL"),
                         (display.supports_zip, "ZIP"),
                         (display.supports_g5, "G5"),
                         (display.supports_direct_write, "DIRECT_WRITE"),
