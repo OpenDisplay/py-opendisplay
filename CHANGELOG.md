@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.9.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.8.0...v7.9.0) (2026-06-07)
+
+
+### Features
+
+* Introduce 512-byte compression window for ZIPXL ([5afed09](https://github.com/OpenDisplay/py-opendisplay/commit/5afed09bc8aeb920fb6cc72b215c53d5748be28f))
+
 ## [7.8.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.7.0...v7.8.0) (2026-06-03)
 
 
