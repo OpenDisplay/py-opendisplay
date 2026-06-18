@@ -1,8 +1,10 @@
 """Automatic measured palette selection and panel capability data for e-paper displays."""
 
+from typing import cast
+
+import epaper_dithering as _epaper_dithering
 from epaper_dithering import (
     BWRY_3_97,
-    INKPLATE_6COLOR,
     MONO_4_26,
     SOLUM_BWR,
     SPECTRA_7_3_6COLOR,
@@ -10,6 +12,7 @@ from epaper_dithering import (
     ColorScheme,
 )
 
+INKPLATE_6COLOR = cast(ColorPalette | None, getattr(_epaper_dithering, "INKPLATE_6COLOR", None))
 # Panel IDs that support 4-gray mode (from firmware mapEpd)
 PANELS_4GRAY: frozenset[int] = frozenset(
     {
@@ -54,13 +57,16 @@ DISPLAY_PALETTE_MAP: dict[tuple[int, ColorScheme], ColorPalette] = {
     (33, ColorScheme.BWR): SOLUM_BWR,
     # 3.97" BWRY (ep397yr_800x480)
     (55, ColorScheme.BWRY): BWRY_3_97,
-    # Inkplate 6COLOR 7-color ACeP (EP585C_600x448 / panel_ic_type 0x0043)
-    (0x0043, ColorScheme.BWGBRYO): INKPLATE_6COLOR,
     # Add more as color calibration becomes available:
     # (?, ColorScheme.BWRY): BWRY_4_2,  # 4.2" BWRY
     # (?, ColorScheme.BWR): HANSHOW_BWR,
     # (?, ColorScheme.BWY): HANSHOW_BWY,
 }
+
+_BWGBRYO = cast(ColorScheme | None, getattr(ColorScheme, "BWGBRYO", None))
+if _BWGBRYO is not None and INKPLATE_6COLOR is not None:
+    # Inkplate 6COLOR 7-color ACeP (EP585C_600x448 / panel_ic_type 0x0043)
+    DISPLAY_PALETTE_MAP[(0x0043, _BWGBRYO)] = INKPLATE_6COLOR
 
 
 def get_palette_for_display(

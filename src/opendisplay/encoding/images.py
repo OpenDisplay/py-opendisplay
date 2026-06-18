@@ -87,7 +87,7 @@ def encode_image(
         # 6-color Spectra 6 display uses 4bpp with special firmware values
         # Palette indices 0-5 map to firmware values 0,1,2,3,5,6 (4 is skipped!)
         return encode_4bpp(image, bwgbry_mapping=True)
-    if color_scheme == ColorScheme.BWGBRYO:
+    if color_scheme == getattr(ColorScheme, "BWGBRYO", None):
         # 7-color ACeP (Inkplate 6COLOR) uses 4bpp. The BWGBRYO palette is already
         # ordered to the panel's native nibble codes (0..6), so indices map directly.
         return encode_4bpp(image)
