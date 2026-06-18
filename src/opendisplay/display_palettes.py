@@ -2,6 +2,7 @@
 
 from epaper_dithering import (
     BWRY_3_97,
+    INKPLATE_6COLOR,
     MONO_4_26,
     SOLUM_BWR,
     SPECTRA_7_3_6COLOR,
@@ -53,6 +54,8 @@ DISPLAY_PALETTE_MAP: dict[tuple[int, ColorScheme], ColorPalette] = {
     (33, ColorScheme.BWR): SOLUM_BWR,
     # 3.97" BWRY (ep397yr_800x480)
     (55, ColorScheme.BWRY): BWRY_3_97,
+    # Inkplate 6COLOR 7-color ACeP (EP585C_600x448 / panel_ic_type 0x0043)
+    (0x0043, ColorScheme.BWGBRYO): INKPLATE_6COLOR,
     # Add more as color calibration becomes available:
     # (?, ColorScheme.BWRY): BWRY_4_2,  # 4.2" BWRY
     # (?, ColorScheme.BWR): HANSHOW_BWR,
