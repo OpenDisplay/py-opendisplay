@@ -42,6 +42,9 @@ dependencies = [
 cli = [
     "rich>=13.0.0",
 ]
+lan = [
+    "zeroconf>=0.132.0",
+]
 nrf-ota = [
     "nrf-ota>=0.4.0",
 ]

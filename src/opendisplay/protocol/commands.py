@@ -44,7 +44,9 @@ MANUFACTURER_ID = 0x2446  # 9286 decimal
 RESPONSE_HIGH_BIT_FLAG = 0x8000  # High bit set in response codes indicates ACK
 
 # Chunking constants
-CHUNK_SIZE = 230  # Maximum data bytes per chunk (unencrypted)
+CHUNK_SIZE = 230  # Maximum data bytes per chunk (unencrypted BLE — MTU-limited)
+# LAN/TCP frame inner payload max is WIFI_LAN_MAX_PAYLOAD (4096); command 0x0071 uses 2-byte prefix → 4094 data bytes
+LAN_CHUNK_SIZE = 4094
 ENCRYPTED_CHUNK_SIZE = 154  # Maximum data bytes per chunk when session is active
 # Encrypted packet: cmd(2)+nonce(16)+len(1)+data(154)+tag(12) = 185 bytes
 CONFIG_CHUNK_SIZE = 200  # Maximum config chunk size (verified from firmware)
@@ -193,22 +195,24 @@ def build_direct_write_partial_start(
     return cmd + fixed + initial, remaining
 
 
-def build_direct_write_data_command(chunk_data: bytes) -> bytes:
+def build_direct_write_data_command(chunk_data: bytes, *, max_data_len: int | None = None) -> bytes:
     """Build command to send image data chunk.
 
     Args:
-        chunk_data: Image data chunk (max CHUNK_SIZE bytes)
+        chunk_data: Raw image bytes for this chunk
+        max_data_len: Max ``chunk_data`` length (default: :data:`CHUNK_SIZE` for BLE)
 
     Returns:
         Command bytes: 0x0071 + chunk_data
 
     Format:
-        [cmd:2][data:230]
+        [cmd:2][data]
         - cmd: 0x0071 (big-endian)
-        - data: Image data chunk
+        - data: Image chunk (up to ``max_data_len``, or :data:`LAN_CHUNK_SIZE` over WiFi)
     """
-    if len(chunk_data) > CHUNK_SIZE:
-        raise ValueError(f"Chunk size {len(chunk_data)} exceeds maximum {CHUNK_SIZE}")
+    limit = CHUNK_SIZE if max_data_len is None else max_data_len
+    if len(chunk_data) > limit:
+        raise ValueError(f"Chunk size {len(chunk_data)} exceeds maximum {limit}")
 
     cmd = CommandCode.DIRECT_WRITE_DATA.to_bytes(2, byteorder="big")
     return cmd + chunk_data
