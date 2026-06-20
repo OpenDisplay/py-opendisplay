@@ -7,7 +7,7 @@ from epaper_dithering import ColorScheme, DitherMode
 
 from .battery import voltage_to_percent
 from .device import OpenDisplayDevice, prepare_image
-from .discovery import discover_devices, discover_devices_with_adv
+from .discovery import discover_devices, discover_devices_with_adv, discover_lan_devices
 from .exceptions import (
     AuthenticationError,
     AuthenticationFailedError,
@@ -77,7 +77,7 @@ from .models.enums import (
 from .models.firmware import firmware_ota_asset, firmware_release_repo
 from .models.led_flash import LedFlashConfig, LedFlashStep
 from .ota import find_nrf_dfu_device, perform_nrf_dfu, perform_silabs_ota
-from .protocol import MANUFACTURER_ID, SERVICE_UUID
+from .protocol import LAN_CHUNK_SIZE, MANUFACTURER_ID, SERVICE_UUID
 
 __version__ = "0.1.0"
 
@@ -86,6 +86,7 @@ __all__ = [
     "OpenDisplayDevice",
     "discover_devices",
     "discover_devices_with_adv",
+    "discover_lan_devices",
     "prepare_image",
     # Exceptions
     "OpenDisplayError",
@@ -167,4 +168,5 @@ __all__ = [
     # Constants
     "SERVICE_UUID",
     "MANUFACTURER_ID",
+    "LAN_CHUNK_SIZE",
 ]

@@ -4,6 +4,7 @@ from opendisplay.models.buzzer_activate import BuzzerActivateConfig
 from opendisplay.models.led_flash import LedFlashConfig, LedFlashStep
 from opendisplay.protocol.commands import (
     CHUNK_SIZE,
+    LAN_CHUNK_SIZE,
     CommandCode,
     build_buzzer_activate_command,
     build_direct_write_data_command,
@@ -128,6 +129,18 @@ class TestCommandBuilders:
         chunk = b"A" * (CHUNK_SIZE + 1)
         with pytest.raises(ValueError, match="exceeds maximum"):
             build_direct_write_data_command(chunk)
+
+    def test_build_direct_write_data_command_lan_size(self):
+        """LAN/WiFi allows up to LAN_CHUNK_SIZE bytes per 0x0071 payload."""
+        chunk = b"Z" * LAN_CHUNK_SIZE
+        cmd = build_direct_write_data_command(chunk, max_data_len=LAN_CHUNK_SIZE)
+        assert len(cmd) == 2 + LAN_CHUNK_SIZE
+        assert cmd[:2] == b"\x00\x71"
+
+    def test_build_direct_write_data_command_lan_too_large(self):
+        chunk = b"A" * (LAN_CHUNK_SIZE + 1)
+        with pytest.raises(ValueError, match="exceeds maximum"):
+            build_direct_write_data_command(chunk, max_data_len=LAN_CHUNK_SIZE)
 
     def test_build_direct_write_end_command(self, real_upload_end_command):
         """Test END command includes refresh mode."""

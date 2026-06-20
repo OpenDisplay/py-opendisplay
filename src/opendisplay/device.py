@@ -58,6 +58,7 @@ from .partial import (
 from .protocol import (
     CHUNK_SIZE,
     ENCRYPTED_CHUNK_SIZE,
+    LAN_CHUNK_SIZE,
     MAX_COMPRESSED_SIZE,
     MAX_START_PAYLOAD,
     CommandCode,
@@ -88,7 +89,7 @@ from .protocol.responses import (
     strip_command_echo,
     unpack_command_code,
 )
-from .transport import BLEConnection
+from .transport import BLEConnection, LANConnection
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
@@ -266,13 +267,17 @@ def prepare_image(
 
 
 class OpenDisplayDevice:
-    """OpenDisplay BLE e-paper device.
+    """OpenDisplay e-paper device over BLE or LAN (ESP32 WiFi TCP).
 
-    Main API for communicating with OpenDisplay BLE tags.
+    Main API for communicating with OpenDisplay tags.
 
     Usage:
-        # Auto-interrogate on first connect
+        # Auto-interrogate on first connect (BLE)
         async with OpenDisplayDevice("AA:BB:CC:DD:EE:FF") as device:
+            await device.upload_image(image)
+
+        # WiFi/LAN (ESP32 TCP server)
+        async with OpenDisplayDevice(lan_address=("192.168.1.50", 2446)) as device:
             await device.upload_image(image)
 
         # Skip interrogation with cached config
@@ -305,6 +310,7 @@ class OpenDisplayDevice:
         mac_address: str | None = None,
         device_name: str | None = None,
         ble_device: BLEDevice | None = None,
+        lan_address: tuple[str, int] | None = None,
         config: GlobalConfig | None = None,
         capabilities: DeviceCapabilities | None = None,
         timeout: float = 10.0,
@@ -317,27 +323,31 @@ class OpenDisplayDevice:
         """Initialize OpenDisplay device.
 
         Args:
-            mac_address: Device MAC address (mutually exclusive with device_name)
+            mac_address: Device MAC address (mutually exclusive with device_name and lan_address)
             device_name: Device name to resolve via BLE scan (mutually exclusive with mac_address)
-            ble_device: Optional BLEDevice from HA bluetooth integration
+            ble_device: Optional BLEDevice from HA bluetooth integration (BLE only)
+            lan_address: ``(host, port)`` for WiFi/LAN (ESP32 TCP server); mutually exclusive with BLE params
             config: Optional full TLV config (skips interrogation)
             capabilities: Optional minimal device info (skips interrogation)
-            timeout: BLE operation timeout in seconds (default: 10)
-            discovery_timeout: Timeout for name resolution scan (default: 10)
+            timeout: Connect / IO timeout in seconds (default: 10)
+            discovery_timeout: Timeout for BLE name resolution scan (default: 10)
             max_attempts: Maximum connection attempts for bleak-retry-connector (default: 4)
             use_services_cache: Enable GATT service caching for faster reconnections (default: True)
             use_measured_palettes: Use measured color palettes when available (default: True)
             encryption_key: 16-byte AES-128 master key for encrypted devices (optional).
 
         Raises:
-            ValueError: If neither or both mac_address and device_name provided
+            ValueError: If connection target parameters are missing or conflicting
         """
-        # Validation: exactly one of mac_address or device_name must be provided
-        if mac_address and device_name:
+        if lan_address is not None:
+            if mac_address or device_name or ble_device:
+                raise ValueError("lan_address cannot be combined with mac_address, device_name, or ble_device")
+        elif mac_address and device_name:
             raise ValueError("Provide either mac_address or device_name, not both")
-        if not mac_address and not device_name:
-            raise ValueError("Must provide either mac_address or device_name")
+        elif not mac_address and not device_name:
+            raise ValueError("Must provide mac_address, device_name, or lan_address")
 
+        self._lan_address = lan_address
         # Store for resolution in __aenter__
         self._mac_address_param = mac_address
         self._device_name = device_name
@@ -349,8 +359,8 @@ class OpenDisplayDevice:
         self._use_measured_palettes = use_measured_palettes
 
         # Will be set after resolution
-        self.mac_address = mac_address or ""  # Resolved in __aenter__
-        self._connection: BLEConnection | None = None  # Created after MAC resolution
+        self.mac_address = mac_address or ""  # Resolved in __aenter__ (or lan:host:port)
+        self._connection: BLEConnection | LANConnection | None = None  # Created after MAC resolution
 
         self._config = config
         self._capabilities = capabilities
@@ -365,6 +375,20 @@ class OpenDisplayDevice:
 
     async def __aenter__(self) -> OpenDisplayDevice:
         """Connect and optionally interrogate device."""
+
+        if self._lan_address is not None:
+            host, port = self._lan_address
+            self.mac_address = f"lan:{host}:{port}"
+            self._connection = LANConnection(host, port, self._timeout)
+            await self._conn.connect()
+            if self._encryption_key is not None:
+                await self.authenticate(self._encryption_key)
+            if self._config is None and self._capabilities is None:
+                _LOGGER.info("No config provided, auto-interrogating device (LAN)")
+                await self.interrogate()
+            if self._config and not self._capabilities:
+                self._capabilities = self._extract_capabilities_from_config()
+            return self
 
         # Resolve device name to MAC address if needed
         if self._device_name:
@@ -428,11 +452,18 @@ class OpenDisplayDevice:
             await self._conn.disconnect()
 
     @property
-    def _conn(self) -> BLEConnection:
-        """Return active BLE connection, raising RuntimeError if not connected."""
+    def _conn(self) -> BLEConnection | LANConnection:
+        """Return active connection, raising RuntimeError if not connected."""
         if self._connection is None:
             raise RuntimeError("Device not connected")
         return self._connection
+
+    def _data_chunk_limit(self) -> int:
+        if self._session_key is not None:
+            return ENCRYPTED_CHUNK_SIZE
+        if self._lan_address is not None:
+            return LAN_CHUNK_SIZE
+        return CHUNK_SIZE
 
     async def _write(self, data: bytes) -> None:
         """Write a command, encrypting it if an active session exists."""
@@ -1308,13 +1339,13 @@ class OpenDisplayDevice:
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> None:
         """Send remaining 0x71 chunks and update upload progress."""
-        chunk_size = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else CHUNK_SIZE
+        chunk_size = self._data_chunk_limit()
         total_stream_bytes = len(stream_bytes)
         bytes_sent = total_stream_bytes - len(remaining)
         offset = 0
         while offset < len(remaining):
             chunk = remaining[offset : offset + chunk_size]
-            await self._write(build_direct_write_data_command(chunk))
+            await self._write(build_direct_write_data_command(chunk, max_data_len=chunk_size))
             ack = await self._read(self.TIMEOUT_ACK)
             nack = parse_nack(ack)
             if nack is not None:
@@ -1561,10 +1592,10 @@ class OpenDisplayDevice:
         chunks_sent = 0
 
         while bytes_sent < len(image_data):
-            chunk_size = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else CHUNK_SIZE
-            chunk_data = image_data[bytes_sent : bytes_sent + chunk_size]
+            chunk_limit = self._data_chunk_limit()
+            chunk_data = image_data[bytes_sent : bytes_sent + chunk_limit]
 
-            await self._write(build_direct_write_data_command(chunk_data))
+            await self._write(build_direct_write_data_command(chunk_data, max_data_len=chunk_limit))
             bytes_sent += len(chunk_data)
             chunks_sent += 1
 

@@ -7,8 +7,10 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import sys
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn, TypeVar
 
@@ -23,7 +25,13 @@ from rich.tree import Tree
 
 from .battery import voltage_to_percent
 from .device import OpenDisplayDevice
-from .discovery import discover_devices_with_adv
+from .discovery import (
+    MDNS_TXT_KEY_MSD,
+    OPENDISPLAY_MDNS_SERVICE_TYPE,
+    discover_devices_with_adv,
+    discover_lan_devices,
+    msd_bytes_from_mdns_txt_properties,
+)
 from .exceptions import (
     AuthenticationFailedError,
     AuthenticationRequiredError,
@@ -31,6 +39,7 @@ from .exceptions import (
     BLETimeoutError,
     OpenDisplayError,
 )
+from .models.advertisement import AdvertisementData, AdvertisementTracker, ButtonChangeEvent, parse_advertisement
 from .models.enums import (
     CapacityEstimator,
     FitMode,
@@ -43,6 +52,8 @@ from .models.enums import (
     WifiEncryption,
 )
 from .partial import PartialState
+
+_LOGGER = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
@@ -110,14 +121,45 @@ def _parse_compression_value(flag: str, value: str) -> float | str:
     return f
 
 
+def _is_ble_device_id(device: str) -> bool:
+    """True if device looks like a BLE MAC or macOS BLE UUID."""
+    if len(device) == 36 and device.count("-") == 4:
+        return True
+    parts = device.split(":")
+    if len(parts) != 6 or not all(len(p) == 2 for p in parts):
+        return False
+    try:
+        bytes.fromhex("".join(parts))
+    except ValueError:
+        return False
+    return True
+
+
+def _parse_lan_address(device: str) -> tuple[str, int] | None:
+    """Parse ``HOST:PORT`` for WiFi/LAN; None if not a LAN address."""
+    if _is_ble_device_id(device) or ":" not in device:
+        return None
+    host, _, port_s = device.rpartition(":")
+    host = host.strip()
+    if not host or not port_s.isdigit():
+        return None
+    port = int(port_s)
+    if not 1 <= port <= 65535:
+        return None
+    return host, port
+
+
 def _device_kwargs(device: str, key: bytes | None, timeout: float) -> dict[str, Any]:
     """Build OpenDisplayDevice constructor kwargs from CLI args.
 
-    Detects MAC addresses (contains ':') and macOS UUIDs (36-char with 4 dashes)
-    vs. human-readable device names.
+    Accepts BLE MAC/UUID, BLE device name, or LAN ``HOST:PORT``.
     """
     kwargs: dict[str, Any] = {"timeout": timeout, "encryption_key": key}
-    if ":" in device or (len(device) == 36 and device.count("-") == 4):
+    lan = _parse_lan_address(device)
+    if lan is not None:
+        kwargs["lan_address"] = lan
+        return kwargs
+    if _is_ble_device_id(device):
         kwargs["mac_address"] = device
     else:
         kwargs["device_name"] = device
@@ -126,14 +168,19 @@ def _device_kwargs(device: str, key: bytes | None, timeout: float) -> dict[str, 
 
 def _add_device_options(parser: argparse.ArgumentParser) -> None:
     """Add shared --device, --key, --timeout options to a subcommand parser."""
-    parser.add_argument("--device", required=True, metavar="ADDR", help="Device MAC address or name")
+    parser.add_argument(
+        "--device",
+        required=True,
+        metavar="ADDR",
+        help="BLE MAC/UUID, BLE name, or LAN HOST:PORT (e.g. 192.168.1.50:2446)",
+    )
     parser.add_argument("--key", default=None, metavar="HEX", help="Encryption key as 32 hex characters")
     parser.add_argument(
         "--timeout",
         type=float,
         default=10.0,
         metavar="SECS",
-        help="BLE timeout in seconds (default: 10.0)",
+        help="Connect/IO timeout in seconds (default: 10.0)",
     )
 
 
@@ -171,7 +218,12 @@ def _spinner() -> Progress:
 
 
 def _add_scan_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    p = subparsers.add_parser("scan", help="Scan for nearby OpenDisplay BLE devices")
+    p = subparsers.add_parser("scan", help="Scan for nearby OpenDisplay devices (BLE or LAN)")
+    p.add_argument(
+        "--lan",
+        action="store_true",
+        help="Browse mDNS for WiFi/LAN devices (_opendisplay._tcp; requires py-opendisplay[lan])",
+    )
     p.add_argument(
         "--timeout",
         type=float,
@@ -184,7 +236,10 @@ def _add_scan_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPar
 
 
 def _cmd_scan(args: argparse.Namespace) -> None:
-    _run(_scan(args.timeout, args.output_json))
+    if args.lan:
+        _run(_scan_lan(args.timeout, args.output_json))
+    else:
+        _run(_scan(args.timeout, args.output_json))
 
 
 async def _scan(timeout: float, output_json: bool) -> None:
@@ -228,6 +283,242 @@ async def _scan(timeout: float, output_json: bool) -> None:
             temp_str = "\u2014"
         table.add_row(name, mac, battery_str, temp_str)
     _console.print(table)
+
+
+async def _scan_lan(scan_seconds: float, output_json: bool) -> None:
+    with _spinner() as progress:
+        progress.add_task(f"Browsing mDNS for {scan_seconds:.0f}s...", total=None)
+        try:
+            devices = await discover_lan_devices(scan_seconds=scan_seconds)
+        except ImportError as exc:
+            _error(str(exc))
+        except OpenDisplayError as exc:
+            _error(str(exc))
+
+    if output_json:
+        rows = [{"name": name, "host": host, "port": port} for host, port, name in sorted(devices, key=lambda r: r[2])]
+        _stdout.print_json(json.dumps({"devices": rows}))
+        return
+
+    if not devices:
+        _console.print("No OpenDisplay LAN devices found.")
+        return
+
+    table = Table(show_header=True)
+    table.add_column("Service")
+    table.add_column("Host")
+    table.add_column("Port")
+    for host, port, name in sorted(devices, key=lambda r: r[2]):
+        table.add_row(name, host, str(port))
+    _console.print(table)
+
+
+def _listen_timestamp() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def _msd_status_json(service: str, adv: AdvertisementData, *, host: str | None, port: int | None) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "type": "msd",
+        "service": service,
+        "host": host,
+        "port": port,
+        "format_version": adv.format_version,
+        "battery_mv": adv.battery_mv,
+        "temperature_c": adv.temperature_c,
+        "loop_counter": adv.loop_counter,
+    }
+    if adv.format_version == "v1":
+        row["reboot_flag"] = adv.reboot_flag
+        row["connection_requested"] = adv.connection_requested
+        row["dynamic_data_hex"] = adv.dynamic_data.hex()
+    return row
+
+
+def _button_event_json(service: str, ev: ButtonChangeEvent) -> dict[str, Any]:
+    return {
+        "type": "button",
+        "service": service,
+        "event_type": ev.event_type,
+        "byte_index": ev.byte_index,
+        "button_id": ev.button_id,
+        "pressed": ev.pressed,
+        "press_count": ev.press_count,
+        "previous_press_count": ev.previous_press_count,
+        "raw": ev.raw,
+        "previous_raw": ev.previous_raw,
+        "timestamp": ev.timestamp,
+    }
+
+
+def _print_lan_msd_status(service: str, adv: AdvertisementData, *, host: str | None, port: int | None) -> None:
+    host_part = f" {host}:{port}" if host and port else ""
+    base = (
+        f"[{_listen_timestamp()}] {service}{host_part} "
+        f"format={adv.format_version} battery={adv.battery_mv}mV "
+        f"temp={adv.temperature_c:.1f}C loop={adv.loop_counter}"
+    )
+    if adv.format_version == "v1":
+        base += (
+            f" reboot={adv.reboot_flag} conn_req={adv.connection_requested} "
+            f"dyn={adv.dynamic_data.hex()}"
+        )
+    _console.print(base)
+
+
+def _print_lan_button_event(service: str, ev: ButtonChangeEvent) -> None:
+    state = "down" if ev.pressed else "up"
+    _console.print(
+        f"[{_listen_timestamp()}] EVENT {service} type={ev.event_type} "
+        f"byte={ev.byte_index} button_id={ev.button_id} state={state} count={ev.press_count}"
+    )
+
+
+class _LanMdnsMsdListener:
+    """Track mDNS TXT ``msd`` updates and emit MSD/button events."""
+
+    def __init__(self, aiozc: Any, *, output_json: bool, print_all: bool) -> None:
+        self._aiozc = aiozc
+        self._output_json = output_json
+        self._print_all = print_all
+        self._trackers: dict[str, AdvertisementTracker] = {}
+        self._last_raw: dict[str, bytes] = {}
+        self._hosts: dict[str, tuple[str | None, int | None]] = {}
+
+    def add_service(self, _zc: Any, type_: str, name: str) -> None:
+        self._schedule(type_, name)
+
+    def update_service(self, _zc: Any, type_: str, name: str) -> None:
+        self._schedule(type_, name)
+
+    def remove_service(self, _zc: Any, type_: str, name: str) -> None:
+        self._trackers.pop(name, None)
+        self._last_raw.pop(name, None)
+        self._hosts.pop(name, None)
+        if self._output_json:
+            _stdout.print_json(json.dumps({"type": "removed", "service": name}))
+        else:
+            _console.print(f"[{_listen_timestamp()}] removed {name}")
+
+    def _schedule(self, type_: str, name: str) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._async_handle(type_, name))
+
+    async def _async_handle(self, type_: str, name: str) -> None:
+        info = await self._aiozc.async_get_service_info(type_, name, timeout=3000)
+        if info is None:
+            _LOGGER.debug("No ServiceInfo for %s", name)
+            return
+
+        host: str | None = None
+        port: int | None = int(info.port) if info.port else None
+        v4 = next((a for a in info.addresses if len(a) == 4), None)
+        if v4 is not None:
+            host = socket.inet_ntoa(v4)
+        self._hosts[name] = (host, port)
+
+        props: Mapping[Any, Any] | None = dict(info.properties) if info.properties else None
+        raw = msd_bytes_from_mdns_txt_properties(props)
+        if raw is None:
+            _LOGGER.debug("No valid TXT %s for %s", MDNS_TXT_KEY_MSD, name)
+            return
+
+        prev = self._last_raw.get(name)
+        if not self._print_all and prev is not None and prev == raw:
+            return
+        self._last_raw[name] = raw
+
+        try:
+            adv = parse_advertisement(raw)
+        except ValueError as exc:
+            _LOGGER.warning("parse_advertisement failed for %s: %s", name, exc)
+            return
+
+        host, port = self._hosts.get(name, (None, None))
+        if self._output_json:
+            _stdout.print_json(json.dumps(_msd_status_json(name, adv, host=host, port=port)))
+        else:
+            _print_lan_msd_status(name, adv, host=host, port=port)
+
+        tracker = self._trackers.setdefault(name, AdvertisementTracker())
+        for ev in tracker.update(name, adv):
+            if self._output_json:
+                _stdout.print_json(json.dumps(_button_event_json(name, ev)))
+            else:
+                _print_lan_button_event(name, ev)
+
+
+async def _listen_lan(duration: float, output_json: bool, print_all: bool) -> None:
+    try:
+        from zeroconf import ServiceListener
+        from zeroconf.asyncio import AsyncZeroconf
+    except ImportError as exc:
+        raise ImportError("LAN listen requires the 'zeroconf' package (pip install py-opendisplay[lan])") from exc
+
+    class Listener(_LanMdnsMsdListener, ServiceListener):
+        pass
+
+    aiozc = AsyncZeroconf()
+    listener = Listener(aiozc, output_json=output_json, print_all=print_all)
+    try:
+        await aiozc.async_add_service_listener(OPENDISPLAY_MDNS_SERVICE_TYPE, listener)
+        if not output_json:
+            _console.print(
+                f"Listening on {OPENDISPLAY_MDNS_SERVICE_TYPE} (TXT key {MDNS_TXT_KEY_MSD!r})… "
+                f"{'all updates' if print_all else 'changed MSD only'}. Ctrl+C to stop."
+            )
+        if duration > 0:
+            await asyncio.sleep(duration)
+        else:
+            while True:
+                await asyncio.sleep(3600)
+    finally:
+        await aiozc.async_remove_all_service_listeners()
+        await aiozc.async_close()
+
+
+# ── listen ────────────────────────────────────────────────────────────────────
+
+
+def _add_listen_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = subparsers.add_parser(
+        "listen",
+        help="Monitor passive MSD updates over WiFi/LAN mDNS (battery, buttons)",
+    )
+    p.add_argument(
+        "--lan",
+        action="store_true",
+        help="Listen via mDNS TXT 'msd' on _opendisplay._tcp (requires py-opendisplay[lan])",
+    )
+    p.add_argument("--json", dest="output_json", action="store_true", help="Emit NDJSON events on stdout")
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="Print every mDNS MSD update (default: only when the 14-byte payload changes)",
+    )
+    p.add_argument(
+        "--duration",
+        type=float,
+        default=0.0,
+        metavar="SECS",
+        help="Listen duration in seconds (0 = until Ctrl+C, default: 0)",
+    )
+    p.set_defaults(func=_cmd_listen)
+
+
+def _cmd_listen(args: argparse.Namespace) -> None:
+    if not args.lan:
+        _error("listen requires --lan for WiFi/LAN mDNS monitoring")
+    try:
+        _run(_listen_lan(args.duration, args.output_json, args.all))
+    except ImportError as exc:
+        _error(str(exc))
+    except KeyboardInterrupt:
+        if not args.output_json:
+            _console.print("Stopped.")
 
 
 # ── info ──────────────────────────────────────────────────────────────────────
@@ -783,12 +1074,13 @@ def main() -> None:
     """Entry point for the opendisplay CLI."""
     parser = argparse.ArgumentParser(
         prog="opendisplay",
-        description="OpenDisplay BLE command-line tool",
+        description="OpenDisplay command-line tool (BLE and WiFi/LAN)",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     _add_scan_parser(subparsers)
+    _add_listen_parser(subparsers)
     _add_info_parser(subparsers)
     _add_upload_parser(subparsers)
     _add_reboot_parser(subparsers)
