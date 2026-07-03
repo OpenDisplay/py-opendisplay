@@ -7,6 +7,7 @@ Reference: OpenDisplayFirmware/src/structs.h
 from __future__ import annotations
 
 import math
+import struct
 from dataclasses import dataclass, field
 from typing import ClassVar
 
@@ -14,6 +15,7 @@ from epaper_dithering import ColorScheme
 
 from .enums import (
     ActiveLevel,
+    BinaryInputType,
     BoardManufacturer,
     BusType,
     CapacityEstimator,
@@ -529,6 +531,59 @@ class BinaryInputs:
     button_data_byte_index: int = 0  # uint8 (v1+): dynamic return byte index (0-10)
 
     SIZE: ClassVar[int] = 30
+    # ADC ladder packs (N, id_base) + (N+1) LE uint16 thresholds into reserved[14].
+    MAX_LADDER_BUTTONS: ClassVar[int] = 5
+    MAX_BUTTON_ID: ClassVar[int] = 7  # button id is a 3-bit field in the report byte
+    MAX_BUTTON_DATA_BYTE_INDEX: ClassVar[int] = 10  # index into the 11-byte MSD block
+
+    @classmethod
+    def adc_ladder(
+        cls,
+        *,
+        instance_number: int,
+        adc_pin: int,
+        id_base: int,
+        button_data_byte_index: int,
+        thresholds: list[int],
+        display_as: int = 0,
+    ) -> BinaryInputs:
+        """Build an ADC resistor-ladder input (input_type=3).
+
+        Several buttons share ``adc_pin``, distinguished by voltage. ``thresholds``
+        is N+1 strictly-descending ADC values: button i (reporting ``id_base + i``)
+        is pressed when ``thresholds[i+1] < adc <= thresholds[i]``; idle above
+        ``thresholds[0]``. ``thresholds[N]`` is the bottom floor (use 0).
+        """
+        if not 0 <= button_data_byte_index <= cls.MAX_BUTTON_DATA_BYTE_INDEX:
+            raise ValueError(
+                f"button_data_byte_index must be 0..{cls.MAX_BUTTON_DATA_BYTE_INDEX}, got {button_data_byte_index}"
+            )
+        button_count = len(thresholds) - 1
+        if not 1 <= button_count <= cls.MAX_LADDER_BUTTONS:
+            raise ValueError(
+                f"ADC ladder needs 2..{cls.MAX_LADDER_BUTTONS + 1} thresholds (N+1), got {len(thresholds)}"
+            )
+        last_id = id_base + button_count - 1
+        if id_base < 0 or last_id > cls.MAX_BUTTON_ID:
+            raise ValueError(f"button ids {id_base}..{last_id} exceed the 3-bit id space (0..{cls.MAX_BUTTON_ID})")
+        if any(not 0 <= t <= 0xFFFF for t in thresholds):
+            raise ValueError("ADC thresholds must be uint16 (0..65535)")
+        if any(a <= b for a, b in zip(thresholds, thresholds[1:])):
+            raise ValueError(f"ADC thresholds must be strictly descending, got {thresholds}")
+
+        reserved = struct.pack("<BB", button_count, id_base) + b"".join(struct.pack("<H", t) for t in thresholds)
+        return cls(
+            instance_number=instance_number,
+            input_type=BinaryInputType.ADC_LADDER,
+            display_as=display_as,
+            reserved_pins=bytes([adc_pin]) + bytes(7),
+            input_flags=0,
+            invert=0,
+            pullups=0,
+            pulldowns=0,
+            button_data_byte_index=button_data_byte_index,
+            reserved=reserved.ljust(14, b"\x00"),
+        )
 
     @classmethod
     def from_bytes(cls, data: bytes) -> BinaryInputs:

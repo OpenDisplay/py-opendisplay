@@ -19,6 +19,7 @@ from opendisplay.models.config import (
     PowerOption,
     SystemConfig,
 )
+from opendisplay.models.enums import BinaryInputType
 from opendisplay.protocol.config_parser import parse_config_response, parse_tlv_config
 from opendisplay.protocol.config_serializer import (
     serialize_binary_inputs,
@@ -293,6 +294,84 @@ def test_serialize_binary_inputs_writes_button_data_byte_index_byte() -> None:
 
     assert len(payload) == 30
     assert payload[15] == 6
+
+
+def test_adc_ladder_serializes_to_firmware_wire_contract() -> None:
+    """adc_ladder() must pack the X4 GPIO1 ladder exactly as the firmware decodes it."""
+    # XTEINK X4 GPIO1: 4 buttons, ids 0..3, calibrated descending ADC thresholds.
+    ladder = BinaryInputs.adc_ladder(
+        instance_number=0,
+        adc_pin=1,
+        id_base=0,
+        button_data_byte_index=5,
+        thresholds=[3850, 3163, 2132, 761, 0],
+    )
+
+    payload = serialize_binary_inputs(ladder)
+
+    assert ladder.input_type == BinaryInputType.ADC_LADDER
+    assert len(payload) == 30
+    assert payload[1] == BinaryInputType.ADC_LADDER  # input_type
+    assert payload[3] == 1  # reserved_pin_1 = ADC GPIO
+    assert payload[15] == 5  # button_data_byte_index
+    # reserved[16:30] = N, id_base, then N+1 LE uint16 thresholds, zero-padded.
+    expected_reserved = struct.pack("<BB", 4, 0) + struct.pack("<5H", 3850, 3163, 2132, 761, 0)
+    assert payload[16:30] == expected_reserved.ljust(14, b"\x00")
+
+
+@pytest.mark.parametrize(
+    "thresholds",
+    [
+        [0],  # too few (N+1 must be >= 2)
+        [1, 2, 3, 4, 5, 6, 7],  # too many (N > MAX_LADDER_BUTTONS)
+        [100, 100, 0],  # not strictly descending
+        [100, 200, 0],  # ascending
+        [70000, 0],  # threshold exceeds uint16
+    ],
+)
+def test_adc_ladder_rejects_malformed_thresholds(thresholds: list[int]) -> None:
+    """adc_ladder() must reject degenerate threshold sets at construction time."""
+    with pytest.raises(ValueError):
+        BinaryInputs.adc_ladder(
+            instance_number=0,
+            adc_pin=1,
+            id_base=0,
+            button_data_byte_index=5,
+            thresholds=thresholds,
+        )
+
+
+@pytest.mark.parametrize(
+    ("id_base", "thresholds"),
+    [
+        (8, [100, 0]),  # id_base alone past the 3-bit id space
+        (5, [100, 80, 60, 40, 20, 0]),  # last id 5+5-1=9 > 7
+        (-1, [100, 0]),  # negative id_base
+    ],
+)
+def test_adc_ladder_rejects_id_base_overflow(id_base: int, thresholds: list[int]) -> None:
+    """Button ids must fit the firmware's 3-bit report field (0..7); the firmware rejects, not masks."""
+    with pytest.raises(ValueError):
+        BinaryInputs.adc_ladder(
+            instance_number=0,
+            adc_pin=1,
+            id_base=id_base,
+            button_data_byte_index=5,
+            thresholds=thresholds,
+        )
+
+
+@pytest.mark.parametrize("byte_index", [-1, 11, 255])
+def test_adc_ladder_rejects_byte_index_out_of_range(byte_index: int) -> None:
+    """button_data_byte_index must index the 11-byte MSD block (0..10); firmware drops anything past it."""
+    with pytest.raises(ValueError):
+        BinaryInputs.adc_ladder(
+            instance_number=0,
+            adc_pin=1,
+            id_base=0,
+            button_data_byte_index=byte_index,
+            thresholds=[100, 0],
+        )
 
 
 def _minimal_system() -> SystemConfig:
