@@ -9,6 +9,7 @@ from ..exceptions import ConfigParseError
 from ..models.config import (
     BinaryInputs,
     DataBus,
+    DataExtended,
     DisplayConfig,
     FlashConfig,
     GlobalConfig,
@@ -42,6 +43,7 @@ PACKET_TYPE_TOUCH_CONTROLLER = 0x28
 PACKET_TYPE_PASSIVE_BUZZER = 0x29
 PACKET_TYPE_NFC_CONFIG = 0x2A
 PACKET_TYPE_FLASH_CONFIG = 0x2B
+PACKET_TYPE_DATA_EXTENDED = 0x2C
 
 WIFI_CONFIG_SIZE = 160
 WIFI_CONFIG_LEGACY_SIZE = 65
@@ -169,6 +171,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     buzzers = []
     nfc_configs = []
     flash_configs = []
+    data_extended = None
 
     for (packet_type, packet_number), packet_data in packets.items():
         if packet_type == PACKET_TYPE_SYSTEM:
@@ -199,6 +202,8 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
             nfc_configs.append(NfcConfig.from_bytes(packet_data))
         elif packet_type == PACKET_TYPE_FLASH_CONFIG:
             flash_configs.append(FlashConfig.from_bytes(packet_data))
+        elif packet_type == PACKET_TYPE_DATA_EXTENDED:
+            data_extended = DataExtended.from_bytes(packet_data)
 
     missing_required = [
         name
@@ -232,6 +237,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         buzzers=buzzers,
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
+        data_extended=data_extended,
         version=version,  # From firmware wrapper
         minor_version=1,  # Not stored in device (only single version byte exists)
         loaded=True,
@@ -262,6 +268,7 @@ def _get_packet_size(packet_type: int) -> int | None:
         PACKET_TYPE_PASSIVE_BUZZER: 32,
         PACKET_TYPE_NFC_CONFIG: 32,
         PACKET_TYPE_FLASH_CONFIG: 32,
+        PACKET_TYPE_DATA_EXTENDED: DataExtended.SIZE,
     }
     return sizes.get(packet_type)
 

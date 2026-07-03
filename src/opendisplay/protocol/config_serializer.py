@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from ..models.config import (
         BinaryInputs,
         DataBus,
+        DataExtended,
         DisplayConfig,
         FlashConfig,
         GlobalConfig,
@@ -39,6 +40,7 @@ PACKET_TYPE_TOUCH_CONTROLLER = 0x28
 PACKET_TYPE_PASSIVE_BUZZER = 0x29
 PACKET_TYPE_NFC_CONFIG = 0x2A
 PACKET_TYPE_FLASH_CONFIG = 0x2B
+PACKET_TYPE_DATA_EXTENDED = 0x2C
 
 
 def calculate_config_crc(data: bytes) -> int:
@@ -514,6 +516,11 @@ def serialize_wifi_config(config: WifiConfig) -> bytes:
     return config.to_bytes()
 
 
+def serialize_data_extended(config: DataExtended) -> bytes:
+    """Serialize DataExtended to 288 bytes."""
+    return config.to_bytes()
+
+
 def serialize_config(config: GlobalConfig) -> bytes:
     """Serialize complete GlobalConfig to TLV binary format.
 
@@ -616,6 +623,10 @@ def serialize_config(config: GlobalConfig) -> bytes:
             break
         packet_data += bytes([i, PACKET_TYPE_FLASH_CONFIG])
         packet_data += serialize_flash_config(flash)
+
+    if config.data_extended is not None:
+        packet_data += bytes([0, PACKET_TYPE_DATA_EXTENDED])
+        packet_data += serialize_data_extended(config.data_extended)
 
     # Validate size (max 4096 bytes including wrapper and CRC)
     total_size = len(packet_data) + 2  # +2 for CRC

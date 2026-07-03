@@ -11,6 +11,7 @@ from typing import Any
 from .config import (
     BinaryInputs,
     DataBus,
+    DataExtended,
     DisplayConfig,
     FlashConfig,
     GlobalConfig,
@@ -370,6 +371,27 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
             }
         )
 
+    # Extended device identity strings (packet type 0x2c = 44)
+    if config.data_extended is not None:
+        ext = config.data_extended
+        packets.append(
+            {
+                "id": "44",
+                "name": "data_extended",
+                "fields": {
+                    "manufacturer_name": ext.manufacturer_name_text,
+                    "model_name": ext.model_name_text,
+                    "serial_number": ext.serial_number_text,
+                    "friendly_name": ext.friendly_name_text,
+                    "device_location": ext.device_location_text,
+                    "device_id": ext.device_id_text,
+                    "custom_string_1": ext.custom_string_1_text,
+                    "custom_string_2": ext.custom_string_2_text,
+                    "custom_string_3": ext.custom_string_3_text,
+                },
+            }
+        )
+
     return {
         "version": config.version,
         "minor_version": 1,  # JSON format version (not stored in device)
@@ -408,6 +430,7 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
     buzzers: list[PassiveBuzzer] = []
     nfc_configs: list[NfcConfig] = []
     flash_configs: list[FlashConfig] = []
+    data_extended: DataExtended | None = None
 
     version = data.get("version", 1)
     minor_version = data.get("minor_version", 0)
@@ -640,6 +663,19 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                 )
             )
 
+        elif packet_id == 44:  # 0x2c = data_extended
+            data_extended = DataExtended.from_strings(
+                manufacturer_name=str(fields.get("manufacturer_name", "")),
+                model_name=str(fields.get("model_name", "")),
+                serial_number=str(fields.get("serial_number", "")),
+                friendly_name=str(fields.get("friendly_name", "")),
+                device_location=str(fields.get("device_location", "")),
+                device_id=str(fields.get("device_id", "")),
+                custom_string_1=str(fields.get("custom_string_1", "")),
+                custom_string_2=str(fields.get("custom_string_2", "")),
+                custom_string_3=str(fields.get("custom_string_3", "")),
+            )
+
     missing_required = []
     if system is None:
         missing_required.append("system")
@@ -671,6 +707,7 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
         buzzers=buzzers,
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
+        data_extended=data_extended,
         version=version,
         minor_version=minor_version,
         loaded=True,

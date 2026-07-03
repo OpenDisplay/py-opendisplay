@@ -13,6 +13,7 @@ from .capabilities import DeviceCapabilities
 from .config import (
     BinaryInputs,
     DataBus,
+    DataExtended,
     DisplayConfig,
     FlashConfig,
     GlobalConfig,
@@ -70,6 +71,7 @@ __all__ = [
     "config_from_json",
     "config_to_json",
     "DataBus",
+    "DataExtended",
     "DeviceCapabilities",
     "DisplayConfig",
     "FirmwareVersion",

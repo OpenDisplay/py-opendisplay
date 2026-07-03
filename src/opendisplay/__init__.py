@@ -39,6 +39,7 @@ from .models.capabilities import DeviceCapabilities
 from .models.config import (
     BinaryInputs,
     DataBus,
+    DataExtended,
     DisplayConfig,
     FlashConfig,
     GlobalConfig,
@@ -123,6 +124,7 @@ __all__ = [
     "PassiveBuzzer",
     "NfcConfig",
     "FlashConfig",
+    "DataExtended",
     "SecurityConfig",
     "TouchController",
     "WifiConfig",

@@ -39,6 +39,17 @@ from .enums import (
 )
 
 
+def _encode_c_string(value: str, size: int) -> bytes:
+    """Encode string into fixed-size null-padded C string bytes."""
+    encoded = value.encode("utf-8")
+    return encoded[:size].ljust(size, b"\x00")
+
+
+def _decode_c_string(value: bytes) -> str:
+    """Decode fixed-size C string bytes (truncate at first null byte)."""
+    return value.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
+
+
 @dataclass
 class SystemConfig:
     """System configuration (TLV packet type 0x01).
@@ -624,13 +635,12 @@ class WifiConfig:
     @staticmethod
     def encode_c_string(value: str, size: int) -> bytes:
         """Encode string into fixed-size null-padded C string bytes."""
-        encoded = value.encode("utf-8")
-        return encoded[:size].ljust(size, b"\x00")
+        return _encode_c_string(value, size)
 
     @staticmethod
     def decode_c_string(value: bytes) -> str:
         """Decode fixed-size C string bytes (truncate at first null byte)."""
-        return value.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
+        return _decode_c_string(value)
 
     @property
     def ssid_text(self) -> str:
@@ -1039,6 +1049,137 @@ class FlashConfig:
 
 
 @dataclass
+class DataExtended:
+    """Extended device identity strings (TLV packet type 0x2c, single instance).
+
+    Each field is a fixed 32-byte null-terminated UTF-8 string buffer,
+    zero-padded. Empty buffers decode to "".
+
+    Size: 288 bytes (9 x 32-byte string buffers)
+    """
+
+    manufacturer_name: bytes = bytes(32)
+    model_name: bytes = bytes(32)
+    serial_number: bytes = bytes(32)
+    friendly_name: bytes = bytes(32)
+    device_location: bytes = bytes(32)
+    device_id: bytes = bytes(32)
+    custom_string_1: bytes = bytes(32)
+    custom_string_2: bytes = bytes(32)
+    custom_string_3: bytes = bytes(32)
+
+    SIZE: ClassVar[int] = 288
+    FIELD_SIZE: ClassVar[int] = 32
+
+    @property
+    def manufacturer_name_text(self) -> str:
+        """Get manufacturer name as decoded text."""
+        return _decode_c_string(self.manufacturer_name)
+
+    @property
+    def model_name_text(self) -> str:
+        """Get model name as decoded text."""
+        return _decode_c_string(self.model_name)
+
+    @property
+    def serial_number_text(self) -> str:
+        """Get serial number as decoded text."""
+        return _decode_c_string(self.serial_number)
+
+    @property
+    def friendly_name_text(self) -> str:
+        """Get human-friendly device name as decoded text."""
+        return _decode_c_string(self.friendly_name)
+
+    @property
+    def device_location_text(self) -> str:
+        """Get device location as decoded text."""
+        return _decode_c_string(self.device_location)
+
+    @property
+    def device_id_text(self) -> str:
+        """Get unique device identifier as decoded text."""
+        return _decode_c_string(self.device_id)
+
+    @property
+    def custom_string_1_text(self) -> str:
+        """Get user-defined string field 1 as decoded text."""
+        return _decode_c_string(self.custom_string_1)
+
+    @property
+    def custom_string_2_text(self) -> str:
+        """Get user-defined string field 2 as decoded text."""
+        return _decode_c_string(self.custom_string_2)
+
+    @property
+    def custom_string_3_text(self) -> str:
+        """Get user-defined string field 3 as decoded text."""
+        return _decode_c_string(self.custom_string_3)
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> DataExtended:
+        """Parse from TLV packet data."""
+        if len(data) < cls.SIZE:
+            raise ValueError(f"Invalid DataExtended size: {len(data)} < {cls.SIZE}")
+
+        return cls(
+            manufacturer_name=data[0:32],
+            model_name=data[32:64],
+            serial_number=data[64:96],
+            friendly_name=data[96:128],
+            device_location=data[128:160],
+            device_id=data[160:192],
+            custom_string_1=data[192:224],
+            custom_string_2=data[224:256],
+            custom_string_3=data[256:288],
+        )
+
+    @classmethod
+    def from_strings(
+        cls,
+        *,
+        manufacturer_name: str = "",
+        model_name: str = "",
+        serial_number: str = "",
+        friendly_name: str = "",
+        device_location: str = "",
+        device_id: str = "",
+        custom_string_1: str = "",
+        custom_string_2: str = "",
+        custom_string_3: str = "",
+    ) -> DataExtended:
+        """Build extended identity data from user-facing string fields."""
+        return cls(
+            manufacturer_name=_encode_c_string(manufacturer_name, cls.FIELD_SIZE),
+            model_name=_encode_c_string(model_name, cls.FIELD_SIZE),
+            serial_number=_encode_c_string(serial_number, cls.FIELD_SIZE),
+            friendly_name=_encode_c_string(friendly_name, cls.FIELD_SIZE),
+            device_location=_encode_c_string(device_location, cls.FIELD_SIZE),
+            device_id=_encode_c_string(device_id, cls.FIELD_SIZE),
+            custom_string_1=_encode_c_string(custom_string_1, cls.FIELD_SIZE),
+            custom_string_2=_encode_c_string(custom_string_2, cls.FIELD_SIZE),
+            custom_string_3=_encode_c_string(custom_string_3, cls.FIELD_SIZE),
+        )
+
+    def to_bytes(self) -> bytes:
+        """Serialize to firmware packet bytes."""
+        return b"".join(
+            buf[: self.FIELD_SIZE].ljust(self.FIELD_SIZE, b"\x00")
+            for buf in (
+                self.manufacturer_name,
+                self.model_name,
+                self.serial_number,
+                self.friendly_name,
+                self.device_location,
+                self.device_id,
+                self.custom_string_1,
+                self.custom_string_2,
+                self.custom_string_3,
+            )
+        )
+
+
+@dataclass
 class GlobalConfig:
     """Complete device configuration parsed from TLV data.
 
@@ -1062,6 +1203,7 @@ class GlobalConfig:
     buzzers: list[PassiveBuzzer] = field(default_factory=list)
     nfc_configs: list[NfcConfig] = field(default_factory=list)
     flash_configs: list[FlashConfig] = field(default_factory=list)
+    data_extended: DataExtended | None = None
 
     # Metadata
     version: int = 0
