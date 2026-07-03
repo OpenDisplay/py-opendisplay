@@ -1,5 +1,14 @@
 # Changelog
 
+## [7.10.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.9.0...v7.10.0) (2026-07-03)
+
+
+### Features
+
+* Add adc_ladder() factory for ADC resistor-ladder binary inputs ([dab93b1](https://github.com/OpenDisplay/py-opendisplay/commit/dab93b19b5214b894e1866ba876371a33ca99064))
+* add Seeed board types 9-13 from live config tool ([bbbfa49](https://github.com/OpenDisplay/py-opendisplay/commit/bbbfa49fa6010942033f54173e1696ce26e6af80))
+* parse data_extended (0x2c) identity packet ([1116efe](https://github.com/OpenDisplay/py-opendisplay/commit/1116efee00d27be69d20e3cd0fe08160abbbd2bf))
+
 ## [7.9.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.8.0...v7.9.0) (2026-06-07)
 
 
