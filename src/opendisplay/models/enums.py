@@ -47,7 +47,11 @@ class DIYBoardType(IntEnum):
 
 
 class SeeedBoardType(IntEnum):
-    """Seeed board types."""
+    """Seeed board types.
+
+    Mirrors the ``board_type`` ``conditional_enum`` for ``manufacturer_id: 1``
+    in the Web config tool's ``config.yaml`` (source of truth).
+    """
 
     EE04 = 0
     EN04 = 1
@@ -58,6 +62,11 @@ class SeeedBoardType(IntEnum):
     EE05 = 6
     EN05 = 7
     RETERMINAL_E1003 = 8
+    RETERMINAL_STICKY = 9
+    OPENDISPLAY_426_MONO_KIT = 10
+    OPENDISPLAY_73_COLOR_KIT = 11
+    RETERMINAL_E1001 = 12
+    RETERMINAL_E1002 = 13
 
 
 class WaveshareBoardType(IntEnum):
@@ -196,6 +205,11 @@ _BOARD_TYPE_NAMES_SEEED: Final[dict[SeeedBoardType, str]] = {
     SeeedBoardType.EE05: "EE05",
     SeeedBoardType.EN05: "EN05",
     SeeedBoardType.RETERMINAL_E1003: "reTerminal E1003",
+    SeeedBoardType.RETERMINAL_STICKY: "reTerminal Sticky",
+    SeeedBoardType.OPENDISPLAY_426_MONO_KIT: 'OpenDisplay 4.26" Mono Kit',
+    SeeedBoardType.OPENDISPLAY_73_COLOR_KIT: 'OpenDisplay 7.3" Color Kit',
+    SeeedBoardType.RETERMINAL_E1001: "reTerminal E1001",
+    SeeedBoardType.RETERMINAL_E1002: "reTerminal E1002",
 }
 
 _BOARD_TYPE_NAMES_WAVESHARE: Final[dict[WaveshareBoardType, str]] = {

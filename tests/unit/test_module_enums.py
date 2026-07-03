@@ -90,11 +90,17 @@ class TestBoardTypeEnums:
         assert DIYBoardType.CUSTOM == 0
 
     def test_seeed_board_type_values(self):
-        """Test Seeed board type values."""
+        """Test Seeed board type values (mirror config.yaml board_type enum)."""
         assert SeeedBoardType.EE04 == 0
         assert SeeedBoardType.EN04 == 1
         assert SeeedBoardType.EE05 == 6
         assert SeeedBoardType.EN05 == 7
+        assert SeeedBoardType.RETERMINAL_E1003 == 8
+        assert SeeedBoardType.RETERMINAL_STICKY == 9
+        assert SeeedBoardType.OPENDISPLAY_426_MONO_KIT == 10
+        assert SeeedBoardType.OPENDISPLAY_73_COLOR_KIT == 11
+        assert SeeedBoardType.RETERMINAL_E1001 == 12
+        assert SeeedBoardType.RETERMINAL_E1002 == 13
 
     def test_waveshare_board_type_values(self):
         """Test Waveshare board type values."""
@@ -125,6 +131,13 @@ class TestBoardTypeEnums:
         assert get_board_type_name(BoardManufacturer.SOLUM, 4) == "M3 Silabs Pro"
         assert get_board_type_name(BoardManufacturer.SOLUM, 6) == "M3 Silabs Peghook"
         assert get_board_type_name(BoardManufacturer.OPENDISPLAY, 0) == "OD01"
+        # Seeed: types 9-13 added on the live config tool (reTerminal Sticky,
+        # OpenDisplay kits manufactured by Seeed, and older reTerminal models).
+        assert get_board_type_name(BoardManufacturer.SEEED, 9) == "reTerminal Sticky"
+        assert get_board_type_name(BoardManufacturer.SEEED, 10) == 'OpenDisplay 4.26" Mono Kit'
+        assert get_board_type_name(BoardManufacturer.SEEED, 11) == 'OpenDisplay 7.3" Color Kit'
+        assert get_board_type_name(BoardManufacturer.SEEED, 12) == "reTerminal E1001"
+        assert get_board_type_name(BoardManufacturer.SEEED, 13) == "reTerminal E1002"
         assert get_board_type_name(BoardManufacturer.SEEED, 99) is None
         assert get_board_type_name(99, 0) is None
 
