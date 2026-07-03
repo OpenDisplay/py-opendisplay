@@ -13,6 +13,7 @@ from opendisplay.models.config import (
     ManufacturerData,
     PowerOption,
     SystemConfig,
+    WifiConfig,
 )
 from opendisplay.models.config_json import config_from_json, config_to_json
 from opendisplay.protocol.config_parser import parse_tlv_config
@@ -147,6 +148,14 @@ class TestDataExtended:
     def test_too_short_raises(self):
         with pytest.raises(ValueError, match="Invalid DataExtended size"):
             DataExtended.from_bytes(bytes(DataExtended.SIZE - 1))
+
+    def test_wifi_config_c_string_helpers_unchanged(self):
+        # The helpers moved to module level; the public WifiConfig staticmethods
+        # must keep delegating with identical behavior.
+        assert WifiConfig.encode_c_string("abc", 8) == b"abc\x00\x00\x00\x00\x00"
+        assert WifiConfig.encode_c_string("x" * 10, 4) == b"xxxx"
+        assert WifiConfig.decode_c_string(b"abc\x00garbage") == "abc"
+        assert WifiConfig.decode_c_string(bytes(8)) == ""
 
 
 # ---------------------------------------------------------------------------
