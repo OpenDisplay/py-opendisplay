@@ -37,35 +37,18 @@ def encode_bitplanes(
     if image.mode != "P":
         raise ValueError(f"Expected palette image, got {image.mode}")
 
-    pixels = np.array(image)
-    height, width = pixels.shape
-
-    # Calculate output size (1bpp, 8 pixels per byte)
-    bytes_per_row = (width + 7) // 8
-    plane1 = bytearray(bytes_per_row * height)  # BW plane
-    plane2 = bytearray(bytes_per_row * height)  # R/Y plane
+    pixels = np.asarray(image)
 
     # Palette mapping:
     # Index 0 = Black -> BW=0, R/Y=0
     # Index 1 = White -> BW=1, R/Y=0
     # Index 2 = Red/Yellow -> BW=0, R/Y=1
+    # packbits(axis=1) zero-pads each row to a byte boundary (8 pixels per byte,
+    # MSB first).
+    plane1 = np.packbits(pixels == 1, axis=1).tobytes()  # BW plane
+    plane2 = np.packbits(pixels == 2, axis=1).tobytes()  # R/Y plane
 
-    for y in range(height):
-        for x in range(width):
-            byte_idx = y * bytes_per_row + x // 8
-            bit_idx = 7 - (x % 8)  # MSB first
-
-            palette_idx = pixels[y, x]
-
-            if palette_idx == 1:
-                # White - set BW plane
-                plane1[byte_idx] |= 1 << bit_idx
-            elif palette_idx == 2:
-                # Red/Yellow - set R/Y plane
-                plane2[byte_idx] |= 1 << bit_idx
-            # else: palette_idx == 0 (black) - both planes stay 0
-
-    return bytes(plane1), bytes(plane2)
+    return plane1, plane2
 
 
 def encode_gray4_bitplanes(
@@ -93,20 +76,12 @@ def encode_gray4_bitplanes(
     if image.mode != "P":
         raise ValueError(f"Expected palette image, got {image.mode}")
 
-    pixels = np.array(image)
-    height, width = pixels.shape
-    bytes_per_row = (width + 7) // 8
-    plane0 = bytearray(bytes_per_row * height)
-    plane1 = bytearray(bytes_per_row * height)
+    pixels = np.asarray(image)
 
-    for y in range(height):
-        for x in range(width):
-            byte_idx = y * bytes_per_row + x // 8
-            bit = 1 << (7 - (x % 8))  # MSB first
-            code = gray_codes[int(pixels[y, x]) & 0x03]
-            if code & 0x01:
-                plane0[byte_idx] |= bit
-            if code & 0x02:
-                plane1[byte_idx] |= bit
+    # Map each pixel's dither level (index 0..3) through the panel's gray-code
+    # table to a 2-bit stored code, then split into two 1-bit planes.
+    codes = np.asarray(gray_codes, dtype=np.uint8)[pixels & 0x03]
+    plane0 = np.packbits(codes & 0x01, axis=1).tobytes()
+    plane1 = np.packbits(codes & 0x02, axis=1).tobytes()
 
-    return bytes(plane0), bytes(plane1)
+    return plane0, plane1

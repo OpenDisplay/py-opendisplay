@@ -110,22 +110,11 @@ def encode_1bpp(image: Image.Image) -> bytes:
     if image.mode != "P":
         raise ValueError(f"Expected palette image, got {image.mode}")
 
-    pixels = np.array(image)
-    height, width = pixels.shape
+    pixels = np.asarray(image)
 
-    # Calculate output size (round up to byte boundary)
-    bytes_per_row = (width + 7) // 8
-    output = bytearray(bytes_per_row * height)
-
-    for y in range(height):
-        for x in range(width):
-            byte_idx = y * bytes_per_row + x // 8
-            bit_idx = 7 - (x % 8)  # MSB first
-
-            if pixels[y, x] > 0:  # Non-zero palette index = white
-                output[byte_idx] |= 1 << bit_idx
-
-    return bytes(output)
+    # Any non-zero palette index = white (bit set). packbits(axis=1) zero-pads
+    # each row to a byte boundary, matching the per-row layout above.
+    return np.packbits(pixels > 0, axis=1).tobytes()
 
 
 def encode_2bpp(image: Image.Image) -> bytes:
@@ -143,23 +132,18 @@ def encode_2bpp(image: Image.Image) -> bytes:
     if image.mode != "P":
         raise ValueError(f"Expected palette image, got {image.mode}")
 
-    pixels = np.array(image)
+    pixels = np.asarray(image)
     height, width = pixels.shape
 
-    # Calculate output size (round up to 4-pixel boundary)
-    bytes_per_row = (width + 3) // 4
-    output = bytearray(bytes_per_row * height)
-
-    for y in range(height):
-        for x in range(width):
-            byte_idx = y * bytes_per_row + x // 4
-            pixel_in_byte = x % 4
-            bit_shift = (3 - pixel_in_byte) * 2  # MSB first
-
-            palette_idx = pixels[y, x] & 0x03  # 2-bit value
-            output[byte_idx] |= palette_idx << bit_shift
-
-    return bytes(output)
+    # Mask to 2 bits, zero-pad the width to a multiple of 4 (matches the per-row
+    # byte boundary), then pack 4 pixels per byte MSB-first.
+    p = (pixels & 0x03).astype(np.uint8)
+    pad = (-width) % 4
+    if pad:
+        p = np.pad(p, ((0, 0), (0, pad)))
+    p = p.reshape(height, -1, 4)
+    packed = (p[:, :, 0] << 6) | (p[:, :, 1] << 4) | (p[:, :, 2] << 2) | p[:, :, 3]
+    return packed.astype(np.uint8).tobytes()
 
 
 def encode_4bpp(image: Image.Image, bwgbry_mapping: bool = False) -> bytes:
@@ -183,32 +167,22 @@ def encode_4bpp(image: Image.Image, bwgbry_mapping: bool = False) -> bytes:
     if image.mode != "P":
         raise ValueError(f"Expected palette image, got {image.mode}")
 
-    pixels = np.array(image)
+    pixels = np.asarray(image)
     height, width = pixels.shape
 
-    # BWGBRY firmware color mapping (Spectra 6 display)
-    # Palette indices to firmware values: 0→0, 1→1, 2→2, 3→3, 4→5, 5→6
-    BWGBRY_MAP = {0: 0, 1: 1, 2: 2, 3: 3, 4: 5, 5: 6}
+    idx = (pixels & 0x0F).astype(np.uint8)
 
-    # Calculate output size (round up to 2-pixel boundary)
-    bytes_per_row = (width + 1) // 2
-    output = bytearray(bytes_per_row * height)
+    # BWGBRY firmware color mapping (Spectra 6 display): palette indices to
+    # firmware values 0→0, 1→1, 2→2, 3→3, 4→5, 5→6, everything else → 0
+    # (preserving the previous dict.get(..., 0) default).
+    if bwgbry_mapping:
+        lut = np.array([0, 1, 2, 3, 5, 6] + [0] * 10, dtype=np.uint8)
+        idx = lut[idx]
 
-    for y in range(height):
-        for x in range(width):
-            byte_idx = y * bytes_per_row + x // 2
-
-            palette_idx = pixels[y, x] & 0x0F  # 4-bit value
-
-            # Apply BWGBRY mapping if needed
-            if bwgbry_mapping:
-                palette_idx = BWGBRY_MAP.get(palette_idx, 0)
-
-            if x % 2 == 0:
-                # High nibble
-                output[byte_idx] |= palette_idx << 4
-            else:
-                # Low nibble
-                output[byte_idx] |= palette_idx
-
-    return bytes(output)
+    # Zero-pad width to an even number (matches the per-row byte boundary),
+    # then pack 2 pixels per byte, high nibble first.
+    if width & 1:
+        idx = np.pad(idx, ((0, 0), (0, 1)))
+    idx = idx.reshape(height, -1, 2)
+    packed = (idx[:, :, 0] << 4) | idx[:, :, 1]
+    return packed.astype(np.uint8).tobytes()
