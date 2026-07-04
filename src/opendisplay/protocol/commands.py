@@ -301,8 +301,15 @@ def build_write_config_command(config_data: bytes) -> tuple[bytes, list[bytes]]:
     Protocol:
     - Single chunk (≤200 bytes): [0x00][0x41][config_data]
     - Multi-chunk (>200 bytes):
-      - First: [0x00][0x41][total_size:2LE][first_198_bytes]
+      - First: [0x00][0x41][total_size:2LE][first_200_bytes]
       - Rest: [0x00][0x42][chunk_data] (up to 200 bytes each)
+
+    The first chunk carries a full 200 data bytes (payload = size(2) + 200 = 202
+    bytes). Firmware only enters chunked mode when the payload length exceeds 200
+    and expects exactly [total:2LE][200 data]; a 198-byte first chunk (200-byte
+    payload) makes it take the single-chunk path and store the size header plus a
+    truncated config, then NACK every following 0x42 chunk, and also breaks its
+    ``expectedChunks = ceil(total / 200)`` accounting.
 
     Args:
         config_data: Complete serialized config data
@@ -320,7 +327,7 @@ def build_write_config_command(config_data: bytes) -> tuple[bytes, list[bytes]]:
 
         # Large config (>200 bytes)
         first_cmd, chunks = build_write_config_command(large_config)
-        # first_cmd: [0x00][0x41][total_size:2LE][first_198_bytes]
+        # first_cmd: [0x00][0x41][total_size:2LE][first_200_bytes]
         # chunks: [[0x00][0x42][chunk_data], ...]
     """
     cmd_write = CommandCode.WRITE_CONFIG.to_bytes(2, byteorder="big")
@@ -333,9 +340,9 @@ def build_write_config_command(config_data: bytes) -> tuple[bytes, list[bytes]]:
         return cmd_write + config_data, []
 
     # Multi-chunk mode (>200 bytes)
-    # First chunk: [cmd][total_size:2LE][first_198_bytes]
+    # First chunk: [cmd][total_size:2LE][first_200_bytes]
     total_size = config_len.to_bytes(2, byteorder="little")
-    first_chunk_data_size = CONFIG_CHUNK_SIZE - 2  # 198 bytes
+    first_chunk_data_size = CONFIG_CHUNK_SIZE  # 200 bytes
     first_chunk = cmd_write + total_size + config_data[:first_chunk_data_size]
 
     # Remaining chunks: [cmd][chunk_data] (up to 200 bytes each)

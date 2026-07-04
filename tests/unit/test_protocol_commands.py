@@ -4,6 +4,7 @@ from opendisplay.models.buzzer_activate import BuzzerActivateConfig
 from opendisplay.models.led_flash import LedFlashConfig, LedFlashStep
 from opendisplay.protocol.commands import (
     CHUNK_SIZE,
+    CONFIG_CHUNK_SIZE,
     CommandCode,
     build_buzzer_activate_command,
     build_direct_write_data_command,
@@ -14,6 +15,7 @@ from opendisplay.protocol.commands import (
     build_read_config_command,
     build_read_fw_version_command,
     build_reboot_command,
+    build_write_config_command,
 )
 
 
@@ -214,3 +216,42 @@ class TestBuildBuzzerActivateCommand:
         config = BuzzerActivateConfig.single_tone(frequency_hz=1000, duration_ms=100)
         with pytest.raises(ValueError, match="out of range"):
             build_buzzer_activate_command(256, config)
+
+
+class TestWriteConfigChunking:
+    """WRITE_CONFIG chunking must match the firmware's expectations (C4)."""
+
+    def test_single_chunk_when_within_limit(self):
+        data = b"\xab" * CONFIG_CHUNK_SIZE  # exactly 200 bytes -> single chunk
+        first, chunks = build_write_config_command(data)
+        assert chunks == []
+        assert first == CommandCode.WRITE_CONFIG.to_bytes(2, "big") + data
+
+    def test_first_chunk_carries_full_200_data_bytes(self):
+        # >200 bytes triggers chunked mode; the first chunk must carry a full
+        # 200 data bytes (payload = size(2) + 200 = 202 > 200) so the firmware
+        # enters chunked mode instead of the single-chunk path.
+        total = CONFIG_CHUNK_SIZE + 50  # 250 bytes
+        data = bytes(range(256))[:total]
+        first, chunks = build_write_config_command(data)
+
+        cmd_write = CommandCode.WRITE_CONFIG.to_bytes(2, "big")
+        # first = cmd(2) + total_size(2 LE) + 200 data
+        assert first[:2] == cmd_write
+        assert first[2:4] == total.to_bytes(2, "little")
+        assert first[4:] == data[:CONFIG_CHUNK_SIZE]
+        assert len(first[4:]) == CONFIG_CHUNK_SIZE
+
+        # remaining 50 bytes in a single 0x42 continuation chunk
+        cmd_chunk = CommandCode.WRITE_CONFIG_CHUNK.to_bytes(2, "big")
+        assert len(chunks) == 1
+        assert chunks[0] == cmd_chunk + data[CONFIG_CHUNK_SIZE:]
+
+    def test_chunk_count_matches_ceil_total_over_200(self):
+        import math
+
+        for total in (201, 400, 401, 605):
+            data = bytes((i % 256 for i in range(total)))
+            first, chunks = build_write_config_command(data)
+            # first chunk (200) + continuations (200 each) == ceil(total/200) chunks
+            assert 1 + len(chunks) == math.ceil(total / CONFIG_CHUNK_SIZE)
