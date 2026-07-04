@@ -299,15 +299,11 @@ def _parse_manufacturer_data(data: bytes) -> ManufacturerData:
     if len(data) < 22:
         raise ConfigParseError(f"ManufacturerData too short: {len(data)} bytes (need 22)")
 
-    mfg_id, board_type, board_rev = struct.unpack_from("<HBB", data, 0)
-    reserved = data[4:22]
-
-    return ManufacturerData(
-        manufacturer_id=mfg_id,
-        board_type=board_type,
-        board_revision=board_rev,
-        reserved=reserved,
-    )
+    # Delegate to the model so the simple-config fields (driver/display/power
+    # index + configured_at at offsets 4-15) and the true 6-byte reserved
+    # (offsets 16-21) are parsed once. Storing data[4:22] into reserved here
+    # would drop that metadata and corrupt it on a read-modify-write.
+    return ManufacturerData.from_bytes(data)
 
 
 def _parse_power_option(data: bytes) -> PowerOption:
@@ -331,7 +327,7 @@ def _parse_power_option(data: bytes) -> PowerOption:
         voltage_scaling_factor,
         deep_sleep_current_ua,
         deep_sleep_time_seconds,
-    ) = struct.unpack_from("<HbBBBBBHIH", data, 4)
+    ) = struct.unpack_from("<HBBBBBBHIH", data, 4)  # tx_power is uint8, not int8
 
     reserved = data[20:30]  # 10 reserved bytes, not 12
 
