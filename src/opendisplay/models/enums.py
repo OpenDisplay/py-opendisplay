@@ -163,6 +163,7 @@ class SensorType(IntEnum):
     HUMIDITY = 2
     AXP2101_PMIC = 3
     SHT40 = 4
+    BQ27220 = 5
 
 
 class WifiEncryption(IntEnum):

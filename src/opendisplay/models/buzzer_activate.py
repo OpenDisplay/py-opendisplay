@@ -1,4 +1,4 @@
-"""Typed buzzer activation config for firmware command 0x0075."""
+"""Typed buzzer activation config for firmware command 0x0077."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class BuzzerPattern:
 
 @dataclass(frozen=True, slots=True)
 class BuzzerActivateConfig:
-    """Full buzzer activation payload for command 0x0075."""
+    """Full buzzer activation payload for command 0x0077."""
 
     patterns: tuple[BuzzerPattern, ...]
     outer_repeats: int = 1  # 1–255

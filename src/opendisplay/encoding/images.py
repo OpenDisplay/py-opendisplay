@@ -88,7 +88,12 @@ def encode_image(
         # Palette indices 0-5 map to firmware values 0,1,2,3,5,6 (4 is skipped!)
         return encode_4bpp(image, bwgbry_mapping=True)
     if color_scheme == ColorScheme.GRAYSCALE_4:
-        return encode_2bpp(image)
+        # 4-gray needs two 1-bit controller planes, not packed 2bpp; the packed
+        # form is not accepted by any firmware path. prepare_image routes 4-gray
+        # through encode_gray4_bitplanes() instead.
+        raise ValueError(
+            f"Color scheme {color_scheme.name} requires two 1-bit planes, use encode_gray4_bitplanes() instead"
+        )
     if color_scheme == ColorScheme.GRAYSCALE_16:
         # 16-level grayscale uses 4bpp; palette indices 0-15 map directly (0=black, 15=white)
         return encode_4bpp(image)

@@ -94,6 +94,10 @@ class AdvertisementData:
         """
         if self.format_version != "v1":
             return None
+        # Valid start offsets are 0-6 within the 11-byte block; a negative value
+        # would index from the end and return garbage.
+        if not 0 <= start_byte <= 6:
+            return None
         if start_byte + 5 > len(self.dynamic_data):
             return None
         byte0 = self.dynamic_data[start_byte]
