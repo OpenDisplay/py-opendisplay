@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hmac
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -16,6 +17,7 @@ from PIL import Image
 
 from .crypto import (
     compute_challenge_response,
+    compute_server_proof,
     decrypt_response,
     derive_session_id,
     derive_session_key,
@@ -34,6 +36,7 @@ from .encoding import (
     zlib_window_bits,
 )
 from .exceptions import (
+    AuthenticationFailedError,
     AuthenticationRequiredError,
     AuthenticationSessionExistsError,
     BLETimeoutError,
@@ -591,10 +594,20 @@ class OpenDisplayDevice:
         challenge = compute_challenge_response(key, server_nonce, client_nonce, device_id)
         await self._conn.write_command(build_authenticate_step2(client_nonce, challenge))
         success_response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
-        parse_authenticate_success(success_response)  # raises on wrong key / error
+        server_proof = parse_authenticate_success(success_response)  # raises on wrong key / error
 
         # Derive session key and ID
-        self._session_key = derive_session_key(key, client_nonce, server_nonce, device_id)
+        session_key = derive_session_key(key, client_nonce, server_nonce, device_id)
+
+        # Verify the device's mutual-auth proof so we authenticate the device, not
+        # just the other way around. A device (or MITM) that returns status OK
+        # without knowing the master key cannot produce this CMAC. Constant-time
+        # compare to avoid leaking a timing side channel.
+        expected_proof = compute_server_proof(session_key, server_nonce, client_nonce, device_id)
+        if not hmac.compare_digest(server_proof, expected_proof):
+            raise AuthenticationFailedError("Device failed mutual authentication (server proof mismatch)")
+
+        self._session_key = session_key
         self._session_id = derive_session_id(self._session_key, client_nonce, server_nonce)
         self._nonce_counter = 0
         self._auth_time = time.monotonic()
