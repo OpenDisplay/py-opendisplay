@@ -158,11 +158,14 @@ def build_direct_write_partial_start(
     width: int,
     height: int,
     stream_bytes: bytes = b"",
+    max_start_payload: int = MAX_START_PAYLOAD,
 ) -> tuple[bytes, bytes]:
     """Build 0x76 partial START packet.
 
     Fixed payload is 17 bytes; optional initial stream bytes are appended up
-    to MAX_START_PAYLOAD total packet size (including the 2-byte command).
+    to max_start_payload total packet size (including the 2-byte command). Pass
+    ENCRYPTED_CHUNK_SIZE when a session is active so the plaintext fits the
+    encrypted packet budget, mirroring build_direct_write_start_compressed.
 
     Wire fixed payload:
       flags(1) + old_etag(4BE) + new_etag(4BE) + x(2BE) + y(2BE) +
@@ -187,7 +190,7 @@ def build_direct_write_partial_start(
     )  # 1+4+4+2+2+2+2 = 17 bytes
 
     cmd = CommandCode.DIRECT_WRITE_PARTIAL_START.to_bytes(2, byteorder="big")
-    max_initial = MAX_START_PAYLOAD - 2 - len(fixed)  # 200 - 2 - 17 = 181 bytes
+    max_initial = max_start_payload - 2 - len(fixed)  # e.g. 200 - 2 - 17 = 181 bytes
     initial = stream_bytes[:max_initial]
     remaining = stream_bytes[max_initial:]
     return cmd + fixed + initial, remaining

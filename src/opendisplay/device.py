@@ -46,7 +46,6 @@ from .models.enums import BoardManufacturer, FitMode, RefreshMode, Rotation
 from .models.firmware import FirmwareVersion
 from .models.led_flash import LedFlashConfig
 from .partial import (
-    ERR_ETAG_MISMATCH,
     PARTIAL_FLAG_COMPRESSED,
     PartialState,
     _generate_etag,
@@ -1161,7 +1160,7 @@ class OpenDisplayDevice:
 
         upload_refresh_mode = RefreshMode.FULL if state is not None else refresh_mode
         full_upload_etag = _generate_etag() if state is not None else None
-        await self._dispatch_upload(
+        etag_committed = await self._dispatch_upload(
             image_data,
             upload_refresh_mode,
             compress,
@@ -1172,7 +1171,7 @@ class OpenDisplayDevice:
 
         _LOGGER.info("Image upload complete")
         if state is not None:
-            self._update_partial_state(state, processed_image, image_data, full_upload_etag)
+            self._update_partial_state(state, processed_image, image_data, full_upload_etag if etag_committed else None)
         return processed_image
 
     async def upload_prepared_image(
@@ -1215,7 +1214,7 @@ class OpenDisplayDevice:
 
         upload_refresh_mode = RefreshMode.FULL if state is not None else refresh_mode
         full_upload_etag = _generate_etag() if state is not None else None
-        await self._dispatch_upload(
+        etag_committed = await self._dispatch_upload(
             image_data,
             upload_refresh_mode,
             compress,
@@ -1225,7 +1224,7 @@ class OpenDisplayDevice:
         )
         _LOGGER.info("Prepared image upload complete")
         if state is not None:
-            self._update_partial_state(state, processed_image, image_data, full_upload_etag)
+            self._update_partial_state(state, processed_image, image_data, full_upload_etag if etag_committed else None)
 
     async def _dispatch_upload(
         self,
@@ -1235,8 +1234,12 @@ class OpenDisplayDevice:
         compressed_data: bytes | None,
         progress_callback: Callable[[int, int], None] | None,
         new_etag: int | None = None,
-    ) -> None:
-        """Choose compressed or uncompressed upload protocol and execute it."""
+    ) -> bool:
+        """Choose compressed or uncompressed upload protocol and execute it.
+
+        Returns True if the device committed ``new_etag`` (END-with-etag was
+        sent), False if the firmware auto-completed the upload.
+        """
         display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
         supports_compression = display_cfg.supports_zip if display_cfg else True
         uses_zipxl_window = bool(display_cfg and display_cfg.supports_zipxl)
@@ -1253,7 +1256,7 @@ class OpenDisplayDevice:
                 len(compressed_data),
                 zlib_window_bits(compressed_data) or 0,
             )
-            await self._execute_upload(
+            return await self._execute_upload(
                 image_data,
                 refresh_mode,
                 use_compression=True,
@@ -1262,23 +1265,23 @@ class OpenDisplayDevice:
                 progress_callback=progress_callback,
                 new_etag=new_etag,
             )
+
+        # 4-gray ships the same two split planes (plane0 ++ plane1) over either
+        # transport; the firmware streams them to PLANE_0/PLANE_1 whether they
+        # arrive compressed or as raw 0x71 chunks, so no special-casing here.
+        if compress and not supports_compression:
+            _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
+        elif compress and compressed_data:
+            _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
         else:
-            # 4-gray ships the same two split planes (plane0 ++ plane1) over either
-            # transport; the firmware streams them to PLANE_0/PLANE_1 whether they
-            # arrive compressed or as raw 0x71 chunks, so no special-casing here.
-            if compress and not supports_compression:
-                _LOGGER.info("Device does not support compressed uploads, using uncompressed protocol")
-            elif compress and compressed_data:
-                _LOGGER.info("Compressed size exceeds %d bytes, using uncompressed protocol", MAX_COMPRESSED_SIZE)
-            else:
-                _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
-            await self._execute_upload(
-                image_data,
-                refresh_mode,
-                use_compression=False,
-                progress_callback=progress_callback,
-                new_etag=new_etag,
-            )
+            _LOGGER.info("Compression disabled or no compressed data, using uncompressed protocol")
+        return await self._execute_upload(
+            image_data,
+            refresh_mode,
+            use_compression=False,
+            progress_callback=progress_callback,
+            new_etag=new_etag,
+        )
 
     def _update_partial_state(
         self,
@@ -1287,15 +1290,23 @@ class OpenDisplayDevice:
         image_data: bytes,
         etag: int | None = None,
     ) -> None:
-        """After a successful full upload, refresh state to reflect what's now on the panel.
+        """After a full upload, refresh state to reflect what's now on the panel.
 
-        Stores the etag committed to the device on 0x72 (or generates one if
-        absent), then stashes the palette pixels for diffing on the next call.
+        ``etag`` is the etag committed to the device via END-with-etag, or None
+        if the upload auto-completed (no etag was committed). When None, the
+        device's displayed_etag was never set, so populating state.etag would
+        make the next partial attempt fail ERR_ETAG_MISMATCH (or match a stale
+        device etag and render against the wrong old plane). In that case
+        invalidate the partial state so the next upload goes full.
         ``image_data`` is unused but kept for API symmetry.
         """
         del image_data
+        if etag is None:
+            state.etag = 0
+            state.last_image = None
+            return
         palette_image = processed_image.convert("P") if processed_image.mode != "P" else processed_image
-        state.etag = _generate_etag() if etag is None else etag
+        state.etag = etag
         state.last_image = palette_image.tobytes()
         state.width, state.height = processed_image.size
         state.bytes_per_pixel = 1
@@ -1306,8 +1317,13 @@ class OpenDisplayDevice:
         stream_bytes: bytes,
         state: PartialState,
         progress_callback: Callable[[int, int], None] | None = None,
-    ) -> None:
-        """Send remaining 0x71 chunks and update upload progress."""
+    ) -> str:
+        """Send remaining 0x71 chunks and update upload progress.
+
+        Returns "success", or "fallback_full" if the device NACKed a chunk
+        before the refresh started (firmware aborts the partial on such a NACK,
+        so a subsequent full upload is safe).
+        """
         chunk_size = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else CHUNK_SIZE
         total_stream_bytes = len(stream_bytes)
         bytes_sent = total_stream_bytes - len(remaining)
@@ -1319,14 +1335,20 @@ class OpenDisplayDevice:
             nack = parse_nack(ack)
             if nack is not None:
                 opcode, err = nack
+                _LOGGER.info(
+                    "Partial upload rejected mid-stream (opcode=0x%02x err=0x%02x); falling back to full upload",
+                    opcode,
+                    err,
+                )
                 state.etag = 0
                 state.last_image = None
-                raise ProtocolError(f"Partial 0x71 NACK: opcode=0x{opcode:02x} err=0x{err:02x}")
+                return "fallback_full"
             validate_ack_response(ack, CommandCode.DIRECT_WRITE_DATA)
             offset += len(chunk)
             bytes_sent += len(chunk)
             if progress_callback is not None:
                 progress_callback(bytes_sent, total_stream_bytes)
+        return "success"
 
     async def _maybe_upload_partial(
         self,
@@ -1400,6 +1422,7 @@ class OpenDisplayDevice:
 
         # Start partial upload (0x76), stream remaining 0x71 chunks, and finish
         # with partial refresh.
+        max_start = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else MAX_START_PAYLOAD
         start_pkt, remaining = build_direct_write_partial_start(
             old_etag=state.etag,
             new_etag=new_etag,
@@ -1409,6 +1432,7 @@ class OpenDisplayDevice:
             width=region.rw,
             height=region.rh,
             stream_bytes=stream_bytes,
+            max_start_payload=max_start,
         )
         await self._write(start_pkt)
         try:
@@ -1416,18 +1440,25 @@ class OpenDisplayDevice:
             nack = parse_nack(response)
             if nack is not None:
                 opcode, err = nack
-                if opcode == 0x76 and err == ERR_ETAG_MISMATCH:
-                    _LOGGER.info("Partial upload: etag mismatch; falling back to full upload")
-                    state.etag = 0
-                    state.last_image = None
-                    return "fallback_full"
-                raise ProtocolError(f"Partial 0x76 NACK: opcode=0x{opcode:02x} err=0x{err:02x}")
+                # No partial data has been applied yet, so any pre-refresh 0x76
+                # NACK (etag mismatch, rect OOB/align, flags, unsupported, ...) is
+                # safe to recover from by falling back to a full upload rather than
+                # raising and losing the upload entirely.
+                _LOGGER.info(
+                    "Partial upload rejected at START (opcode=0x%02x err=0x%02x); falling back to full upload",
+                    opcode,
+                    err,
+                )
+                state.etag = 0
+                state.last_image = None
+                return "fallback_full"
             validate_ack_response(response, CommandCode.DIRECT_WRITE_PARTIAL_START)
         except (BLETimeoutError, InvalidResponseError):
             _LOGGER.info("Partial upload start was not acknowledged; falling back to full upload")
             return "fallback_full"
 
-        await self._send_partial_chunks(remaining, stream_bytes, state, progress_callback)
+        if await self._send_partial_chunks(remaining, stream_bytes, state, progress_callback) == "fallback_full":
+            return "fallback_full"
 
         await self._write(build_direct_write_end_command(RefreshMode.PARTIAL.value))
         response = await self._read(self.TIMEOUT_ACK)
@@ -1456,7 +1487,7 @@ class OpenDisplayDevice:
         uncompressed_size: int | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
         new_etag: int | None = None,
-    ) -> None:
+    ) -> bool:
         """Execute image upload using compressed or uncompressed protocol.
 
         Args:
@@ -1465,6 +1496,10 @@ class OpenDisplayDevice:
             use_compression: True to use compressed protocol
             compressed_data: Compressed data (required if use_compression=True)
             uncompressed_size: Original size (required if use_compression=True)
+
+        Returns:
+            True if ``new_etag`` was committed via END-with-etag, False if the
+            firmware auto-completed the upload (no etag committed).
 
         Raises:
             ProtocolError: If upload fails
@@ -1537,6 +1572,10 @@ class OpenDisplayDevice:
         if command != CommandCode.DIRECT_WRITE_REFRESH_COMPLETE:
             raise ProtocolError(f"Unexpected response waiting for refresh: {command.name} (0x{command:04x})")
         _LOGGER.info("Display refresh complete")
+
+        # The etag is only committed on the device when we send END-with-etag;
+        # a firmware auto-END (auto_completed) never sets displayed_etag.
+        return not auto_completed and new_etag is not None
 
     async def _send_data_chunks(
         self,

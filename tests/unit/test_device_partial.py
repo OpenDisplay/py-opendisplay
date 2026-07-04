@@ -137,10 +137,11 @@ def test_empty_state_falls_back_to_full(monkeypatch):
     full_uploads = 0
     refresh_modes: list[RefreshMode] = []
 
-    async def execute_upload(image_data, refresh_mode, **kwargs) -> None:
+    async def execute_upload(image_data, refresh_mode, **kwargs) -> bool:
         nonlocal full_uploads
         full_uploads += 1
         refresh_modes.append(refresh_mode)
+        return True  # etag committed (END-with-etag sent)
 
     monkeypatch.setattr(device, "_execute_upload", execute_upload)
 
@@ -152,6 +153,23 @@ def test_empty_state_falls_back_to_full(monkeypatch):
     assert refresh_modes == [RefreshMode.FULL]
     assert state.etag != 0
     assert state.last_image == _image().tobytes()
+
+
+def test_auto_completed_full_upload_does_not_commit_etag(monkeypatch):
+    """If the firmware auto-completes the upload (no END-with-etag), partial
+    state must be invalidated rather than storing an uncommitted etag (M2)."""
+    device = _device()
+    state = PartialState()
+
+    async def execute_upload(image_data, refresh_mode, **kwargs) -> bool:
+        return False  # firmware auto-completed; etag not committed
+
+    monkeypatch.setattr(device, "_execute_upload", execute_upload)
+
+    asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, _image()), state=state))
+
+    assert state.etag == 0
+    assert state.last_image is None
 
 
 def test_etag_mismatch_clears_state_and_retries_full_once(monkeypatch):
@@ -166,10 +184,11 @@ def test_etag_mismatch_clears_state_and_retries_full_once(monkeypatch):
     async def read_response(timeout: float) -> bytes:
         return bytes([0xFF, 0x76, ERR_ETAG_MISMATCH, 0x00])
 
-    async def execute_upload(image_data, refresh_mode, **kwargs) -> None:
+    async def execute_upload(image_data, refresh_mode, **kwargs) -> bool:
         nonlocal full_uploads
         full_uploads += 1
         refresh_modes.append(refresh_mode)
+        return True  # etag committed (END-with-etag sent)
 
     monkeypatch.setattr(device, "_write", capture_write)
     monkeypatch.setattr(device, "_read", read_response)
@@ -181,6 +200,60 @@ def test_etag_mismatch_clears_state_and_retries_full_once(monkeypatch):
     assert refresh_modes == [RefreshMode.FULL]
     assert state.etag != 0
     assert state.last_image == _image(changed=True).tobytes()
+
+
+def test_non_etag_start_nack_falls_back_to_full(monkeypatch):
+    """Any pre-refresh 0x76 NACK (not just etag mismatch) must fall back to a
+    full upload rather than raising ProtocolError (M1)."""
+    from opendisplay.partial import ERR_RECT_ALIGN
+
+    device = _device()
+    state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
+    full_uploads = 0
+
+    async def capture_write(data: bytes) -> None:
+        pass
+
+    async def read_response(timeout: float) -> bytes:
+        return bytes([0xFF, 0x76, ERR_RECT_ALIGN, 0x00])
+
+    async def execute_upload(image_data, refresh_mode, **kwargs) -> bool:
+        nonlocal full_uploads
+        full_uploads += 1
+        return True
+
+    monkeypatch.setattr(device, "_write", capture_write)
+    monkeypatch.setattr(device, "_read", read_response)
+    monkeypatch.setattr(device, "_execute_upload", execute_upload)
+
+    # Must not raise; must fall back to a single full upload.
+    asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, _image(changed=True)), state=state))
+
+    assert full_uploads == 1
+
+
+def test_non_mono_scheme_never_attempts_partial(monkeypatch):
+    """Only MONO panels may attempt a partial update (M1)."""
+    from opendisplay.partial import compute_partial_region
+
+    state = PartialState(etag=0x01, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
+    for scheme in (ColorScheme.BWRY, ColorScheme.BWGBRY, ColorScheme.GRAYSCALE_16, ColorScheme.GRAYSCALE_4):
+        result = compute_partial_region(_image(changed=True), state, _config(), scheme)
+        assert result == "fallback_full"
+
+
+def test_partial_start_respects_encrypted_payload_budget():
+    """Encrypted partial START must cap its inline payload at the encrypted
+    packet budget, like the compressed START (M10)."""
+    from opendisplay.protocol.commands import ENCRYPTED_CHUNK_SIZE, build_direct_write_partial_start
+
+    stream = b"\xab" * 500
+    pkt_default, _ = build_direct_write_partial_start(0, 1, 0, 0, 0, 8, 8, stream_bytes=stream)
+    pkt_enc, rem_enc = build_direct_write_partial_start(
+        0, 1, 0, 0, 0, 8, 8, stream_bytes=stream, max_start_payload=ENCRYPTED_CHUNK_SIZE
+    )
+    assert len(pkt_enc) <= ENCRYPTED_CHUNK_SIZE
+    assert len(pkt_enc) < len(pkt_default)
 
 
 def test_partial_request_uses_partial_even_when_full_compressed_is_smaller(monkeypatch):

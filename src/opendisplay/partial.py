@@ -40,9 +40,6 @@ NACK_PREFIX = 0xFF
 # 0x76 flag bits
 PARTIAL_FLAG_COMPRESSED = 0x01  # bit 0: stream is zlib-compressed
 
-# pixels_per_byte for each bits_per_pixel value
-_PIXELS_PER_BYTE: dict[int, int] = {1: 8, 2: 4, 4: 2, 8: 1}
-
 
 def parse_nack(response: bytes) -> tuple[int, int] | None:
     """Return (opcode, error_code) if response is a 4-byte {0xFF, op, err, 0x00} NACK.
@@ -85,9 +82,11 @@ def compute_partial_region(
     if not display.partial_update_support:
         return "fallback_full"
 
-    # Firmware only supports partial refresh on 1bpp panels; 4-gray (and the
-    # 3-color schemes) are rejected, so don't attempt a doomed partial round-trip.
-    if color_scheme in (ColorScheme.BWR, ColorScheme.BWY, ColorScheme.GRAYSCALE_4):
+    # Firmware only allows partial refresh when getBitsPerPixel() == 1, i.e. MONO,
+    # and requires x/width to be multiples of 8 regardless of bpp. Every other
+    # scheme is either rejected (ERR_PARTIAL_UNSUPPORTED) or aligns to 4/2 pixels
+    # and gets ERR_RECT_ALIGN, so don't attempt a doomed partial round-trip.
+    if color_scheme != ColorScheme.MONO:
         return "fallback_full"
 
     width, height = processed_image.size
@@ -104,16 +103,8 @@ def compute_partial_region(
     if bbox is None:
         return "no_change"
 
-    bpp = {
-        ColorScheme.MONO: 1,
-        ColorScheme.BWRY: 2,
-        ColorScheme.GRAYSCALE_4: 2,
-        ColorScheme.BWGBRY: 4,
-        ColorScheme.GRAYSCALE_16: 4,
-    }.get(color_scheme, 1)
-    pixels_per_byte = _PIXELS_PER_BYTE.get(bpp, 8)
-
-    rx, ry, rw, rh = align_rect(*bbox, width, height, pixels_per_byte)
+    # MONO packs 8 pixels/byte and firmware requires 8-pixel x/width alignment.
+    rx, ry, rw, rh = align_rect(*bbox, width, height, pixels_per_byte=8)
     if rw == 0 or rh == 0:
         return "fallback_full"
 
