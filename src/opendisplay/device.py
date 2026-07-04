@@ -689,6 +689,13 @@ class OpenDisplayDevice:
 
         # Read first chunk
         response = await self._read(self.TIMEOUT_FIRST_CHUNK)
+
+        # Firmware answers a device-with-no-config with the 4-byte error frame
+        # {0xFF, 0x40, 0x00, 0x00}. Without this check the {0x00,0x00} length
+        # field is misread as a zero-length config instead of "no config".
+        if len(response) == 4 and response[0] == 0xFF and response[1] == CommandCode.READ_CONFIG:
+            raise ProtocolError("Device has no stored configuration (READ_CONFIG returned an error frame)")
+
         chunk_data = strip_command_echo(response, CommandCode.READ_CONFIG)
 
         # Parse first chunk header
