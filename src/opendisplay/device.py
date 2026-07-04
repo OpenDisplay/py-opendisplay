@@ -148,6 +148,47 @@ def _capabilities_from_config(config: GlobalConfig) -> DeviceCapabilities:
     )
 
 
+# pixels-per-byte for each direct-write color scheme. GRAYSCALE_4 is omitted:
+# firmware row-pads its upload, so a non-aligned width is safe there.
+_DIRECT_WRITE_PIXELS_PER_BYTE: dict[ColorScheme, int] = {
+    ColorScheme.MONO: 8,
+    ColorScheme.BWR: 8,
+    ColorScheme.BWY: 8,
+    ColorScheme.BWRY: 4,
+    ColorScheme.BWGBRY: 2,
+    ColorScheme.GRAYSCALE_16: 2,
+}
+
+
+def _warn_firmware_upload_limitations(color_scheme: ColorScheme, width: int) -> None:
+    """Warn about known device-firmware upload bugs the library can't fix on-device.
+
+    - BWR/BWY direct write drops the red/yellow plane on current firmware (C1).
+    - Widths not aligned to the scheme's byte boundary are truncated because the
+      firmware sizes the upload from the raw pixel count (C2). GRAYSCALE_4 is
+      exempt because firmware row-pads it.
+    """
+    if color_scheme in (ColorScheme.BWR, ColorScheme.BWY):
+        _LOGGER.warning(
+            "Color scheme %s (BWR/BWY direct write) is not reliably supported by current "
+            "firmware: it stores only one plane, so the red/yellow layer is discarded and "
+            "the black/white layer renders over stale color RAM. Output may be wrong until "
+            "device firmware gains BWR/BWY parity.",
+            color_scheme.name,
+        )
+
+    ppb = _DIRECT_WRITE_PIXELS_PER_BYTE.get(color_scheme)
+    if ppb is not None and width % ppb != 0:
+        _LOGGER.warning(
+            "Panel width %d is not a multiple of %d for color scheme %s; current firmware "
+            "sizes the upload from the raw pixel count and will truncate the last rows on "
+            "the device. A byte-aligned width avoids this.",
+            width,
+            ppb,
+            color_scheme.name,
+        )
+
+
 def prepare_image(
     image: Image.Image,
     config: GlobalConfig | None = None,
@@ -228,6 +269,8 @@ def prepare_image(
             "Panel IC 0x%04x is not a known 4-gray panel. GRAYSCALE_4 encoding may not display correctly.",
             panel_ic_type,
         )
+
+    _warn_firmware_upload_limitations(color_scheme, capabilities.width)
 
     palette = get_palette_for_display(panel_ic_type, color_scheme, use_measured_palettes)
     dithered = dither_image(
