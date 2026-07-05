@@ -1397,14 +1397,18 @@ class OpenDisplayDevice:
         display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
         supports_compression = display_cfg.supports_zip if display_cfg else True
         uses_zipxl_window = bool(display_cfg and display_cfg.supports_zipxl)
-        if compress and supports_compression:
-            if uses_zipxl_window:
-                if compressed_data is None or zlib_window_bits(compressed_data) != ZIPXL_ZLIB_WINDOW_BITS:
-                    compressed_data = compress_image_data(image_data, level=6, window_bits=ZIPXL_ZLIB_WINDOW_BITS)
-            elif compressed_data is None:
-                # Lazy compression for the deferred/partial-fallback path: matches
-                # what prepare_image would have produced for a non-ZIPXL device.
-                compressed_data = compress_image_data(image_data, level=6, window_bits=DEFAULT_ZLIB_WINDOW_BITS)
+        if (
+            compress
+            and supports_compression
+            and (
+                compressed_data is None
+                or (uses_zipxl_window and zlib_window_bits(compressed_data) != ZIPXL_ZLIB_WINDOW_BITS)
+            )
+        ):
+            # Firmware only accepts zlib streams with a <=9-bit window regardless
+            # of ZIPXL (see prepare_image), so the lazy deferred/partial-fallback
+            # compression must use it too.
+            compressed_data = compress_image_data(image_data, level=6, window_bits=ZIPXL_ZLIB_WINDOW_BITS)
 
         within_compressed_limit = compressed_data is not None and (
             uses_zipxl_window or len(compressed_data) < MAX_COMPRESSED_SIZE
