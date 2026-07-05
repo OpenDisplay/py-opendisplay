@@ -190,7 +190,7 @@ class ManufacturerData:
 class PowerOption:
     """Power configuration (TLV packet type 0x04).
 
-    Size: 32 bytes (packed struct from firmware)
+    Size: 30 bytes (packed struct from firmware)
     """
 
     power_mode: int  # uint8
@@ -233,7 +233,7 @@ class PowerOption:
         """Return True if device has a battery sense circuit."""
         return self.battery_sense_pin != 0xFF
 
-    SIZE: ClassVar[int] = 32
+    SIZE: ClassVar[int] = 30
 
     @classmethod
     def from_bytes(cls, data: bytes) -> PowerOption:
@@ -254,7 +254,7 @@ class PowerOption:
             voltage_scaling_factor=int.from_bytes(data[12:14], "little"),
             deep_sleep_current_ua=int.from_bytes(data[14:18], "little"),
             deep_sleep_time_seconds=int.from_bytes(data[18:20], "little"),
-            reserved=data[20:32],
+            reserved=data[20:30],
         )
 
 
@@ -350,7 +350,7 @@ class DisplayConfig:
         except ValueError:
             return _INDEX_TO_ROTATION.get(self.rotation, self.rotation)
 
-    SIZE: ClassVar[int] = 66
+    SIZE: ClassVar[int] = 46
 
     @classmethod
     def from_bytes(cls, data: bytes) -> DisplayConfig:
@@ -379,7 +379,7 @@ class DisplayConfig:
             clk_pin=data[23],
             reserved_pins=data[24:31],  # pins 2-8
             full_update_mC=int.from_bytes(data[31:33], "little"),
-            reserved=data[33:66],
+            reserved=data[33:46],
         )
 
 
@@ -471,7 +471,7 @@ class SensorData:
 class DataBus:
     """Data bus configuration (TLV packet type 0x24, repeatable max 4).
 
-    Size: 28 bytes (packed struct from firmware)
+    Size: 30 bytes (packed struct from firmware)
     """
 
     instance_number: int  # uint8
@@ -489,7 +489,7 @@ class DataBus:
     pulldowns: int  # uint8 bitfield
     reserved: bytes  # 14 bytes
 
-    SIZE: ClassVar[int] = 28
+    SIZE: ClassVar[int] = 30
 
     @classmethod
     def from_bytes(cls, data: bytes) -> DataBus:
@@ -511,7 +511,7 @@ class DataBus:
             bus_flags=data[13],
             pullups=data[14],
             pulldowns=data[15],
-            reserved=data[16:28],
+            reserved=data[16:30],
         )
 
     @property

@@ -99,7 +99,7 @@ def serialize_system_config(config: SystemConfig) -> bytes:
     )
 
     reserved = config.reserved if config.reserved else b"\x00" * 15
-    data += reserved[:15]
+    data += reserved[:15].ljust(15, b"\x00")
     data += bytes([config.pwr_pin_2 & 0xFF, config.pwr_pin_3 & 0xFF])
     return data
 
@@ -138,7 +138,7 @@ def serialize_manufacturer_data(config: ManufacturerData) -> bytes:
 
     # Pad with reserved bytes to 22 total
     reserved = config.reserved if config.reserved else b"\x00" * 6
-    return data + reserved[:6]
+    return data + reserved[:6].ljust(6, b"\x00")
 
 
 def serialize_power_option(config: PowerOption) -> bytes:
@@ -148,7 +148,7 @@ def serialize_power_option(config: PowerOption) -> bytes:
     - power_mode: uint8
     - battery_capacity_mah: 3 bytes (24-bit LE)
     - sleep_timeout_ms: uint16
-    - tx_power: int8 (signed)
+    - tx_power: uint8
     - sleep_flags: uint8
     - battery_sense_pin: uint8
     - battery_sense_enable_pin: uint8
@@ -176,9 +176,9 @@ def serialize_power_option(config: PowerOption) -> bytes:
         capacity_bytes = config.battery_capacity_mah.to_bytes(3, byteorder="little")
         data += capacity_bytes
 
-    # Pack remaining fields
+    # Pack remaining fields (tx_power is uint8, not int8)
     data += struct.pack(
-        "<HbBBBBBHIH",
+        "<HBBBBBBHIH",
         config.sleep_timeout_ms,
         config.tx_power,
         config.sleep_flags,
@@ -193,7 +193,7 @@ def serialize_power_option(config: PowerOption) -> bytes:
 
     # Pad with reserved bytes to 30 total
     reserved = config.reserved if config.reserved else b"\x00" * 10
-    return data + reserved[:10]
+    return data + reserved[:10].ljust(10, b"\x00")
 
 
 def serialize_display_config(config: DisplayConfig) -> bytes:
@@ -253,7 +253,7 @@ def serialize_display_config(config: DisplayConfig) -> bytes:
 
     # Add reserved pins (7 bytes)
     reserved_pins = config.reserved_pins if config.reserved_pins else b"\xff" * 7
-    data += reserved_pins[:7]
+    data += reserved_pins[:7].ljust(7, b"\xff")
 
     # full_update_mC (uint16 LE) sits between reserved_pins and reserved in the
     # firmware struct; omitting it truncates the packet and the device drops the display.
@@ -297,7 +297,7 @@ def serialize_led_config(config: LedConfig) -> bytes:
 
     # Pad with reserved bytes to 22 total
     reserved = config.reserved if config.reserved else b"\x00" * 15
-    return data + reserved[:15]
+    return data + reserved[:15].ljust(15, b"\x00")
 
 
 def serialize_sensor_data(config: SensorData) -> bytes:
@@ -327,7 +327,7 @@ def serialize_sensor_data(config: SensorData) -> bytes:
 
     data += bytes([config.i2c_addr_7bit & 0xFF, config.msd_data_start_byte & 0xFF])
     reserved = config.reserved if config.reserved else b"\x00" * 24
-    return data + reserved[:24]
+    return data + reserved[:24].ljust(24, b"\x00")
 
 
 def serialize_data_bus(config: DataBus) -> bytes:
@@ -369,7 +369,7 @@ def serialize_data_bus(config: DataBus) -> bytes:
 
     # Pad with reserved bytes to 30 total
     reserved = config.reserved if config.reserved else b"\x00" * 14
-    return data + reserved[:14]
+    return data + reserved[:14].ljust(14, b"\x00")
 
 
 def serialize_binary_inputs(config: BinaryInputs) -> bytes:
@@ -403,7 +403,7 @@ def serialize_binary_inputs(config: BinaryInputs) -> bytes:
 
     # Add reserved pins (8 bytes)
     reserved_pins = config.reserved_pins if config.reserved_pins else b"\x00" * 8
-    data += reserved_pins[:8]
+    data += reserved_pins[:8].ljust(8, b"\x00")
 
     # Add flags
     data += struct.pack(
@@ -419,7 +419,7 @@ def serialize_binary_inputs(config: BinaryInputs) -> bytes:
 
     # Pad with reserved bytes to 30 total
     reserved = config.reserved if config.reserved else b"\x00" * 14
-    return data + reserved[:14]
+    return data + reserved[:14].ljust(14, b"\x00")
 
 
 def serialize_security_config(config: SecurityConfig) -> bytes:
@@ -429,7 +429,7 @@ def serialize_security_config(config: SecurityConfig) -> bytes:
     data += config.session_timeout_seconds.to_bytes(2, "little")
     data += bytes([config.flags & 0xFF, config.reset_pin & 0xFF])
     reserved = config.reserved if config.reserved else b"\x00" * 43
-    return data + reserved[:43]
+    return data + reserved[:43].ljust(43, b"\x00")
 
 
 def serialize_touch_controller(config: TouchController) -> bytes:
@@ -448,7 +448,7 @@ def serialize_touch_controller(config: TouchController) -> bytes:
     )
     data += bytes([config.touch_data_start_byte & 0xFF])
     reserved = config.reserved if config.reserved else b"\x00" * 21
-    return data + reserved[:21]
+    return data + reserved[:21].ljust(21, b"\x00")
 
 
 def serialize_passive_buzzer(config: PassiveBuzzer) -> bytes:
@@ -462,7 +462,7 @@ def serialize_passive_buzzer(config: PassiveBuzzer) -> bytes:
         config.duty_percent,
     )
     reserved = config.reserved if config.reserved else b"\x00" * 27
-    return data + reserved[:27]
+    return data + reserved[:27].ljust(27, b"\x00")
 
 
 def serialize_nfc_config(config: NfcConfig) -> bytes:
@@ -487,7 +487,7 @@ def serialize_nfc_config(config: NfcConfig) -> bytes:
         config.reserved_pin_2,
     )
     reserved = config.reserved if config.reserved else b"\x00" * 16
-    return data + reserved[:16]
+    return data + reserved[:16].ljust(16, b"\x00")
 
 
 def serialize_flash_config(config: FlashConfig) -> bytes:
@@ -508,7 +508,7 @@ def serialize_flash_config(config: FlashConfig) -> bytes:
         config.mode,
     )
     reserved = config.reserved if config.reserved else b"\x00" * 20
-    return data + reserved[:20]
+    return data + reserved[:20].ljust(20, b"\x00")
 
 
 def serialize_wifi_config(config: WifiConfig) -> bytes:
