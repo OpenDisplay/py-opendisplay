@@ -8,6 +8,20 @@ from typing import TYPE_CHECKING
 
 from .exceptions import OTAError
 
+
+def _increment_mac(address: str) -> str:
+    """Return the BLE MAC address incremented by 1, carrying across octets.
+
+    The nRF DFU bootloader advertises at ``original + 1``. Incrementing only the
+    last octet (``+1 & 0xFF``) fails to carry when it is 0xFF (e.g. ...:FF -> ...:00
+    instead of rolling into the previous octet), causing a silent 30 s scan miss.
+    """
+    parts = address.upper().split(":")
+    mac_int = int("".join(parts), 16)
+    mac_int = (mac_int + 1) & 0xFFFFFFFFFFFF
+    return ":".join(f"{(mac_int >> (8 * (5 - i))) & 0xFF:02X}" for i in range(6))
+
+
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
 
@@ -180,8 +194,7 @@ async def find_nrf_dfu_device(original_address: str) -> BLEDevice | None:
     """
     from bleak import BleakScanner
 
-    parts = original_address.upper().split(":")
-    mac_plus1 = ":".join(parts[:-1] + [f"{(int(parts[-1], 16) + 1) & 0xFF:02X}"])
+    mac_plus1 = _increment_mac(original_address)
 
     for attempt in range(15):  # 2 s × 15 = 30 s
         await asyncio.sleep(2.0)

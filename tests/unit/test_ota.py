@@ -86,8 +86,8 @@ async def test_find_nrf_dfu_device_not_found_returns_none() -> None:
 
 @pytest.mark.asyncio
 async def test_find_nrf_dfu_device_mac_plus1_wraps_ff() -> None:
-    """MAC+1 wraps correctly: EE:FF → EE:00."""
-    dfu_dev = _make_scanner_device("AA:BB:CC:DD:EE:00")
+    """MAC+1 carries across octets: EE:FF → EF:00 (not EE:00)."""
+    dfu_dev = _make_scanner_device("AA:BB:CC:DD:EF:00")
 
     with (
         patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
