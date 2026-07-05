@@ -44,32 +44,44 @@ PACKET_TYPE_DATA_EXTENDED = 0x2C
 
 
 def calculate_config_crc(data: bytes) -> int:
-    """Calculate CRC32 and return lower 16 bits.
+    """Calculate the config-container CRC using CRC-16/CCITT-FALSE.
 
-    Uses standard CRC32 algorithm (same as zlib/firmware) but only returns
-    the lower 16 bits for backwards compatibility with firmware.
+    CRC-16/CCITT-FALSE: init 0xFFFF, polynomial 0x1021, MSB-first, no input or
+    output reflection, no final XOR. This is the canonical config CRC shared by
+    the nRF firmware, the Silabs firmware, and the website toolbox.
 
-    Firmware source: main.cpp:1543-1556, 1912-1914
-    The firmware calculates full CRC32 but only uses lower 16 bits.
+    The first two bytes of the container are the length field, which is excluded
+    from the CRC by forcing them to zero before feeding (mirroring the firmware's
+    config_toolbox_outer_crc16). This is done defensively here so the result is
+    correct whether the caller passes a zeroed length field (as serialize_config
+    does) or a populated one.
+
+    Firmware source: Firmware_NRF/config_parser.c config_toolbox_outer_crc16
+    (identical in Firmware_Silabs/opendisplay_config_parser.c).
 
     Args:
-        data: Config data to calculate CRC over
+        data: Config container body to calculate CRC over (everything except the
+            trailing 2 CRC bytes)
 
     Returns:
-        Lower 16 bits of CRC32 value
+        16-bit CRC value
     """
-    crc = 0xFFFFFFFF
+    buf = bytearray(data)
+    if len(buf) >= 2:
+        # Zero the length field (bytes 0-1) so it is excluded from the CRC.
+        buf[0] = 0
+        buf[1] = 0
 
-    for byte in data:
-        crc ^= byte
+    crc = 0xFFFF
+    for byte in buf:
+        crc ^= byte << 8
         for _ in range(8):
-            if crc & 1:
-                crc = (crc >> 1) ^ 0xEDB88320
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
             else:
-                crc = crc >> 1
+                crc = (crc << 1) & 0xFFFF
 
-    crc32 = (~crc) & 0xFFFFFFFF
-    return crc32 & 0xFFFF  # Return lower 16 bits only
+    return crc
 
 
 def serialize_system_config(config: SystemConfig) -> bytes:
@@ -528,7 +540,7 @@ def serialize_config(config: GlobalConfig) -> bytes:
     [2 bytes: padding/reserved]
     [1 byte: version]
     [TLV packets...]
-    [2 bytes: CRC16 (lower 16 bits of CRC32)]
+    [2 bytes: CRC-16/CCITT-FALSE, little-endian]
 
     TLV Packet Format:
     [1 byte: packet_number]  # 0-3 for repeatable types
