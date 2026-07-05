@@ -33,7 +33,12 @@ def unpack_command_code(data: bytes, offset: int = 0) -> int:
 
     Returns:
         Command code as integer
+
+    Raises:
+        InvalidResponseError: If fewer than 2 bytes are available at ``offset``.
     """
+    if len(data) < offset + 2:
+        raise InvalidResponseError(f"Response too short for a command code: {len(data)} bytes at offset {offset}")
     return int(struct.unpack(">H", data[offset : offset + 2])[0])
 
 
@@ -70,7 +75,14 @@ def check_response_type(response: bytes) -> tuple[CommandCode, bool]:
     """
     code = unpack_command_code(response)
     is_ack = bool(code & RESPONSE_HIGH_BIT_FLAG)
-    command = CommandCode(code & ~RESPONSE_HIGH_BIT_FLAG)
+    raw = code & ~RESPONSE_HIGH_BIT_FLAG
+    try:
+        command = CommandCode(raw)
+    except ValueError as e:
+        # Firmware error frames (e.g. {0xFF,0xFF} compressed-failure, 4-byte
+        # NACKs) carry codes that aren't in CommandCode; surface a typed protocol
+        # error instead of a bare ValueError so upload loops can handle it.
+        raise InvalidResponseError(f"Unknown command code in response: 0x{raw:04x}") from e
     return command, is_ack
 
 
