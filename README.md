@@ -240,6 +240,43 @@ await device.upload_image(
 
 Note: Fast refresh support varies by display hardware. Color and grayscale displays only support full refresh.
 
+## Partial Updates
+
+B/W (MONO) panels with `partial_update_support` in their device config can update
+just the changed region of the screen using the differential 0x76 protocol —
+no full-refresh flash. Partial updates are **opt-in**: create a `PartialState`
+and pass it to every upload. The first upload is always full; subsequent uploads
+diff against the previous frame and go partial when possible.
+
+```python
+from opendisplay import OpenDisplayDevice, PartialState
+
+state = PartialState()
+
+async with OpenDisplayDevice(device_name="OD1234AB", encryption_key=key) as device:
+    await device.upload_image(dashboard_frame(1), state=state)  # full upload
+    await device.upload_image(dashboard_frame(2), state=state)  # partial (flicker-free)
+    await device.upload_image(dashboard_frame(3), state=state)  # partial
+```
+
+The library handles all preconditions and falls back to a full upload
+automatically (unsupported panel, etag mismatch after another client wrote the
+screen, firmware NACK, no previous frame). `state` is mutated in place; persist
+it across processes with `state.to_bytes()` / `PartialState.from_bytes()`.
+
+Practical notes:
+
+- Blacks rendered by the partial waveform are slightly lighter than a full
+  refresh. Do a periodic full refresh (e.g. every 10-50 updates, or on a
+  schedule) by passing `state=None` once — this also removes any ghosting.
+- Requires reference firmware ≥ 1.8 and `partial_update_support: 1` in the
+  device config; the panel itself must support differential refresh.
+- **Known firmware issue** ([Firmware#80](https://github.com/OpenDisplay/Firmware/issues/80)):
+  on some panels (confirmed: EP426 / Seeed EN05) the firmware erases everything
+  *outside* the partial rectangle. Until per-panel signaling exists, the safe
+  pattern on affected panels is a full-frame partial — send the whole screen as
+  the region — which still avoids the refresh flash.
+
 ## Advanced Features
 
 ### Device Interrogation

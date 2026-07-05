@@ -78,6 +78,7 @@ from .models.enums import (
 from .models.firmware import firmware_ota_asset, firmware_release_repo
 from .models.led_flash import LedFlashConfig, LedFlashStep
 from .ota import find_nrf_dfu_device, perform_nrf_dfu, perform_silabs_ota
+from .partial import PartialState
 from .protocol import MANUFACTURER_ID, SERVICE_UUID
 
 __version__ = "0.1.0"
@@ -88,6 +89,7 @@ __all__ = [
     "discover_devices",
     "discover_devices_with_adv",
     "prepare_image",
+    "PartialState",
     # Exceptions
     "OpenDisplayError",
     "AuthenticationError",
