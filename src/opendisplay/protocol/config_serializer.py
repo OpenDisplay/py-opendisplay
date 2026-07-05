@@ -612,12 +612,6 @@ def serialize_config(config: GlobalConfig) -> bytes:
         packet_data += bytes([i, PACKET_TYPE_PASSIVE_BUZZER])
         packet_data += serialize_passive_buzzer(bz)
 
-    for i, nfc in enumerate(config.nfc_configs):
-        if i >= 4:
-            break
-        packet_data += bytes([i, PACKET_TYPE_NFC_CONFIG])
-        packet_data += serialize_nfc_config(nfc)
-
     for i, flash in enumerate(config.flash_configs):
         if i >= 4:
             break
@@ -627,6 +621,16 @@ def serialize_config(config: GlobalConfig) -> bytes:
     if config.data_extended is not None:
         packet_data += bytes([0, PACKET_TYPE_DATA_EXTENDED])
         packet_data += serialize_data_extended(config.data_extended)
+
+    # NFC (0x2A) is emitted LAST: firmware has no case 0x2A and its default case
+    # skips straight to the CRC, so any packet that follows an NFC entry (e.g.
+    # flash_config 0x2B or data_extended 0x2C) would be silently dropped on the
+    # device. Keeping NFC after every packet firmware understands avoids that.
+    for i, nfc in enumerate(config.nfc_configs):
+        if i >= 4:
+            break
+        packet_data += bytes([i, PACKET_TYPE_NFC_CONFIG])
+        packet_data += serialize_nfc_config(nfc)
 
     # Validate size (max 4096 bytes including wrapper and CRC)
     total_size = len(packet_data) + 2  # +2 for CRC
