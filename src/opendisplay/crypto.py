@@ -77,6 +77,21 @@ def compute_challenge_response(
     return aes_cmac(master_key, server_nonce + client_nonce + device_id)
 
 
+def compute_server_proof(
+    session_key: bytes,
+    server_nonce: bytes,
+    client_nonce: bytes,
+    device_id: bytes = _DEVICE_ID,
+) -> bytes:
+    """Compute the device's mutual-auth proof returned in step 2 of auth.
+
+    Matches firmware: CMAC(session_key, server_nonce || client_nonce || device_id).
+    The client recomputes this to authenticate the device — a peer that returns
+    status OK without knowing the master key cannot produce it.
+    """
+    return aes_cmac(session_key, server_nonce + client_nonce + device_id)
+
+
 def get_nonce(session_id: bytes, counter: int) -> bytes:
     """Build the 16-byte full nonce: session_id(8) || counter_be(8)."""
     return session_id + counter.to_bytes(8, "big")
