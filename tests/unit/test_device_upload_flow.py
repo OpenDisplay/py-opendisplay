@@ -19,6 +19,7 @@ from epaper_dithering import ColorScheme
 from opendisplay import OpenDisplayDevice
 from opendisplay.exceptions import (
     AuthenticationRequiredError,
+    IntegrityCheckError,
 )
 from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.config import (
@@ -139,6 +140,17 @@ async def test_read_3byte_0xfe_raises_authentication_required() -> None:
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     device._connection = _FakeConnection([b"\x00\x43\xfe"])
     with pytest.raises(AuthenticationRequiredError):
+        await device._read(timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_read_3byte_0xff_raises_integrity_check() -> None:
+    """3-byte {0x00, cmd, 0xFF} decrypt/integrity-failure frame must not pass as an ACK."""
+    device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
+    device._session_key = b"\x00" * 16
+    # {0x00, 0x71, 0xFF}: echoes the DATA command but signals integrity failure.
+    device._connection = _FakeConnection([b"\x00\x71\xff"])
+    with pytest.raises(IntegrityCheckError):
         await device._read(timeout=5.0)
 
 

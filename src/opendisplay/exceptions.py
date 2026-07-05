@@ -75,6 +75,18 @@ class AuthenticationRequiredError(AuthenticationError):
     pass
 
 
+class IntegrityCheckError(ProtocolError):
+    """Device rejected a command because its decrypt/integrity check failed.
+
+    Raised when the firmware returns the 3-byte frame ``{0x00, cmd, 0xFF}``.
+    The encrypted command was received but failed AES-GCM decryption or tag
+    verification (e.g. a dropped/corrupted packet), so the firmware did NOT
+    execute it. The command must be retried, not treated as acknowledged.
+    """
+
+    pass
+
+
 class ImageEncodingError(OpenDisplayError):
     """Failed to encode image."""
 

@@ -41,6 +41,7 @@ from .exceptions import (
     AuthenticationSessionExistsError,
     BLETimeoutError,
     ImageEncodingError,
+    IntegrityCheckError,
     InvalidResponseError,
     ProtocolError,
 )
@@ -590,6 +591,7 @@ class OpenDisplayDevice:
 
         Raises:
             AuthenticationRequiredError: If device returns 0xFE (encryption required, no active session)
+            IntegrityCheckError: If device returns 0xFF (decrypt/integrity check failed, command not executed)
         """
         raw = await self._conn.read_response(timeout=timeout)
         if self._session_key is not None:
@@ -605,6 +607,17 @@ class OpenDisplayDevice:
         if len(raw) == 3 and raw[2] == 0xFE:
             raise AuthenticationRequiredError(
                 "Device requires an encryption key — pass encryption_key=bytes.fromhex('...') to OpenDisplayDevice"
+            )
+        # Firmware returns [cmd_high, cmd_low, 0xFF] (3 bytes) when an encrypted
+        # command fails AES-GCM decryption / tag verification. The command was
+        # NOT executed, so it must not be treated as an ACK — the 2-byte echo
+        # otherwise matches the expected command code and passes validation.
+        # Distinct from the 2-byte {0xFF, 0xFF} compressed-failure frame and
+        # 4-byte NACK frames, which have different lengths.
+        if len(raw) == 3 and raw[2] == 0xFF:
+            raise IntegrityCheckError(
+                f"Device rejected command 0x{unpack_command_code(raw):04x}: "
+                "decryption/integrity check failed (command not executed) — likely a dropped or corrupted packet"
             )
         return raw
 
