@@ -1574,7 +1574,9 @@ class OpenDisplayDevice:
         # accepts a <= 9-bit zlib window, so always use a 9-bit window (a 15-bit
         # window would be NACKed with ERR_PARTIAL_STREAM by 9-bit firmware).
         compressed_stream = compress_image_data(logical_stream, level=6, window_bits=FIRMWARE_ZLIB_WINDOW_BITS)
-        use_compression = display.supports_zip and len(compressed_stream) < len(logical_stream)
+        use_compression = (display.supports_zip or display.supports_streaming_decompression) and len(
+            compressed_stream
+        ) < len(logical_stream)
         stream_bytes = compressed_stream if use_compression else logical_stream
 
         flags = 0
