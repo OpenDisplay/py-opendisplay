@@ -109,7 +109,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiooui" },
     { name = "bleak" },
-    { name = "dbus-fast" },
+    { name = "dbus-fast", marker = "sys_platform == 'linux'" },
     { name = "uart-devices" },
     { name = "usb-devices" },
 ]
@@ -914,6 +914,19 @@ nrf-ota = [
 silabs-ota = [
     { name = "silabs-ble-ota" },
 ]
+
+[package.dev-dependencies]
+dev = [
+    { name = "hypothesis" },
+    { name = "mypy" },
+    { name = "prek" },
+    { name = "pylint" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+]
 test = [
     { name = "hypothesis" },
     { name = "pytest" },
@@ -922,39 +935,38 @@ test = [
     { name = "pytest-xdist" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "prek" },
-    { name = "pylint" },
-    { name = "ruff" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "bleak", specifier = ">=1.0.1" },
     { name = "bleak-retry-connector", specifier = ">=3.5.0" },
     { name = "cryptography", specifier = ">=41.0.0" },
     { name = "epaper-dithering", specifier = "==5.0.6" },
-    { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.148.8" },
     { name = "nrf-ota", marker = "extra == 'nrf-ota'", specifier = ">=0.4.0" },
     { name = "numpy", specifier = ">=1.24.0,!=2.4.0" },
     { name = "pillow", specifier = ">=10.0.0" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.2" },
-    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.3.0" },
-    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=7.0.0" },
-    { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
     { name = "silabs-ble-ota", marker = "extra == 'silabs-ota'", specifier = ">=0.1.0" },
 ]
-provides-extras = ["cli", "nrf-ota", "silabs-ota", "test"]
+provides-extras = ["cli", "nrf-ota", "silabs-ota"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "hypothesis", specifier = ">=6.148.8" },
     { name = "mypy", specifier = ">=1.19.1" },
     { name = "prek", specifier = ">=0.3.4" },
     { name = "pylint", specifier = ">=4.0.5" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = ">=0.14.10" },
+]
+test = [
+    { name = "hypothesis", specifier = ">=6.148.8" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
 ]
 
 [[package]]
