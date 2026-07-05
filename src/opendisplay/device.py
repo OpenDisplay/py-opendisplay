@@ -24,7 +24,6 @@ from .crypto import (
 )
 from .display_palettes import PANELS_4GRAY, get_gray4_codes, get_palette_for_display
 from .encoding import (
-    DEFAULT_ZLIB_WINDOW_BITS,
     ZIPXL_ZLIB_WINDOW_BITS,
     compress_image_data,
     encode_bitplanes,
@@ -259,11 +258,11 @@ def prepare_image(
     # Optionally compress
     compressed_data = None
     if compress:
-        display_cfg = config.displays[0] if (config and config.displays) else None
-        window_bits = (
-            ZIPXL_ZLIB_WINDOW_BITS if (display_cfg and display_cfg.supports_zipxl) else DEFAULT_ZLIB_WINDOW_BITS
-        )
-        compressed_data = compress_image_data(image_data, level=6, window_bits=window_bits)
+        # Current firmware compiles uzlib with a 9-bit window and hard-rejects any
+        # zlib header advertising more, so always compress with a 9-bit window
+        # regardless of ZIPXL: a 9-bit stream decodes fine on any firmware whose
+        # window is >= 9 (the firmware check is <=).
+        compressed_data = compress_image_data(image_data, level=6, window_bits=ZIPXL_ZLIB_WINDOW_BITS)
 
     return image_data, compressed_data, dithered
 
@@ -1463,8 +1462,10 @@ class OpenDisplayDevice:
         )
 
         logical_stream = build_partial_logical_stream(old_rect_bytes, new_rect_bytes)
-        window_bits = ZIPXL_ZLIB_WINDOW_BITS if display.supports_zipxl else DEFAULT_ZLIB_WINDOW_BITS
-        compressed_stream = compress_image_data(logical_stream, level=6, window_bits=window_bits)
+        # A partial stream rides inside the 0x76 initial bytes; firmware only
+        # accepts a <= 9-bit zlib window, so always use a 9-bit window (a 15-bit
+        # window would be NACKed with ERR_PARTIAL_STREAM on non-ZIPXL devices).
+        compressed_stream = compress_image_data(logical_stream, level=6, window_bits=ZIPXL_ZLIB_WINDOW_BITS)
         use_compression = display.supports_zip and len(compressed_stream) < len(logical_stream)
         stream_bytes = compressed_stream if use_compression else logical_stream
 

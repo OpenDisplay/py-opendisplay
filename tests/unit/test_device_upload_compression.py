@@ -228,3 +228,20 @@ class TestUploadPreparedImageCompressionDecision:
         await device.upload_prepared_image(prepared)
 
         assert captured["use_compression"] is True
+
+
+@pytest.mark.parametrize("transmission_modes", [0x02, 0x03])
+def test_prepare_image_always_uses_9bit_zlib_window(transmission_modes: int) -> None:
+    """Firmware only accepts a <=9-bit zlib window, so full-frame compression must
+    use a 9-bit window for both ZIP (0x02) and ZIPXL (0x03) devices (C3)."""
+    from opendisplay import prepare_image
+    from opendisplay.encoding import ZIPXL_ZLIB_WINDOW_BITS, zlib_window_bits
+
+    image = Image.new("RGB", (64, 64), (0, 0, 0))
+    _, compressed, _ = prepare_image(
+        image,
+        config=_config(transmission_modes=transmission_modes, width=64, height=64),
+        compress=True,
+    )
+    assert compressed is not None
+    assert zlib_window_bits(compressed) == ZIPXL_ZLIB_WINDOW_BITS
