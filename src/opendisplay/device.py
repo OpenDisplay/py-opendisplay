@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 import time
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, TypeVar
 
 from epaper_dithering import ColorScheme, DitherMode, dither_image
 from PIL import Image
@@ -265,6 +268,32 @@ def prepare_image(
     return image_data, compressed_data, dithered
 
 
+_T = TypeVar("_T")
+
+
+def _serialized(
+    func: Callable[..., Awaitable[_T]],
+) -> Callable[..., Awaitable[_T]]:
+    """Serialize a device command against all other commands on the same device.
+
+    Holds the per-device command lock across the whole call so that no two
+    command round-trips interleave — this prevents AES-CCM nonce reuse and
+    notification-queue response mixups under concurrency. The lock is reentrant
+    within a single task, so a command that internally triggers another
+    ``@_serialized`` call (e.g. an upload re-authenticating mid-stream) does not
+    deadlock.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(self: OpenDisplayDevice, *args: object, **kwargs: object) -> _T:
+        # This decorator is part of OpenDisplayDevice's own machinery; the
+        # "protected" transaction helper is intentionally used here.
+        async with self._transaction():  # pylint: disable=protected-access
+            return await func(self, *args, **kwargs)
+
+    return wrapper
+
+
 class OpenDisplayDevice:
     """OpenDisplay BLE e-paper device.
 
@@ -363,6 +392,10 @@ class OpenDisplayDevice:
         self._nonce_counter: int = 0
         self._auth_time: float | None = None  # monotonic timestamp of last successful auth
 
+        # Serializes command round-trips (see _serialized / _transaction).
+        self._command_lock = asyncio.Lock()
+        self._lock_owner: asyncio.Task[object] | None = None
+
     async def __aenter__(self) -> OpenDisplayDevice:
         """Connect and optionally interrogate device."""
 
@@ -398,6 +431,7 @@ class OpenDisplayDevice:
             self._timeout,
             max_attempts=self._max_attempts,
             use_services_cache=self._use_services_cache,
+            disconnected_callback=self._on_ble_disconnect,
         )
 
         await self._conn.connect()
@@ -426,6 +460,8 @@ class OpenDisplayDevice:
         """Disconnect from device."""
         if self._connection is not None:
             await self._conn.disconnect()
+        # Forget the session so a reused device object re-authenticates cleanly.
+        self._clear_session()
 
     @property
     def _conn(self) -> BLEConnection:
@@ -433,6 +469,41 @@ class OpenDisplayDevice:
         if self._connection is None:
             raise RuntimeError("Device not connected")
         return self._connection
+
+    @asynccontextmanager
+    async def _transaction(self) -> AsyncIterator[None]:
+        """Hold the command lock for the duration of a command round-trip.
+
+        Reentrant per task: if the current task already owns the lock (e.g. a
+        re-authentication triggered from within an upload), the nested call runs
+        without re-acquiring instead of deadlocking.
+        """
+        current = asyncio.current_task()
+        if self._lock_owner is current:
+            yield
+            return
+        async with self._command_lock:
+            self._lock_owner = current
+            try:
+                yield
+            finally:
+                self._lock_owner = None
+
+    def _clear_session(self) -> None:
+        """Drop any encryption session state.
+
+        Called on disconnect so a reused device object does not encrypt against
+        a session the firmware has already torn down.
+        """
+        self._session_key = None
+        self._session_id = None
+        self._nonce_counter = 0
+        self._auth_time = None
+
+    def _on_ble_disconnect(self) -> None:
+        """Handle an unexpected BLE drop: forget the (now-dead) session."""
+        _LOGGER.debug("Link to %s dropped; clearing session state", self.mac_address)
+        self._clear_session()
 
     async def _write(self, data: bytes) -> None:
         """Write a command, encrypting it if an active session exists."""
@@ -487,6 +558,7 @@ class OpenDisplayDevice:
             )
         return raw
 
+    @_serialized
     async def authenticate(self, key: bytes) -> None:
         """Perform two-step challenge-response authentication with the device.
 
@@ -672,6 +744,7 @@ class OpenDisplayDevice:
                 pass
         return bytes.fromhex(self.mac_address.replace(":", ""))[-3:]
 
+    @_serialized
     async def interrogate(self) -> GlobalConfig:
         """Read device configuration from device.
 
@@ -727,6 +800,7 @@ class OpenDisplayDevice:
 
         return self._config
 
+    @_serialized
     async def read_firmware_version(self) -> FirmwareVersion:
         """Read firmware version from device.
 
@@ -754,6 +828,7 @@ class OpenDisplayDevice:
 
         return self._fw_version
 
+    @_serialized
     async def reboot(self) -> None:
         """Reboot the device.
 
@@ -779,6 +854,7 @@ class OpenDisplayDevice:
         # Device will reset immediately - no ACK expected
         _LOGGER.info("Reboot command sent to %s - device will reset (connection will drop)", self.mac_address)
 
+    @_serialized
     async def trigger_dfu_bootloader(self) -> None:
         """Trigger the DFU bootloader on nRF devices (command 0x0051).
 
@@ -841,6 +917,7 @@ class OpenDisplayDevice:
         """
         return await self._conn.clear_cache()
 
+    @_serialized
     async def activate_led(
         self,
         led_instance: int,
@@ -894,6 +971,7 @@ class OpenDisplayDevice:
         validate_ack_response(response, CommandCode.LED_ACTIVATE)
         return response
 
+    @_serialized
     async def activate_buzzer(
         self,
         buzzer_instance: int,
@@ -926,6 +1004,7 @@ class OpenDisplayDevice:
         validate_ack_response(response, CommandCode.BUZZER_ACTIVATE)
         return response
 
+    @_serialized
     async def write_config(self, config: GlobalConfig) -> None:
         """Write configuration to device.
 
@@ -1068,6 +1147,7 @@ class OpenDisplayDevice:
             rotate=rotate,
         )
 
+    @_serialized
     async def upload_image(
         self,
         image: Image.Image,
@@ -1175,6 +1255,7 @@ class OpenDisplayDevice:
             self._update_partial_state(state, processed_image, image_data, full_upload_etag)
         return processed_image
 
+    @_serialized
     async def upload_prepared_image(
         self,
         prepared_data: tuple[bytes, bytes | None, Image.Image],

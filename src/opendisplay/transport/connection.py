@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from bleak import BleakClient, BleakScanner
@@ -36,6 +37,7 @@ class BLEConnection:
         timeout: float = 10.0,
         max_attempts: int = 4,
         use_services_cache: bool = True,
+        disconnected_callback: Callable[[], None] | None = None,
     ):
         """Initialize BLE connection manager.
 
@@ -45,12 +47,15 @@ class BLEConnection:
             timeout: Connection timeout in seconds (default: 10)
             max_attempts: Maximum connection attempts for bleak-retry-connector (default: 4)
             use_services_cache: Enable GATT service caching for faster reconnections (default: True)
+            disconnected_callback: Optional callback invoked when the link drops
+                (either an unexpected disconnect or a graceful one).
         """
         self.mac_address = mac_address
         self.ble_device = ble_device
         self.timeout = timeout
         self.max_attempts = max_attempts
         self.use_services_cache = use_services_cache
+        self._disconnected_callback = disconnected_callback
 
         self._client: BleakClient | None = None
         self._notification_queue: asyncio.Queue[bytes] = asyncio.Queue()
@@ -142,6 +147,7 @@ class BLEConnection:
             max_attempts=self.max_attempts,
             use_services_cache=use_services_cache,
             timeout=self.timeout,
+            disconnected_callback=self._on_disconnect,
         )
 
         _LOGGER.debug("Connected to %s", self.mac_address)
@@ -232,6 +238,19 @@ class BLEConnection:
         )
 
         _LOGGER.debug("Notifications started")
+
+    def _on_disconnect(self, _client: BleakClient) -> None:
+        """Handle an unexpected or graceful BLE disconnect.
+
+        Notifies the owner (e.g. so it can drop stale encryption session state)
+        via the registered ``disconnected_callback``.
+        """
+        _LOGGER.debug("BLE link to %s dropped", self.mac_address)
+        if self._disconnected_callback is not None:
+            try:
+                self._disconnected_callback()
+            except Exception:  # noqa: BLE001 - best-effort notification
+                _LOGGER.debug("disconnected_callback raised", exc_info=True)
 
     def _notification_callback(self, _sender: BleakGATTCharacteristic, data: bytearray) -> None:
         """Handle incoming BLE notifications.
