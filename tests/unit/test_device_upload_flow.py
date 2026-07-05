@@ -393,6 +393,30 @@ async def test_dispatch_zipxl_recompresses_prepared_data_with_512_byte_window(
     assert zlib_window_bits(captured["compressed_data"]) == ZIPXL_ZLIB_WINDOW_BITS
 
 
+@pytest.mark.asyncio
+async def test_dispatch_non_zipxl_lazy_compression_uses_9bit_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deferred compression (compressed_data=None) on a plain-ZIP device uses the 9-bit window."""
+    from opendisplay.encoding import ZIPXL_ZLIB_WINDOW_BITS, zlib_window_bits
+
+    # transmission_modes=0x02 → ZIP only, no ZIPXL
+    device = _make_device(transmission_modes=0x02)
+    captured: dict = {}
+
+    async def fake_execute(image_data, refresh_mode, use_compression=False, **kwargs):
+        captured["use_compression"] = use_compression
+        captured["compressed_data"] = kwargs["compressed_data"]
+
+    monkeypatch.setattr(device, "_execute_upload", fake_execute)
+    image_data = b"abc123" * 100
+
+    await device._dispatch_upload(image_data, RefreshMode.FULL, True, None, None)
+
+    assert captured["use_compression"] is True
+    assert zlib_window_bits(captured["compressed_data"]) == ZIPXL_ZLIB_WINDOW_BITS
+
+
 # ─── _execute_upload: error paths ────────────────────────────────────────────
 
 
