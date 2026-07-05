@@ -22,10 +22,11 @@ from .crypto import (
     encrypt_command,
     generate_client_nonce,
 )
-from .display_palettes import PANELS_4GRAY, get_gray4_codes, get_palette_for_display
+from .display_palettes import PANELS_4GRAY, get_bwry_codes, get_gray4_codes, get_palette_for_display
 from .encoding import (
     ZIPXL_ZLIB_WINDOW_BITS,
     compress_image_data,
+    encode_2bpp,
     encode_bitplanes,
     encode_gray4_bitplanes,
     encode_image,
@@ -251,6 +252,11 @@ def prepare_image(
     elif color_scheme == ColorScheme.GRAYSCALE_4:
         # Two pre-split 1-bit planes concatenated; firmware streams the halves to PLANE_0/PLANE_1.
         image_data = b"".join(encode_gray4_bitplanes(dithered, get_gray4_codes(panel_ic_type)))
+    elif color_scheme == ColorScheme.BWRY:
+        # Some YR panels (0x001D/0x001E) use a native 4-color code order with
+        # yellow/red swapped relative to the dither palette; apply the per-panel
+        # code table so the firmware's raw-nibble direct write shows the right color.
+        image_data = encode_2bpp(dithered, codes=get_bwry_codes(panel_ic_type))
     else:
         image_data = encode_image(dithered, color_scheme)
 

@@ -128,7 +128,7 @@ def encode_1bpp(image: Image.Image) -> bytes:
     return bytes(output)
 
 
-def encode_2bpp(image: Image.Image) -> bytes:
+def encode_2bpp(image: Image.Image, codes: tuple[int, int, int, int] | None = None) -> bytes:
     """Encode image to 2-bits-per-pixel format (4 colors).
 
     Format: 4 pixels per byte, MSB first
@@ -136,6 +136,9 @@ def encode_2bpp(image: Image.Image) -> bytes:
 
     Args:
         image: Palette image (mode 'P')
+        codes: Optional palette-index -> stored-nibble table. Used by BWRY panels
+            whose native 4-color code order differs from the dither palette order
+            (e.g. yellow/red swapped). Defaults to identity.
 
     Returns:
         Encoded bytes
@@ -157,6 +160,8 @@ def encode_2bpp(image: Image.Image) -> bytes:
             bit_shift = (3 - pixel_in_byte) * 2  # MSB first
 
             palette_idx = pixels[y, x] & 0x03  # 2-bit value
+            if codes is not None:
+                palette_idx = codes[palette_idx]
             output[byte_idx] |= palette_idx << bit_shift
 
     return bytes(output)
