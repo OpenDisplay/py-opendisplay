@@ -27,10 +27,23 @@ def _make_ble_device(address: str = "AA:BB:CC:DD:EE:FF") -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def _make_scanner_device(address: str) -> MagicMock:
+def _make_scanner_device(address: str, name: str | None = None) -> MagicMock:
     dev = MagicMock()
     dev.address = address
+    dev.name = name
     return dev
+
+
+def _make_adv(local_name: str | None = None, service_uuids: list[str] | None = None) -> MagicMock:
+    adv = MagicMock()
+    adv.local_name = local_name
+    adv.service_uuids = service_uuids or []
+    return adv
+
+
+def _discovered(*pairs: tuple[MagicMock, MagicMock]) -> dict[str, tuple[MagicMock, MagicMock]]:
+    """Build the ``address -> (device, adv)`` dict that discover(return_adv=True) returns."""
+    return {dev.address: (dev, adv) for dev, adv in pairs}
 
 
 @pytest.mark.asyncio
@@ -42,7 +55,7 @@ async def test_find_nrf_dfu_device_mac_plus1() -> None:
         patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
         patch("bleak.BleakScanner") as scanner_cls,
     ):
-        scanner_cls.discover = AsyncMock(return_value=[dfu_dev])
+        scanner_cls.discover = AsyncMock(return_value=_discovered((dfu_dev, _make_adv())))
         result = await find_nrf_dfu_device("AA:BB:CC:DD:EE:01")
 
     assert result is dfu_dev
@@ -54,9 +67,9 @@ async def test_find_nrf_dfu_device_original_address_after_5_attempts() -> None:
     original_dev = _make_scanner_device("AA:BB:CC:DD:EE:01")
     attempt = 0
 
-    async def _discover(timeout: float) -> list[MagicMock]:
+    async def _discover(timeout: float, return_adv: bool = False) -> dict[str, tuple[MagicMock, MagicMock]]:
         nonlocal attempt
-        result = [original_dev] if attempt >= 5 else []
+        result = _discovered((original_dev, _make_adv())) if attempt >= 5 else {}
         attempt += 1
         return result
 
@@ -78,7 +91,7 @@ async def test_find_nrf_dfu_device_not_found_returns_none() -> None:
         patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
         patch("bleak.BleakScanner") as scanner_cls,
     ):
-        scanner_cls.discover = AsyncMock(return_value=[])
+        scanner_cls.discover = AsyncMock(return_value={})
         result = await find_nrf_dfu_device("AA:BB:CC:DD:EE:01")
 
     assert result is None
@@ -86,15 +99,47 @@ async def test_find_nrf_dfu_device_not_found_returns_none() -> None:
 
 @pytest.mark.asyncio
 async def test_find_nrf_dfu_device_mac_plus1_wraps_ff() -> None:
-    """MAC+1 carries across octets: EE:FF → EF:00 (not EE:00)."""
-    dfu_dev = _make_scanner_device("AA:BB:CC:DD:EF:00")
+    """MAC+1 wraps the last octet without carry: EE:FF → EE:00 (not EF:00)."""
+    dfu_dev = _make_scanner_device("AA:BB:CC:DD:EE:00")
 
     with (
         patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
         patch("bleak.BleakScanner") as scanner_cls,
     ):
-        scanner_cls.discover = AsyncMock(return_value=[dfu_dev])
+        scanner_cls.discover = AsyncMock(return_value=_discovered((dfu_dev, _make_adv())))
         result = await find_nrf_dfu_device("AA:BB:CC:DD:EE:FF")
+
+    assert result is dfu_dev
+
+
+@pytest.mark.asyncio
+async def test_find_nrf_dfu_device_service_uuid_fallback() -> None:
+    """A device advertising the Legacy DFU service UUID is found even if its MAC doesn't match."""
+    dfu_dev = _make_scanner_device("11:22:33:44:55:66")  # not MAC+1 of the original
+    adv = _make_adv(service_uuids=["00001530-1212-efde-1523-785feabcd123"])
+
+    with (
+        patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
+        patch("bleak.BleakScanner") as scanner_cls,
+    ):
+        scanner_cls.discover = AsyncMock(return_value=_discovered((dfu_dev, adv)))
+        result = await find_nrf_dfu_device("AA:BB:CC:DD:EE:01")
+
+    assert result is dfu_dev
+
+
+@pytest.mark.asyncio
+async def test_find_nrf_dfu_device_name_fallback() -> None:
+    """A device with a DFU-style advertised name is found even if its MAC doesn't match."""
+    dfu_dev = _make_scanner_device("11:22:33:44:55:66")
+    adv = _make_adv(local_name="DfuTarg")
+
+    with (
+        patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
+        patch("bleak.BleakScanner") as scanner_cls,
+    ):
+        scanner_cls.discover = AsyncMock(return_value=_discovered((dfu_dev, adv)))
+        result = await find_nrf_dfu_device("AA:BB:CC:DD:EE:01")
 
     assert result is dfu_dev
 

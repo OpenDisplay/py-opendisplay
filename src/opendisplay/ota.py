@@ -3,23 +3,42 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 from .exceptions import OTAError
 
+# Nordic Legacy DFU GATT service, advertised while in bootloader mode. Kept in
+# sync with ``nrf_ota._const.LEGACY_DFU_SERVICE_UUID`` and duplicated here so
+# ``find_nrf_dfu_device`` doesn't need the optional ``nrf-ota`` dependency.
+LEGACY_DFU_SERVICE_UUID = "00001530-1212-efde-1523-785feabcd123"
+
 
 def _increment_mac(address: str) -> str:
-    """Return the BLE MAC address incremented by 1, carrying across octets.
+    """Return the BLE MAC with its last octet incremented by 1 (no carry).
 
-    The nRF DFU bootloader advertises at ``original + 1``. Incrementing only the
-    last octet (``+1 & 0xFF``) fails to carry when it is 0xFF (e.g. ...:FF -> ...:00
-    instead of rolling into the previous octet), causing a silent 30 s scan miss.
+    Nordic DFU bootloaders advertise at ``original + 1``, incrementing only the
+    last octet as a ``uint8``: it wraps 0xFF -> 0x00 without carrying into the
+    previous octet (e.g. ``AA:BB:CC:DD:EE:FF`` -> ``AA:BB:CC:DD:EE:00``). This
+    matches the standalone ``nrf-ota`` scanner's convention and the documented
+    Nordic bootloader behaviour. The exact wrap behaviour should be validated on
+    real hardware; the name/service-UUID fallback in ``find_nrf_dfu_device``
+    keeps discovery robust even if this guess is off.
     """
     parts = address.upper().split(":")
-    mac_int = int("".join(parts), 16)
-    mac_int = (mac_int + 1) & 0xFFFFFFFFFFFF
-    return ":".join(f"{(mac_int >> (8 * (5 - i))) & 0xFF:02X}" for i in range(6))
+    parts[-1] = f"{(int(parts[-1], 16) + 1) & 0xFF:02X}"
+    return ":".join(parts)
+
+
+def _is_dfu_advertisement(name: str = "", service_uuids: Sequence[str] = ()) -> bool:
+    """Return True if *name* or *service_uuids* indicate DFU bootloader mode.
+
+    Mirrors ``nrf_ota.scan._is_dfu_advertisement`` so discovery matches the same
+    devices regardless of which implementation drives the scan.
+    """
+    return any(x in name.upper() for x in ("ADADFU", "DFUTARG", "DFU")) or any(
+        LEGACY_DFU_SERVICE_UUID.lower() in s.lower() for s in service_uuids
+    )
 
 
 if TYPE_CHECKING:
@@ -178,9 +197,11 @@ async def find_nrf_dfu_device(original_address: str) -> BLEDevice | None:
     """Poll the BLE scanner for an nRF DFU-mode device.
 
     Call this after ``OpenDisplayDevice.trigger_dfu_bootloader()`` disconnects.
-    Checks MAC+1 first (Nordic DFU bootloaders commonly increment the last
-    byte of the address). Falls back to the original address after 10 s in
-    case this particular bootloader keeps the same address.
+    Checks MAC+1 first (Nordic DFU bootloaders increment the last byte of the
+    address, wrapping without carry). As a fallback it also matches any device
+    advertising the Legacy DFU service UUID or a DFU-style name, so discovery
+    still succeeds if the MAC+1 guess is off. Falls back to the original address
+    after 10 s in case this particular bootloader keeps the same address.
 
     Works in both plain bleak environments and HA's cached scanner — in HA,
     BleakScanner.discover() returns the passive-scan cache, so repeated calls
@@ -206,10 +227,17 @@ async def find_nrf_dfu_device(original_address: str) -> BLEDevice | None:
         if attempt >= 5:
             candidates.append(original_address.upper())
 
-        devices = await BleakScanner.discover(timeout=0.1)
-        addr_map = {dev.address.upper(): dev for dev in devices}
-        for addr in candidates:
-            if addr in addr_map:
-                return addr_map[addr]
+        # return_adv=True gives the advertisement data (service UUIDs + local
+        # name) needed for the DFU service-UUID/name fallback below.
+        discovered = await BleakScanner.discover(timeout=0.1, return_adv=True)
+        for device, adv in discovered.values():
+            if device.address.upper() in candidates:
+                return device
+            # Fallback: a genuine DFU advertisement is safe to return even before
+            # the 10 s mark — the stale app-mode entry carries neither the DFU
+            # service UUID nor a DFU name, so it can't be matched here by mistake.
+            name = adv.local_name or device.name or ""
+            if _is_dfu_advertisement(name, adv.service_uuids or []):
+                return device
 
     return None
