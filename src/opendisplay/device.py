@@ -43,6 +43,7 @@ from .exceptions import (
     ImageEncodingError,
     InvalidResponseError,
     ProtocolError,
+    TruncatedConfigError,
 )
 from .landing import build_landing_url
 from .models.buzzer_activate import BuzzerActivateConfig
@@ -88,6 +89,7 @@ from .protocol import (
 )
 from .protocol.responses import (
     check_response_type,
+    is_compressed_failure_frame,
     parse_authenticate_challenge,
     parse_authenticate_success,
     strip_command_echo,
@@ -837,13 +839,27 @@ class OpenDisplayDevice:
 
         _LOGGER.debug("First chunk: %d bytes, total length: %d", len(chunk_data), total_length)
 
-        # Read remaining chunks
+        # Read remaining chunks. Firmware caps config-read chunks, so a broken or
+        # older firmware can stop sending before `total_length` is reached. Guard
+        # against both a mid-transfer read timeout and a stalled transfer (empty
+        # chunk making no progress) so we raise a typed error instead of hanging
+        # or returning a partial config.
         while len(tlv_data) < total_length:
-            next_response = await self._read(self.TIMEOUT_CONFIG_CHUNK)
+            try:
+                next_response = await self._read(self.TIMEOUT_CONFIG_CHUNK)
+            except BLETimeoutError as err:
+                raise TruncatedConfigError(
+                    f"Config read truncated: device stopped sending chunks at {len(tlv_data)}/{total_length} bytes"
+                ) from err
             next_chunk_data = strip_command_echo(next_response, CommandCode.READ_CONFIG)
 
             # Skip chunk number field (2 bytes) and append data
-            tlv_data.extend(next_chunk_data[2:])
+            chunk_payload = next_chunk_data[2:]
+            if not chunk_payload:
+                raise TruncatedConfigError(
+                    f"Config read stalled: device sent an empty chunk at {len(tlv_data)}/{total_length} bytes"
+                )
+            tlv_data.extend(chunk_payload)
 
             _LOGGER.debug(
                 "Received chunk, total: %d/%d bytes",
@@ -1705,11 +1721,19 @@ class OpenDisplayDevice:
                 raise
             # Device rejected the compressed START. Fall back to the uncompressed
             # protocol and retry; the same image_data (for 4-gray, the two split
-            # planes) streams fine uncompressed.
-            _LOGGER.warning(
-                "Compressed START rejected by device (0x%04x); falling back to uncompressed",
-                int.from_bytes(response[:2], "big"),
-            )
+            # planes) streams fine uncompressed. Firmware may report the failure as
+            # the legacy {0xFF, 0xFF} frame or the spec-conformant {0xFF, 0x70}
+            # ({0xFF, <cmd low byte>}); both are recognized as the same signal.
+            if is_compressed_failure_frame(response):
+                _LOGGER.warning(
+                    "Device signalled compressed-write failure (0x%04x); falling back to uncompressed",
+                    int.from_bytes(response[:2], "big"),
+                )
+            else:
+                _LOGGER.warning(
+                    "Compressed START rejected by device (0x%04x); falling back to uncompressed",
+                    int.from_bytes(response[:2], "big"),
+                )
             use_compression = False
             start_cmd = build_direct_write_start_uncompressed()
             await self._write(start_cmd)

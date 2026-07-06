@@ -319,6 +319,28 @@ async def test_compressed_start_rejected_retries_uncompressed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compressed_start_rejected_spec_frame_retries_uncompressed() -> None:
+    """Spec-conformant {0xFF, 0x70} failure frame also triggers uncompressed fallback."""
+    image_data = b"\x00" * 10
+    compressed = b"\xff" * 5
+    device = _make_device()
+    spec_err_frame = b"\xff\x70"  # {0xFF, <DIRECT_WRITE_START low byte>}
+    fake = _FakeConnection([spec_err_frame, ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
+    device._connection = fake
+    await device._execute_upload(
+        image_data,
+        RefreshMode.FULL,
+        use_compression=True,
+        compressed_data=compressed,
+        uncompressed_size=len(image_data),
+    )
+    # First cmd: compressed START (size + data embedded); second: bare uncompressed START.
+    assert len(fake.written[0]) > 2
+    assert fake.written[0][:2] == b"\x00\x70"
+    assert fake.written[1] == b"\x00\x70"
+
+
+@pytest.mark.asyncio
 async def test_after_fallback_data_chunks_use_uncompressed_timeout() -> None:
     """After fallback to uncompressed, DATA chunk ACKs must use 90s timeout."""
     image_data = b"\x00" * 10

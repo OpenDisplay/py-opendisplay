@@ -33,6 +33,18 @@ class ConfigParseError(ProtocolError):
     pass
 
 
+class TruncatedConfigError(ConfigParseError):
+    """Device stopped sending config chunks before the advertised length.
+
+    Raised during interrogate() when a config-read transfer stalls — a chunk
+    read times out mid-transfer, or the device sends an empty chunk making no
+    progress toward the total length — instead of hanging or returning a
+    partial config.
+    """
+
+    pass
+
+
 class InvalidResponseError(ProtocolError):
     """Device returned invalid response."""
 

@@ -62,6 +62,26 @@ def strip_command_echo(data: bytes, expected_cmd: CommandCode) -> bytes:
     return data
 
 
+def is_compressed_failure_frame(response: bytes) -> bool:
+    """Return True if ``response`` is a firmware compressed-direct-write failure frame.
+
+    Firmware signals that it cannot honor a compressed DIRECT_WRITE_START by
+    replying with a 2-byte error frame. Older firmware sends the non-conformant
+    ``{0xFF, 0xFF}``; spec-conformant firmware sends ``{0xFF, <cmd low byte>}``
+    i.e. ``{0xFF, 0x70}``. Both mean "fall back to the uncompressed protocol",
+    so the client accepts either form.
+    """
+    return (
+        len(response) == 2
+        and response[0] == 0xFF
+        and response[1]
+        in (
+            0xFF,
+            CommandCode.DIRECT_WRITE_START & 0xFF,
+        )
+    )
+
+
 def check_response_type(response: bytes) -> tuple[CommandCode, bool]:
     """Check response type and whether it's an ACK.
 

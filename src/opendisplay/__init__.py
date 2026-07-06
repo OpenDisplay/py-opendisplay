@@ -21,6 +21,7 @@ from .exceptions import (
     OTAError,
     OTANotSupportedError,
     ProtocolError,
+    TruncatedConfigError,
 )
 from .landing import LANDING_URL_PREFIX, build_landing_payload, build_landing_url
 from .models.advertisement import (
@@ -99,6 +100,7 @@ __all__ = [
     "BLETimeoutError",
     "ProtocolError",
     "ConfigParseError",
+    "TruncatedConfigError",
     "InvalidResponseError",
     "ImageEncodingError",
     "OTAError",
