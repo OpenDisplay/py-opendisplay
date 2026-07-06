@@ -1,5 +1,14 @@
 # Changelog
 
+## [7.11.2](https://github.com/OpenDisplay/py-opendisplay/compare/v7.11.1...v7.11.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* actually lock epaper-dithering 5.0.9 (stale uv index cache) ([a906119](https://github.com/OpenDisplay/py-opendisplay/commit/a9061199da180b19909938be8e151c81bd033ac0))
+* bump epaper-dithering to 5.0.9 (FFI validation hardening) ([a13fe74](https://github.com/OpenDisplay/py-opendisplay/commit/a13fe74635065489dfd97780fef9fdb0c3cf29c2))
+* bump epaper-dithering to 5.0.9 (FFI validation hardening) ([e1a29ec](https://github.com/OpenDisplay/py-opendisplay/commit/e1a29ec767935cff29733f9d74a8caa252726085))
+
 ## [7.11.1](https://github.com/OpenDisplay/py-opendisplay/compare/v7.11.0...v7.11.1) (2026-07-06)
 
 
