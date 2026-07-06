@@ -1,5 +1,71 @@
 # Changelog
 
+## [7.11.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.10.0...v7.11.0) (2026-07-06)
+
+
+### Features
+
+* export PartialState and document partial updates ([dbeb369](https://github.com/OpenDisplay/py-opendisplay/commit/dbeb369700abbc3192f8aea108ec3eed8510c8e6))
+* export PartialState and document partial updates ([1bf6ecf](https://github.com/OpenDisplay/py-opendisplay/commit/1bf6ecfdc4d703f49860f609610f4e209f45abfa))
+* honor partial_update_support=2 (full-frame partial stream) ([8b89f33](https://github.com/OpenDisplay/py-opendisplay/commit/8b89f3307523eda5101b3db7fa5e143928ff392d))
+* honor partial_update_support=2 (full-frame partial stream) ([8d3d4a2](https://github.com/OpenDisplay/py-opendisplay/commit/8d3d4a2f5581c6cd01a0789a3576e09091ddfbd5))
+* warn about firmware upload limitations for BWR/BWY and non-aligned widths (C1/C2) ([84bf22c](https://github.com/OpenDisplay/py-opendisplay/commit/84bf22c04b1a3c007986168c0ca02bd46f115d5b))
+* warn about firmware upload limitations for BWR/BWY and non-aligned widths (C1/C2) ([8c130fe](https://github.com/OpenDisplay/py-opendisplay/commit/8c130feb14e930473d32a6a3185833698dd77b9f))
+
+
+### Bug Fixes
+
+* always compress image uploads with a 9-bit zlib window (C3) ([7e38eae](https://github.com/OpenDisplay/py-opendisplay/commit/7e38eae7a92bdc46e80d3abe803c4528c0fd869c))
+* always compress image uploads with a 9-bit zlib window (C3) ([c56e003](https://github.com/OpenDisplay/py-opendisplay/commit/c56e003d4d94750edef70d0c6ab235db953c4f0a))
+* apply the streaming-decompression gate to partial stream compression too ([d8cab8a](https://github.com/OpenDisplay/py-opendisplay/commit/d8cab8ac6a2122624054e14fe12b5a207e46acfc))
+* BWR red sets both bitplanes to match firmware and website ([fda1f8e](https://github.com/OpenDisplay/py-opendisplay/commit/fda1f8e1ca8310ea051c53caa580bb6c414803ae))
+* BWR red sets both bitplanes to match firmware and website ([ab2fe6a](https://github.com/OpenDisplay/py-opendisplay/commit/ab2fe6a84707ddcdea8295727a0e68016f56d59d))
+* carry across octets when computing the nRF DFU MAC (+1) (§4) ([88ae351](https://github.com/OpenDisplay/py-opendisplay/commit/88ae3513fe347379929f578318b1c0ce68842a00))
+* carry across octets when computing the nRF DFU MAC (+1) (§4) ([48b8b9c](https://github.com/OpenDisplay/py-opendisplay/commit/48b8b9cdc69abb5e78e220227fe6c07c2d9bb886))
+* compress uploads for streaming-decompression-only configs; rename ZIPXL ([97a54e6](https://github.com/OpenDisplay/py-opendisplay/commit/97a54e68d8842c3a4ef54100be78e782f1b4d236))
+* compress uploads for streaming-decompression-only configs; rename ZIPXL ([446641b](https://github.com/OpenDisplay/py-opendisplay/commit/446641b7856cab49d45dad6670f74804823b0d4b))
+* config serialization correctness — padding, mfr metadata, sizes, tx_power ([5ff94a9](https://github.com/OpenDisplay/py-opendisplay/commit/5ff94a90f50ccd4050efccb95a1e093b074e254c))
+* config serialization correctness — padding, mfr metadata, sizes, tx_power (C7/C8/M5/M6) ([8bd3504](https://github.com/OpenDisplay/py-opendisplay/commit/8bd3504162c0adbb155c64a38c868307d7277250))
+* drain stale notifications and recover on read timeout (C6) ([e6fc38b](https://github.com/OpenDisplay/py-opendisplay/commit/e6fc38bc53b22dc59340c6039049d5a11baa2201))
+* drain stale notifications and recover on read timeout (C6) ([d5467ba](https://github.com/OpenDisplay/py-opendisplay/commit/d5467bab28c95e660f034e27fb0fd3a0a161dffc))
+* emit NFC config packets last so firmware keeps flash/data_extended (M4) ([f22dae1](https://github.com/OpenDisplay/py-opendisplay/commit/f22dae157ef14b3dda81a4c7a70bf1795998d755))
+* emit NFC config packets last so firmware keeps flash/data_extended (M4) ([294f47b](https://github.com/OpenDisplay/py-opendisplay/commit/294f47be0139fab0e10a08ab2cf0b38356c0c212))
+* minor model/encoding validation (§4) ([5f4bcd1](https://github.com/OpenDisplay/py-opendisplay/commit/5f4bcd1e6250985f6347852ab91439495cb19e0b))
+* minor model/encoding validation (§4) ([8184ae5](https://github.com/OpenDisplay/py-opendisplay/commit/8184ae52686b0bb2265073d64c1aed83971a8927))
+* **ota:** align nRF DFU MAC increment to nrf-ota no-carry convention + add discovery fallback ([0ed1128](https://github.com/OpenDisplay/py-opendisplay/commit/0ed1128cafb82624fcf02ea6ef90e4e7de7b4cf3))
+* **ota:** align nRF DFU MAC increment to nrf-ota no-carry convention + add discovery fallback ([356575e](https://github.com/OpenDisplay/py-opendisplay/commit/356575e99a7e3068eb84edf9d1674dbaee81ff04))
+* **ota:** drop name-based selection in find_nrf_dfu_device (match nrf-ota [#7](https://github.com/OpenDisplay/py-opendisplay/issues/7)) ([5d1dde5](https://github.com/OpenDisplay/py-opendisplay/commit/5d1dde53fe4230bc056aa683e70e414fc514bb0b))
+* partial-upload guards — MONO-only, 8-align, NACK fallback, etag commit (M1/M2/M10) ([ce931ed](https://github.com/OpenDisplay/py-opendisplay/commit/ce931ede33d28dfe31b96c71c754f9a92b7f0c0e))
+* partial-upload guards — MONO-only, 8-align, NACK fallback, etag commit (M1/M2/M10) ([63730ee](https://github.com/OpenDisplay/py-opendisplay/commit/63730ee8b1aaa009e9cdc9152182b58dba9ca3f3))
+* per-panel BWRY code table + 4-gray table additions (M3) ([68ef815](https://github.com/OpenDisplay/py-opendisplay/commit/68ef8155eb3f69382e5644cdc5a99403b72ff91e))
+* per-panel BWRY code table + 4-gray table additions (M3) ([c47608c](https://github.com/OpenDisplay/py-opendisplay/commit/c47608c30d97dc9f9534adfb44e63697dc6e0183))
+* preserve real config data through JSON export/import (M7) ([59f4160](https://github.com/OpenDisplay/py-opendisplay/commit/59f41605e758372663473169b60c45973f939c17))
+* preserve real config data through JSON export/import (M7) ([2c86017](https://github.com/OpenDisplay/py-opendisplay/commit/2c86017e9ff4cac0346c4e0ff92d9a386895141b))
+* Raise IntegrityCheckError on decrypt/integrity-failure frame ([742adad](https://github.com/OpenDisplay/py-opendisplay/commit/742adad9644ba178cff5e78fa1665ef7724bd843))
+* serialize device commands and clear session on disconnect (C5, M9) ([4b99477](https://github.com/OpenDisplay/py-opendisplay/commit/4b99477918061e4e3a8af22aa0167659c7c23198))
+* serialize device commands and clear session on disconnect (C5, M9) ([bf72bd7](https://github.com/OpenDisplay/py-opendisplay/commit/bf72bd7cf7ae2d20dbda60a40f877c3ec501d627))
+* surface device error frames with typed exceptions (§4) ([376d118](https://github.com/OpenDisplay/py-opendisplay/commit/376d1189f7b799d65ed1625f116774efd90e0cbc))
+* surface device error frames with typed exceptions (§4) ([63a28f5](https://github.com/OpenDisplay/py-opendisplay/commit/63a28f5b6bdfd9ad4d80e3d7c0c3e8693ad0f3d7))
+* undefined DEFAULT_ZLIB_WINDOW_BITS in deferred compression path ([45d21fa](https://github.com/OpenDisplay/py-opendisplay/commit/45d21fa333aba5235e179ee1b4d15f8c4d1f476f))
+* undefined DEFAULT_ZLIB_WINDOW_BITS in deferred compression path ([abacf4c](https://github.com/OpenDisplay/py-opendisplay/commit/abacf4cb42e6736516e0d12ea46afee4fb365a27))
+* use CRC-16/CCITT for config CRC to match firmware/toolbox ([aad11ec](https://github.com/OpenDisplay/py-opendisplay/commit/aad11ec381cc0e308035a70a6540b60022489e32))
+* validate LED group_repeats 1-254 and tolerate raw 0xFF on parse (M11) ([299c18c](https://github.com/OpenDisplay/py-opendisplay/commit/299c18c1e50e8def412fcea4e831814d9a5c14ce))
+* validate LED group_repeats 1-254 and tolerate raw 0xFF on parse (M11) ([9d7134e](https://github.com/OpenDisplay/py-opendisplay/commit/9d7134e70a1cbbd6db5537877aae6367b6c2b3c3))
+* verify the device's mutual-auth server proof (M8) ([ce6ac6f](https://github.com/OpenDisplay/py-opendisplay/commit/ce6ac6ff6de836f7e0d8987019b76af1e05c45e8))
+* verify the device's mutual-auth server proof (M8) ([ba89249](https://github.com/OpenDisplay/py-opendisplay/commit/ba89249250b5d2d56ea6f9be7a934422df78445d))
+* write_config first chunk must carry 200 data bytes (C4) ([388a372](https://github.com/OpenDisplay/py-opendisplay/commit/388a372e3a1696f6b2776c1875165b0745cee136))
+* write_config first chunk must carry 200 data bytes (C4) ([40835a9](https://github.com/OpenDisplay/py-opendisplay/commit/40835a9328f67d674bb9f244f8d77f93c49be2f0))
+
+
+### Performance Improvements
+
+* defer full-frame compression when a partial upload may succeed ([c8b398a](https://github.com/OpenDisplay/py-opendisplay/commit/c8b398a26ede48ef94a31880913e408cc7261886))
+* defer full-frame compression when a partial upload may succeed ([fbbf95e](https://github.com/OpenDisplay/py-opendisplay/commit/fbbf95ee802d42cbd3b55038c279820187f9bd0f))
+* vectorize image and bitplane encoders ([f9a39fe](https://github.com/OpenDisplay/py-opendisplay/commit/f9a39fe0c7330cfd08fa10c4746ea9585bbfe477))
+* vectorize image and bitplane encoders ([0a16768](https://github.com/OpenDisplay/py-opendisplay/commit/0a16768ecae90dc2ff03433c4f1f3b67daaf8fd8))
+* vectorize partial-update bounding rect and segment encoder ([068f7f6](https://github.com/OpenDisplay/py-opendisplay/commit/068f7f664cb15c129e656001f1ca592f5b4ec727))
+* vectorize partial-update bounding rect and segment encoder ([5483ad6](https://github.com/OpenDisplay/py-opendisplay/commit/5483ad66e0fc52638cd930f6a38d9fbaf3186c08))
+
 ## [7.10.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.9.0...v7.10.0) (2026-07-03)
 
 
