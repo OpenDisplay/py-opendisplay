@@ -129,19 +129,24 @@ async def test_find_nrf_dfu_device_service_uuid_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_nrf_dfu_device_name_fallback() -> None:
-    """A device with a DFU-style advertised name is found even if its MAC doesn't match."""
-    dfu_dev = _make_scanner_device("11:22:33:44:55:66")
-    adv = _make_adv(local_name="DfuTarg")
+async def test_find_nrf_dfu_device_dfu_name_alone_not_selected() -> None:
+    """A DFU-ish name with no matching UUID/MAC must NOT be selected (finding MJ-23).
+
+    Selecting on a name that merely contains "DFU"/"DfuTarg" picks the wrong tag
+    when two devices are in bootloader mode at once, so name is never a
+    selection discriminator — only MAC+1 or the DFU service UUID are.
+    """
+    dfu_named = _make_scanner_device("11:22:33:44:55:66", name="DfuTarg")
+    adv = _make_adv(local_name="DfuTarg")  # no DFU service UUID advertised
 
     with (
         patch("opendisplay.ota.asyncio.sleep", new=AsyncMock()),
         patch("bleak.BleakScanner") as scanner_cls,
     ):
-        scanner_cls.discover = AsyncMock(return_value=_discovered((dfu_dev, adv)))
+        scanner_cls.discover = AsyncMock(return_value=_discovered((dfu_named, adv)))
         result = await find_nrf_dfu_device("AA:BB:CC:DD:EE:01")
 
-    assert result is dfu_dev
+    assert result is None
 
 
 # ---------------------------------------------------------------------------
