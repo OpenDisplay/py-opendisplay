@@ -19,6 +19,20 @@ class RefreshMode(IntEnum):
     PARTIAL = 2
 
 
+class PartialUpdateSupport(IntEnum):
+    """display.partial_update_support values (config tool enum).
+
+    FULL_FRAME panels (e.g. EP426 / Seeed EN05) support the 0x76 partial
+    protocol but require the stream to cover the whole panel: firmware
+    white-fills the controller RAM at partial start, so content outside the
+    region would be erased (OpenDisplay/Firmware#80).
+    """
+
+    NONE = 0  # only full updates supported
+    PARTIAL = 1  # partial region updates supported
+    FULL_FRAME = 2  # partial supported, full-frame stream required
+
+
 class ICType(IntEnum):
     """Microcontroller IC types."""
 

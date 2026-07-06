@@ -22,6 +22,7 @@ from PIL import Image
 
 from .encoding import encode_image
 from .models.config import DisplayConfig, GlobalConfig
+from .models.enums import PartialUpdateSupport
 
 # ---------------------------------------------------------------------------
 # Wire constants mirrored from the firmware partial-rendering protocol.
@@ -108,6 +109,13 @@ def compute_partial_region(
     rx, ry, rw, rh = align_rect(*bbox, width, height, pixels_per_byte=8)
     if rw == 0 or rh == 0:
         return "fallback_full"
+
+    if display.partial_update_support == PartialUpdateSupport.FULL_FRAME:
+        # Firmware white-fills the controller RAM at partial start; on these
+        # panels the partial waveform erases everything the stream does not
+        # cover, so the region must span the whole panel
+        # (OpenDisplay/Firmware#80). Still refreshes flicker-free.
+        rx, ry, rw, rh = 0, 0, width, height
 
     return PartialRegion(
         display=display,

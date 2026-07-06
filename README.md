@@ -271,11 +271,15 @@ Practical notes:
   schedule) by passing `state=None` once — this also removes any ghosting.
 - Requires reference firmware ≥ 1.8 and `partial_update_support: 1` in the
   device config; the panel itself must support differential refresh.
-- **Known firmware issue** ([Firmware#80](https://github.com/OpenDisplay/Firmware/issues/80)):
-  on some panels (confirmed: EP426 / Seeed EN05) the firmware erases everything
-  *outside* the partial rectangle. Until per-panel signaling exists, the safe
-  pattern on affected panels is a full-frame partial — send the whole screen as
-  the region — which still avoids the refresh flash.
+- Some panels (e.g. EP426 / Seeed EN05) require the partial stream to cover the
+  **full panel**: firmware white-fills the controller RAM at partial start, so
+  content outside the region would be erased
+  ([Firmware#80](https://github.com/OpenDisplay/Firmware/issues/80)). Device
+  configs signal this with `partial_update_support: 2`
+  (`PartialUpdateSupport.FULL_FRAME`), and the library expands the region to the
+  whole screen automatically — still flicker-free. Older device configs may
+  still report `1` on affected panels; update the config to `2` to get correct
+  behavior.
 
 ## Advanced Features
 

@@ -284,3 +284,44 @@ def test_partial_request_uses_partial_even_when_full_compressed_is_smaller(monke
     opcodes = [int.from_bytes(w[:2], "big") for w in writes]
     assert opcodes == [0x76, 0x72]
     assert len(writes[-1]) == 3
+
+
+def test_full_frame_support_expands_region_to_whole_panel():
+    """partial_update_support=2 (FULL_FRAME) expands the rect to the whole panel.
+
+    Firmware white-fills the controller RAM at partial start; on FULL_FRAME
+    panels (e.g. EP426 / Seeed EN05, OpenDisplay/Firmware#80) a smaller rect
+    would erase everything outside it.
+    """
+    from opendisplay.models.enums import PartialUpdateSupport
+    from opendisplay.partial import PartialRegion, compute_partial_region
+
+    state = PartialState(etag=0x01, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
+    region = compute_partial_region(
+        _image(changed=True), state, _config(partial_update_support=PartialUpdateSupport.FULL_FRAME), ColorScheme.MONO
+    )
+    assert isinstance(region, PartialRegion)
+    assert (region.rx, region.ry, region.rw, region.rh) == (0, 0, 16, 8)
+
+
+def test_rect_support_keeps_minimal_region():
+    """partial_update_support=1 keeps the minimal 8-aligned diff rect."""
+    from opendisplay.partial import PartialRegion, compute_partial_region
+
+    state = PartialState(etag=0x01, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
+    region = compute_partial_region(_image(changed=True), state, _config(partial_update_support=1), ColorScheme.MONO)
+    assert isinstance(region, PartialRegion)
+    # single changed pixel at (13,3) -> 8-aligned rect in the right half, not the full panel
+    assert (region.rx, region.ry, region.rw, region.rh) == (8, 3, 8, 1)
+
+
+def test_no_change_still_skips_transfer_on_full_frame_panels():
+    """FULL_FRAME panels must still report no_change for identical frames."""
+    from opendisplay.models.enums import PartialUpdateSupport
+    from opendisplay.partial import compute_partial_region
+
+    state = PartialState(etag=0x01, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
+    result = compute_partial_region(
+        _image(), state, _config(partial_update_support=PartialUpdateSupport.FULL_FRAME), ColorScheme.MONO
+    )
+    assert result == "no_change"
