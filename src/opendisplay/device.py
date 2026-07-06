@@ -70,6 +70,7 @@ from .protocol import (
     build_authenticate_step1,
     build_authenticate_step2,
     build_buzzer_activate_command,
+    build_deep_sleep_command,
     build_direct_write_data_command,
     build_direct_write_end_command,
     build_direct_write_end_with_etag,
@@ -933,6 +934,67 @@ class OpenDisplayDevice:
 
         # Device will reset immediately - no ACK expected
         _LOGGER.info("Reboot command sent to %s - device will reset (connection will drop)", self.mac_address)
+
+    @_serialized
+    async def deep_sleep(self) -> None:
+        """Put the device into deep sleep (command 0x0052).
+
+        Supported on ESP32 and Silabs Flex; nRF targets do not implement deep
+        sleep. The command is sent encrypted when an active session exists.
+
+        The firmware's exact behavior depends on the target, and this method
+        tolerates all of them — in every supported case the BLE link drops during
+        or right after the command, so a disconnect (or a missing ACK) is treated
+        as success, mirroring reboot() and trigger_dfu_bootloader():
+
+        - ESP32 with a D-FF power latch: firmware ACKs 0x0052, then powers off
+          after ~100 ms (the link drops).
+        - ESP32 without a power latch: firmware enters deep sleep immediately,
+          tearing down BLE with no ACK (the write or read fails as the link drops).
+        - Silabs Flex: firmware ACKs 0x0052, then closes the connection and enters
+          EM4 (wake on button/NFC).
+
+        Raises:
+            ProtocolError: If the device explicitly reports that deep sleep is not
+                supported (protocol error frame 0xFF52).
+        """
+        from .exceptions import BLEConnectionError
+
+        _LOGGER.debug("Sending deep sleep command (0x0052) to device %s", self.mac_address)
+
+        try:
+            await self._write(build_deep_sleep_command())
+        except BLEConnectionError as exc:
+            # An ESP32 without a power latch tears down BLE synchronously as it
+            # enters deep sleep, so the write-with-response confirmation can fail
+            # (e.g. a GATT/disconnect error over a Bluetooth proxy) even though the
+            # command was delivered. Treat that as the device having gone to sleep.
+            _LOGGER.debug(
+                "Deep sleep write did not confirm (expected — device sleeps before responding): %s",
+                exc,
+            )
+            _LOGGER.info("Deep sleep command sent to %s — device is sleeping (connection dropped)", self.mac_address)
+            return
+
+        # Targets that ACK before sleeping (ESP32 power-latch, Silabs Flex) reply
+        # with 0x0052 and then drop the link; a device that does not support the
+        # command replies with the 0xFF52 error frame (protocol: 0xFF [command_low]).
+        # A disconnect or timeout here means the device slept without acking.
+        try:
+            response = await self._read(self.TIMEOUT_ACK)
+        except (BLEConnectionError, BLETimeoutError) as exc:
+            _LOGGER.debug(
+                "No deep sleep ACK (expected — device dropped the link or sleeps silently): %s",
+                exc,
+            )
+            _LOGGER.info("Deep sleep command sent to %s — device is sleeping", self.mac_address)
+            return
+
+        if len(response) >= 2 and unpack_command_code(response) == 0xFF52:
+            raise ProtocolError("Device reported deep sleep is not supported (command 0x0052)")
+
+        validate_ack_response(response, CommandCode.DEEP_SLEEP)
+        _LOGGER.info("Deep sleep command acknowledged by %s — device is sleeping", self.mac_address)
 
     @_serialized
     async def trigger_dfu_bootloader(self) -> None:

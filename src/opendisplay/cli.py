@@ -703,6 +703,37 @@ async def _reboot(device_kwargs: dict[str, Any]) -> None:
     _console.print("Reboot command sent. Device will restart.")
 
 
+# ── sleep ─────────────────────────────────────────────────────────────────────
+
+
+def _add_sleep_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p = subparsers.add_parser("sleep", help="Put the device into deep sleep (command 0x0052)")
+    _add_device_options(p)
+    p.set_defaults(func=_cmd_sleep)
+
+
+def _cmd_sleep(args: argparse.Namespace) -> None:
+    key = _parse_hex_key(args.key)
+    _run(_sleep(_device_kwargs(args.device, key, args.timeout)))
+
+
+async def _sleep(device_kwargs: dict[str, Any]) -> None:
+    slept = False
+    with _spinner() as progress:
+        progress.add_task("Connecting...", total=None)
+        try:
+            async with OpenDisplayDevice(**device_kwargs) as device:
+                await device.deep_sleep()
+                slept = True
+        except (BLEConnectionError, BLETimeoutError):
+            if not slept:
+                _error("BLE connection failed before deep sleep command could be sent.")
+            # else: expected drop after the device sleeps
+        except OpenDisplayError as exc:
+            _handle_ble_error(exc)
+    _console.print("Deep sleep command sent. Device will sleep until its next wake.")
+
+
 # ── export-config ─────────────────────────────────────────────────────────────
 
 
@@ -792,6 +823,7 @@ def main() -> None:
     _add_info_parser(subparsers)
     _add_upload_parser(subparsers)
     _add_reboot_parser(subparsers)
+    _add_sleep_parser(subparsers)
     _add_export_config_parser(subparsers)
     _add_write_config_parser(subparsers)
 

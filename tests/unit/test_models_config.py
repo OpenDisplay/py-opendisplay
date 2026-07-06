@@ -2,13 +2,32 @@
 
 import pytest
 
-from opendisplay.models.config import DisplayConfig, ManufacturerData
+from opendisplay.models.config import DisplayConfig, ManufacturerData, PowerOption
 from opendisplay.models.enums import (
     BoardManufacturer,
     DIYBoardType,
+    PowerMode,
     SeeedBoardType,
     WaveshareBoardType,
 )
+
+
+def _power_option(power_mode: int, deep_sleep_time_seconds: int) -> PowerOption:
+    return PowerOption(
+        power_mode=power_mode,
+        battery_capacity_mah=b"\x00\x00\x00",
+        sleep_timeout_ms=0,
+        tx_power=0,
+        sleep_flags=0,
+        battery_sense_pin=0xFF,
+        battery_sense_enable_pin=0xFF,
+        battery_sense_flags=0,
+        capacity_estimator=0,
+        voltage_scaling_factor=0,
+        deep_sleep_current_ua=0,
+        deep_sleep_time_seconds=deep_sleep_time_seconds,
+        reserved=b"\x00" * 10,
+    )
 
 
 def _display_config(active_width_mm: int, active_height_mm: int) -> DisplayConfig:
@@ -103,6 +122,26 @@ class TestManufacturerDataBoardTyping:
         mfg = self._mfg(BoardManufacturer.SEEED, 99)
         assert mfg.board_type_enum == 99
         assert mfg.board_type_name is None
+
+
+class TestPowerOptionDeepSleepEnabled:
+    """Test PowerOption.deep_sleep_enabled (mirrors firmware sleep-entry condition)."""
+
+    def test_enabled_when_battery_and_positive_interval(self):
+        power = _power_option(power_mode=PowerMode.BATTERY, deep_sleep_time_seconds=300)
+        assert power.deep_sleep_enabled is True
+
+    def test_disabled_when_interval_zero(self):
+        power = _power_option(power_mode=PowerMode.BATTERY, deep_sleep_time_seconds=0)
+        assert power.deep_sleep_enabled is False
+
+    def test_disabled_when_not_battery(self):
+        power = _power_option(power_mode=PowerMode.USB, deep_sleep_time_seconds=300)
+        assert power.deep_sleep_enabled is False
+
+    def test_disabled_when_usb_and_zero_interval(self):
+        power = _power_option(power_mode=PowerMode.USB, deep_sleep_time_seconds=0)
+        assert power.deep_sleep_enabled is False
 
 
 class TestDisplayConfigTransmissionModes:
