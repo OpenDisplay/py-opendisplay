@@ -39,13 +39,19 @@ def encode_bitplanes(
 
     pixels = np.asarray(image)
 
-    # Palette mapping:
-    # Index 0 = Black -> BW=0, R/Y=0
-    # Index 1 = White -> BW=1, R/Y=0
-    # Index 2 = Red/Yellow -> BW=0, R/Y=1
+    # Palette mapping (matches the website encoder and firmware boot renderer):
+    # Index 0 = Black      -> BW=0, R/Y=0
+    # Index 1 = White      -> BW=1, R/Y=0
+    # Index 2 (BWR = Red)  -> BW=1, R/Y=1  (red sets BOTH the BW and accent plane)
+    # Index 2 (BWY = Yellow) -> BW=0, R/Y=1
     # packbits(axis=1) zero-pads each row to a byte boundary (8 pixels per byte,
     # MSB first).
-    plane1 = np.packbits(pixels == 1, axis=1).tobytes()  # BW plane
+    if color_scheme == ColorScheme.BWR:
+        plane1_mask = (pixels == 1) | (pixels == 2)  # white and red both set BW
+    else:  # ColorScheme.BWY
+        plane1_mask = pixels == 1
+
+    plane1 = np.packbits(plane1_mask, axis=1).tobytes()  # BW plane
     plane2 = np.packbits(pixels == 2, axis=1).tobytes()  # R/Y plane
 
     return plane1, plane2
