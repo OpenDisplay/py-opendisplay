@@ -36,6 +36,7 @@ class CommandCode(IntEnum):
     DIRECT_WRITE_PARTIAL_START = 0x0076  # Start a partial update transfer (stream via 0x71)
     BUZZER_ACTIVATE = 0x0077  # Host→device: trigger buzzer pattern (firmware 1.61+)
     ENTER_DFU = 0x0051  # Trigger DFU bootloader mode (nRF only)
+    DEEP_SLEEP = 0x0052  # Enter deep sleep now (ESP32 timer-wake / Silabs EM4; nRF unsupported)
 
 
 # Protocol constants
@@ -95,6 +96,28 @@ def build_enter_dfu_command() -> bytes:
         Command bytes: 0x0051 (2 bytes, big-endian)
     """
     return CommandCode.ENTER_DFU.to_bytes(2, byteorder="big")
+
+
+def build_deep_sleep_command() -> bytes:
+    """Build command to put the device into deep sleep (command 0x0052).
+
+    Supported on ESP32 (enters timer-wake deep sleep, or releases the D-FF power
+    latch when one is configured) and Silabs Flex (arms EM4 button/NFC wake and
+    sleeps once the BLE connection closes). nRF targets do not implement deep
+    sleep and only log the command.
+
+    The response behavior varies by target and is best-effort — callers should
+    tolerate the connection dropping during or right after the command:
+    - ESP32 with a power latch: replies 0x0052, then powers off after ~100 ms.
+    - ESP32 without a power latch: enters deep sleep immediately with no ACK;
+      the BLE connection drops.
+    - Silabs Flex: replies 0x0052, then closes the link and enters EM4.
+    - nRF: no response (deep sleep not supported).
+
+    Returns:
+        Command bytes: 0x0052 (2 bytes, big-endian)
+    """
+    return CommandCode.DEEP_SLEEP.to_bytes(2, byteorder="big")
 
 
 def build_direct_write_start_compressed(
