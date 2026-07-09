@@ -49,7 +49,9 @@ CHUNK_SIZE = 230  # Maximum data bytes per chunk (unencrypted)
 ENCRYPTED_CHUNK_SIZE = 154  # Maximum data bytes per chunk when session is active
 # Encrypted packet: cmd(2)+nonce(16)+len(1)+data(154)+tag(12) = 185 bytes
 CONFIG_CHUNK_SIZE = 200  # Maximum config chunk size (verified from firmware)
-PIPELINE_CHUNKS = 1  # Wait for ACK after each chunk
+PIPELINE_CHUNKS = 1  # One 0x71 write in flight at a time; ACK awaited after each chunk
+# NOTE: 0x71 data chunks use BLE Write Without Response (no ATT confirmation), but the
+# application-layer per-chunk ACK is still awaited, so only one write is ever outstanding.
 
 # Upload protocol constants
 MAX_COMPRESSED_SIZE = 50 * 1024  # Standard firmware buffer (nRF, ~50KB)

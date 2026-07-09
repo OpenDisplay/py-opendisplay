@@ -559,17 +559,24 @@ class OpenDisplayDevice:
         _LOGGER.debug("Link to %s dropped; clearing session state", self.mac_address)
         self._clear_session()
 
-    async def _write(self, data: bytes) -> None:
-        """Write a command, encrypting it if an active session exists."""
+    async def _write(self, data: bytes, response: bool = True) -> None:
+        """Write a command, encrypting it if an active session exists.
+
+        Args:
+            data: Plaintext command frame (opcode + payload).
+            response: Passed through to the transport. False requests a BLE Write
+                Without Response (used for 0x71 data chunks); applies whether or not
+                the frame is encrypted.
+        """
         if self._session_key is not None and self._session_id is not None:
             await self._reauthenticate_if_needed()
             cmd = data[:2]
             payload = data[2:]
             encrypted = encrypt_command(self._session_key, self._session_id, self._nonce_counter, cmd, payload)
             self._nonce_counter += 1
-            await self._conn.write_command(encrypted)
+            await self._conn.write_command(encrypted, response=response)
         else:
-            await self._conn.write_command(data)
+            await self._conn.write_command(data, response=response)
 
     async def _reauthenticate_if_needed(self) -> None:
         """Re-authenticate proactively at 90% of session_timeout_seconds."""
@@ -1594,7 +1601,8 @@ class OpenDisplayDevice:
         offset = 0
         while offset < len(remaining):
             chunk = remaining[offset : offset + chunk_size]
-            await self._write(build_direct_write_data_command(chunk))
+            # Write Without Response; the per-chunk ACK read below keeps flow control.
+            await self._write(build_direct_write_data_command(chunk), response=False)
             ack = await self._read(self.TIMEOUT_ACK)
             nack = parse_nack(ack)
             if nack is not None:
@@ -1879,7 +1887,10 @@ class OpenDisplayDevice:
             chunk_size = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else CHUNK_SIZE
             chunk_data = image_data[bytes_sent : bytes_sent + chunk_size]
 
-            await self._write(build_direct_write_data_command(chunk_data))
+            # Send the data chunk without waiting for the ATT write confirmation
+            # (Write Without Response). Flow control is preserved by the per-chunk
+            # application ACK read below, so only one write is ever in flight.
+            await self._write(build_direct_write_data_command(chunk_data), response=False)
             bytes_sent += len(chunk_data)
             chunks_sent += 1
 

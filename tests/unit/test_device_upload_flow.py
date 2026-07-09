@@ -45,11 +45,13 @@ class _FakeConnection:
 
     def __init__(self, responses: list[bytes]) -> None:
         self.written: list[bytes] = []
+        self.write_responses: list[bool] = []
         self._responses = list(responses)
         self.timeouts: list[float] = []
 
-    async def write_command(self, data: bytes) -> None:
+    async def write_command(self, data: bytes, response: bool = True) -> None:
         self.written.append(data)
+        self.write_responses.append(response)
 
     async def read_response(self, timeout: float) -> bytes:
         self.timeouts.append(timeout)
@@ -210,6 +212,8 @@ async def test_uncompressed_full_sequence() -> None:
     assert fake.written[0][:2] == b"\x00\x70"  # START
     assert fake.written[1][:2] == b"\x00\x71"  # DATA
     assert fake.written[2][:2] == b"\x00\x72"  # END
+    # 0x71 DATA is sent Write-Without-Response; START/END use write-with-response.
+    assert fake.write_responses == [True, False, True]
 
 
 # ─── Compressed upload path ───────────────────────────────────────────────────

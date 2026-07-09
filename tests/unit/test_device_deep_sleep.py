@@ -34,7 +34,7 @@ class _FakeConnection:
         self.read_timeout: float | None = None
         self.read_called = False
 
-    async def write_command(self, cmd: bytes) -> None:
+    async def write_command(self, cmd: bytes, response: bool = True) -> None:
         self.written.append(cmd)
         if self._write_error is not None:
             raise self._write_error
