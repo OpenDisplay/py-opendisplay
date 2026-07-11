@@ -36,6 +36,7 @@ class CommandCode(IntEnum):
     DIRECT_WRITE_PARTIAL_START = 0x0076  # Start a partial update transfer (stream via 0x71)
     BUZZER_ACTIVATE = 0x0077  # Host→device: trigger buzzer pattern (firmware 1.61+)
     ENTER_DFU = 0x0051  # Trigger DFU bootloader mode (nRF only)
+    DEEP_SLEEP = 0x0052  # Enter deep sleep now (ESP32 timer-wake / Silabs EM4; nRF unsupported)
 
 
 # Protocol constants
@@ -48,7 +49,9 @@ CHUNK_SIZE = 230  # Maximum data bytes per chunk (unencrypted)
 ENCRYPTED_CHUNK_SIZE = 154  # Maximum data bytes per chunk when session is active
 # Encrypted packet: cmd(2)+nonce(16)+len(1)+data(154)+tag(12) = 185 bytes
 CONFIG_CHUNK_SIZE = 200  # Maximum config chunk size (verified from firmware)
-PIPELINE_CHUNKS = 1  # Wait for ACK after each chunk
+PIPELINE_CHUNKS = 1  # One 0x71 write in flight at a time; ACK awaited after each chunk
+# NOTE: 0x71 data chunks use BLE Write Without Response (no ATT confirmation), but the
+# application-layer per-chunk ACK is still awaited, so only one write is ever outstanding.
 
 # Upload protocol constants
 MAX_COMPRESSED_SIZE = 50 * 1024  # Standard firmware buffer (nRF, ~50KB)
@@ -95,6 +98,28 @@ def build_enter_dfu_command() -> bytes:
         Command bytes: 0x0051 (2 bytes, big-endian)
     """
     return CommandCode.ENTER_DFU.to_bytes(2, byteorder="big")
+
+
+def build_deep_sleep_command() -> bytes:
+    """Build command to put the device into deep sleep (command 0x0052).
+
+    Supported on ESP32 (enters timer-wake deep sleep, or releases the D-FF power
+    latch when one is configured) and Silabs Flex (arms EM4 button/NFC wake and
+    sleeps once the BLE connection closes). nRF targets do not implement deep
+    sleep and only log the command.
+
+    The response behavior varies by target and is best-effort — callers should
+    tolerate the connection dropping during or right after the command:
+    - ESP32 with a power latch: replies 0x0052, then powers off after ~100 ms.
+    - ESP32 without a power latch: enters deep sleep immediately with no ACK;
+      the BLE connection drops.
+    - Silabs Flex: replies 0x0052, then closes the link and enters EM4.
+    - nRF: no response (deep sleep not supported).
+
+    Returns:
+        Command bytes: 0x0052 (2 bytes, big-endian)
+    """
+    return CommandCode.DEEP_SLEEP.to_bytes(2, byteorder="big")
 
 
 def build_direct_write_start_compressed(

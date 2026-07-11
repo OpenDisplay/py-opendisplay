@@ -18,7 +18,7 @@ class _FakeConnection:
         self.written: list[bytes] = []
         self.read_timeout: float | None = None
 
-    async def write_command(self, cmd: bytes) -> None:
+    async def write_command(self, cmd: bytes, response: bool = True) -> None:
         self.written.append(cmd)
 
     async def read_response(self, timeout: float) -> bytes:

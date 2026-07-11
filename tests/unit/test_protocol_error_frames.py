@@ -37,7 +37,7 @@ class _FakeConn:
     def __init__(self, responses: list[bytes]) -> None:
         self._responses = responses
 
-    async def write_command(self, data: bytes) -> None:
+    async def write_command(self, data: bytes, response: bool = True) -> None:
         pass
 
     async def read_response(self, timeout: float) -> bytes:
@@ -61,7 +61,7 @@ class _ScriptedConn:
     def __init__(self, responses: list[bytes | Exception]) -> None:
         self._responses = responses
 
-    async def write_command(self, data: bytes) -> None:
+    async def write_command(self, data: bytes, response: bool = True) -> None:
         pass
 
     async def read_response(self, timeout: float) -> bytes:

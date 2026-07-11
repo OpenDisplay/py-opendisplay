@@ -7,6 +7,7 @@ from opendisplay.protocol.commands import (
     CONFIG_CHUNK_SIZE,
     CommandCode,
     build_buzzer_activate_command,
+    build_deep_sleep_command,
     build_direct_write_data_command,
     build_direct_write_end_command,
     build_direct_write_start_compressed,
@@ -45,6 +46,13 @@ class TestCommandBuilders:
         cmd = build_reboot_command()
         assert len(cmd) == 2
         assert cmd == b"\x00\x0f"  # 0x000F big-endian
+
+    def test_build_deep_sleep_command(self):
+        """Test DEEP_SLEEP command builder."""
+        cmd = build_deep_sleep_command()
+        assert len(cmd) == 2
+        assert cmd == b"\x00\x52"  # 0x0052 big-endian
+        assert cmd == CommandCode.DEEP_SLEEP.to_bytes(2, "big")
 
     def test_build_direct_write_start_uncompressed(self, real_upload_start_command):
         """Test uncompressed START command matches real data."""

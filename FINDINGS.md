@@ -92,14 +92,17 @@ machinery exists.
 
 ### P5. 🟠 BLE throughput: stop-and-wait, write-with-response, fixed chunk sizes
 
-- Every chunk incurs a GATT write-with-response (`transport/connection.py:262-266`,
-  `response=True`) **and** a firmware ACK notification before the next chunk
-  (`device.py:1563-1598`). Over an ESPHome/HA proxy that is ~2 RTTs per 154/230-byte
-  chunk — hundreds of serialized round-trips for a 50 KB image. This is the dominant
-  transfer-time limiter. `PIPELINE_CHUNKS` exists (`protocol/commands.py:51`) but is
-  hardcoded to 1 and unused. If firmware tolerates it, a small in-flight window or
-  write-without-response for 0x71 data with periodic ACK checkpoints would multiply
-  throughput. (Firmware ACKs every 0x71, so this needs a firmware-coordinated change.)
+- **Partially addressed:** 0x71 data chunks now use BLE Write Without Response
+  (`transport/connection.py` `write_command(..., response=False)`, opted in from
+  `_send_data_chunks`/`_send_partial_chunks`), removing the GATT write-with-response
+  round-trip. The firmware ACK notification per chunk is still awaited (stop-and-wait),
+  which preserves flow control and needs no firmware change — so exactly one write is in
+  flight at a time. This roughly halves the RTTs per chunk. The characteristic is probed
+  for the `write-without-response` property and falls back to write-with-response if absent.
+- Remaining: the per-chunk firmware ACK is still serialized. A true in-flight window /
+  periodic ACK checkpoints would multiply throughput further, but that DOES need a
+  firmware-coordinated change (firmware ACKs every 0x71, and the ESP32 command queue is
+  only 5 deep). `PIPELINE_CHUNKS` (`protocol/commands.py:52`) stays 1 for now.
 - No MTU negotiation: `CHUNK_SIZE = 230` / `ENCRYPTED_CHUNK_SIZE = 154`
   (`protocol/commands.py:47-48`) are constants; `client.mtu_size` is never consulted, so
   links that negotiate 247+ leave throughput on the table.

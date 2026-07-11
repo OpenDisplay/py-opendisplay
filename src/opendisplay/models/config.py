@@ -221,6 +221,15 @@ class PowerOption:
             return self.power_mode
 
     @property
+    def deep_sleep_enabled(self) -> bool:
+        """Return True if the device is configured for deep sleep.
+
+        Mirrors the firmware's own sleep-entry condition: battery power mode
+        (PowerMode.BATTERY) with a non-zero timer-wake interval.
+        """
+        return self.power_mode == PowerMode.BATTERY and self.deep_sleep_time_seconds > 0
+
+    @property
     def capacity_estimator_enum(self) -> CapacityEstimator | int:
         """Get battery chemistry estimator as enum, or raw int if unknown."""
         try:

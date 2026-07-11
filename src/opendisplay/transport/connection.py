@@ -60,6 +60,9 @@ class BLEConnection:
         self._client: BleakClient | None = None
         self._notification_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._notification_characteristic: BleakGATTCharacteristic | None = None
+        # Whether the command characteristic advertises Write Without Response.
+        # Set during notification setup; used to safely enable/disable WNR writes.
+        self._write_no_response_supported: bool = False
         self.device_name: str | None = None
 
     async def __aenter__(self) -> BLEConnection:
@@ -231,6 +234,16 @@ class BLEConnection:
 
         self._notification_characteristic = characteristics[0]
 
+        # Record whether the characteristic advertises Write Without Response so
+        # writes can opt into it (0x71 data chunks) and gracefully fall back to
+        # write-with-response on devices/stacks that don't support it.
+        props = getattr(self._notification_characteristic, "properties", []) or []
+        self._write_no_response_supported = "write-without-response" in props
+        _LOGGER.debug(
+            "Command characteristic write-without-response supported: %s",
+            self._write_no_response_supported,
+        )
+
         # Start notifications
         await self._client.start_notify(
             self._notification_characteristic,
@@ -283,11 +296,17 @@ class BLEConnection:
             _LOGGER.warning("Discarded %d stale notification(s) before command", dropped)
         return dropped
 
-    async def write_command(self, data: bytes) -> None:
+    async def write_command(self, data: bytes, response: bool = True) -> None:
         """Write command to device.
 
         Args:
             data: Command bytes to write
+            response: If True, use a BLE Write Request and wait for the ATT write
+                confirmation. If False, use a Write Without Response (Write Command)
+                to skip the ATT round-trip — used for bulk 0x71 image-data chunks,
+                which are still flow-controlled by the application-layer ACK. Falls
+                back to a Write Request if the characteristic does not advertise
+                write-without-response.
 
         Raises:
             BLEConnectionError: If not connected or write fails
@@ -302,11 +321,15 @@ class BLEConnection:
         # from a clean queue (see drain_notifications).
         self.drain_notifications()
 
+        # Only skip the write confirmation when the caller opts out AND the
+        # characteristic actually supports it; otherwise keep write-with-response.
+        effective_response = response or not self._write_no_response_supported
+
         try:
             await self._client.write_gatt_char(
                 self._notification_characteristic,
                 data,
-                response=True,  # Wait for write confirmation
+                response=effective_response,
             )
         except Exception as e:
             raise BLEConnectionError(f"Write failed: {e}") from e
