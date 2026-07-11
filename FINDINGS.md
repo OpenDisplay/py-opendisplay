@@ -259,6 +259,21 @@ of **8** regardless of bpp (`display_service.cpp:1534`). Python:
 Fix: restrict partial to `ColorScheme.MONO`, align to 8 pixels, and treat all pre-refresh
 0x76/0x71 NACKs as fallback-to-full.
 
+**Update (pipe-partial):** partial-region refresh now rides the sliding window when the
+device advertises `supports_pipe_write` and `max_queue_size > 1`. `_maybe_upload_partial`
+negotiates an extended `0x0080` START (flags bit1 `PIPE_FLAG_PARTIAL` + 12-byte LE
+`[old_etag][x][y][w][h]` geometry, `total_size = plane_size*2`); the device confirms with
+ACK flags bit1. New START NACK codes gate the fallback ladder: `0x05 ETAG_MISMATCH` → skip
+0x76, go full (device already cleared its etag); `0x06 PARTIAL_UNSUPPORTED`/`0x07
+RECT_INVALID` → go full (0x76 would fail identically; 0x06 caches a per-connection
+negative); `0x02` on a partial request (after one uncompressed-still-partial retry) or an
+ACK without bit1 → disable pipe-partial for the connection and fall back to legacy 0x76;
+silence/garble → 0x76. Partial transfers never auto-complete (firmware waits for the
+explicit `0x0082` END which alone carries the refresh selector `2` + new_etag), so the
+sender uses the same explicit-END contract compressed transfers use. Encryption parity
+holds: the 24-byte plaintext START fits one CCM frame, data frames size to 212 B @ frame
+244, and the 0x76 fallback rung still caps at `ENCRYPTED_CHUNK_SIZE`.
+
 ### M2. 🟠 [FW-interplay] Etag never committed on uncompressed full uploads — partial mode never engages, and a stale-etag hazard exists
 
 Uncompressed uploads always finish via firmware auto-END at the exact byte count

@@ -44,6 +44,7 @@ from .exceptions import (
     IntegrityCheckError,
     InvalidResponseError,
     ProtocolError,
+    RefreshTimeoutError,
     TruncatedConfigError,
 )
 from .landing import build_landing_url
@@ -55,6 +56,7 @@ from .models.firmware import FirmwareVersion
 from .models.led_flash import LedFlashConfig
 from .partial import (
     PARTIAL_FLAG_COMPRESSED,
+    PartialRegion,
     PartialState,
     _generate_etag,
     build_partial_logical_stream,
@@ -69,10 +71,12 @@ from .protocol import (
     MAX_COMPRESSED_SIZE,
     MAX_PTO,
     MAX_START_PAYLOAD,
+    PIPE_FLAG_PARTIAL,
     PIPE_FRAME_OVERHEAD,
-    TIMEOUT_PIPE_PROBE,
+    TIMEOUT_PIPE_START,
     CommandCode,
     PipeParams,
+    PipePartialRequest,
     build_authenticate_step1,
     build_authenticate_step2,
     build_buzzer_activate_command,
@@ -108,6 +112,9 @@ from .protocol.responses import (
     PIPE_FRAME_END_NACK,
     PIPE_FRAME_NACK,
     PIPE_START_NACK_COMPRESSION,
+    PIPE_START_NACK_ETAG_MISMATCH,
+    PIPE_START_NACK_PARTIAL_UNSUPPORTED,
+    PIPE_START_NACK_RECT_INVALID,
     check_response_type,
     is_compressed_failure_frame,
     parse_authenticate_challenge,
@@ -121,6 +128,24 @@ if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class _PipePartialEtagMismatch(Exception):
+    """Internal: the device NACKed a pipe-partial START with 0x05 (etag mismatch).
+
+    The device has already cleared its displayed_etag, so a 0x76 retry would
+    mismatch again — the caller clears PartialState and goes straight to full.
+    """
+
+
+class _PipePartialRejected(Exception):
+    """Internal: the device NACKed a pipe-partial START with 0x06/0x07.
+
+    0x06 = partial unsupported (bpp/driver), 0x07 = rect invalid. The 0x76
+    fallback runs identical checks and would fail identically, so the caller
+    clears PartialState and goes straight to full.
+    """
+
 
 _INDEX_TO_ROTATION: dict[int, Rotation] = {
     0: Rotation.ROTATE_0,
@@ -498,6 +523,10 @@ class OpenDisplayDevice:
         self._pipe_params: PipeParams | None = None  # active transfer only
         self._pipe_probed: bool = False  # capability determined this connection
         self._pipe_supported: bool = False  # probe result (valid iff _pipe_probed)
+        # Pipe-partial support is inferred, then confirmed by the 0x0080 ACK flags
+        # bit1: None = unknown, True = confirmed, False = rejected this connection
+        # (older pipe-capable firmware NACKs the partial flag with 0x02).
+        self._pipe_partial_supported: bool | None = None
 
     async def __aenter__(self) -> OpenDisplayDevice:
         """Connect and optionally interrogate device."""
@@ -610,6 +639,7 @@ class OpenDisplayDevice:
         # All pipe negotiation/capability state is per-connection (Part 1 §1.1).
         self._pipe_probed = False
         self._pipe_supported = False
+        self._pipe_partial_supported = None
         self._pipe_params = None
 
     def _encrypt_frame(self, data: bytes) -> bytes:
@@ -1771,6 +1801,63 @@ class OpenDisplayDevice:
         new_etag = _generate_etag()
         _LOGGER.debug("Partial upload: old_etag=0x%08x new_etag=0x%08x", state.etag, new_etag)
 
+        # Pipe-first: ride the sliding window when the device advertises PIPE_WRITE
+        # and pipe-partial has not been disabled this connection. partial_update_support
+        # != NONE is already guaranteed (compute_partial_region gated on it). Falls
+        # back to the legacy 0x76 flow below on any None result.
+        if (
+            display.supports_pipe_write
+            and self._max_queue_size > 1
+            and not (self._pipe_probed and not self._pipe_supported)
+            and self._pipe_partial_supported is not False
+        ):
+            total_size = len(logical_stream)
+            try:
+                params = await self._negotiate_pipe_partial(use_compression, total_size, state.etag, region)
+            except _PipePartialEtagMismatch:
+                # Device already cleared its etag — a 0x76 retry would mismatch
+                # again, so skip straight to a full upload.
+                _LOGGER.info("pipe-partial etag mismatch (0x05); clearing state, falling back to full")
+                state.etag = 0
+                state.last_image = None
+                return "fallback_full"
+            except _PipePartialRejected as exc:
+                # 0x76 runs identical bpp/rect checks and would fail identically.
+                _LOGGER.info("pipe-partial rejected (%s); clearing state, falling back to full", exc)
+                state.etag = 0
+                state.last_image = None
+                return "fallback_full"
+            if params is not None:
+                # Negotiation may have downgraded compressed→uncompressed (NACK 0x02).
+                payload = compressed_stream if params.compressed else logical_stream
+                try:
+                    await self._run_pipe_upload(
+                        payload, params, RefreshMode.PARTIAL, total_size, progress_callback, new_etag
+                    )
+                except RefreshTimeoutError:
+                    # 0x74 after END_ACK: firmware already cleared its etag on
+                    # the failed refresh; re-raise (parity with the 0x76 path).
+                    # Note BLETimeoutError on the post-DATA reads deliberately
+                    # propagates too (not caught below): the END may already have
+                    # committed on the device, so falling back to full and
+                    # re-baselining state on an unknown outcome would be unsafe.
+                    raise
+                except ProtocolError as exc:
+                    # Mid-stream NACK / MAX_RETX / END NACK before any refresh — the
+                    # transfer aborted cleanly, so a full upload is safe.
+                    _LOGGER.info("pipe-partial upload failed (%s); clearing state, falling back to full", exc)
+                    state.etag = 0
+                    state.last_image = None
+                    return "fallback_full"
+                # Success — commit partial state (mirrors the 0x76 success path).
+                state.etag = new_etag
+                state.last_image = region.new_palette
+                state.width = region.width
+                state.height = region.height
+                state.bytes_per_pixel = 1
+                return "success"
+            # params is None → fall through to the legacy 0x76 flow unchanged.
+
         # Start partial upload (0x76), stream remaining 0x71 chunks, and finish
         # with partial refresh.
         max_start = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else MAX_START_PAYLOAD
@@ -1818,7 +1905,7 @@ class OpenDisplayDevice:
         response = await self._read(self.TIMEOUT_REFRESH)
         command, _ = check_response_type(response)
         if command == CommandCode.DIRECT_WRITE_REFRESH_TIMEOUT:
-            raise ProtocolError("Display refresh timed out (device sent 0x74)")
+            raise RefreshTimeoutError("Display refresh timed out (device sent 0x74)")
         if command != CommandCode.DIRECT_WRITE_REFRESH_COMPLETE:
             raise ProtocolError(f"Unexpected response waiting for refresh: {command.name} (0x{command:04x})")
 
@@ -1855,9 +1942,18 @@ class OpenDisplayDevice:
         Raises:
             ProtocolError: If upload fails
         """
-        # 0. Sliding-window (PIPE_WRITE) attempt. Skipped when disabled
-        # (max_queue_size <= 1) or when this connection already probed negative.
-        pipe_eligible = self._max_queue_size > 1 and not (self._pipe_probed and not self._pipe_supported)
+        # 0. Sliding-window (PIPE_WRITE) attempt. Gated on the device config
+        # advertising pipe support (transmission_modes bit 0x10) — a device whose
+        # config lacks the bit never sees a 0x0080 probe. Also skipped when
+        # disabled (max_queue_size <= 1) or when this connection already probed
+        # negative. The 0x0080 negotiation below remains authoritative for the
+        # transfer parameters when the gate passes.
+        display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
+        pipe_eligible = (
+            bool(display_cfg and display_cfg.supports_pipe_write)
+            and self._max_queue_size > 1
+            and not (self._pipe_probed and not self._pipe_supported)
+        )
         if pipe_eligible:
             total_size = len(image_data)
             params = await self._negotiate_pipe(use_compression, total_size)
@@ -1953,7 +2049,7 @@ class OpenDisplayDevice:
         response = await self._read(self.TIMEOUT_REFRESH)
         command, _ = check_response_type(response)
         if command == CommandCode.DIRECT_WRITE_REFRESH_TIMEOUT:
-            raise ProtocolError("Display refresh timed out (device sent 0x74)")
+            raise RefreshTimeoutError("Display refresh timed out (device sent 0x74)")
         if command != CommandCode.DIRECT_WRITE_REFRESH_COMPLETE:
             raise ProtocolError(f"Unexpected response waiting for refresh: {command.name} (0x{command:04x})")
         _LOGGER.info("Display refresh complete")
@@ -2032,8 +2128,10 @@ class OpenDisplayDevice:
     ) -> PipeParams | None:
         """Probe + negotiate a sliding-window transfer via 0x0080.
 
-        Sends PIPE_WRITE_START and waits ``TIMEOUT_PIPE_PROBE`` for the response.
-        Silence (old firmware ignoring the opcode) or an unrecoverable NACK returns
+        Sends PIPE_WRITE_START and waits ``TIMEOUT_PIPE_START`` for the response.
+        Attempts are config-gated (transmission_modes bit 0x10), so this is a plain
+        command timeout rather than a discovery probe. Silence (stale config bit on
+        pipe-less firmware) or an unrecoverable NACK returns
         None → the caller falls back to the legacy 0x70 flow. A NACK err 0x02
         (compression unsupported) on a compressed request retries 0x0080 once
         uncompressed before giving up.
@@ -2050,9 +2148,9 @@ class OpenDisplayDevice:
             )
         )
         try:
-            resp = await self._read(TIMEOUT_PIPE_PROBE)
+            resp = await self._read(TIMEOUT_PIPE_START)
         except BLETimeoutError:
-            _LOGGER.debug("No 0x0080 response within %.1fs; firmware lacks PIPE_WRITE", TIMEOUT_PIPE_PROBE)
+            _LOGGER.debug("No 0x0080 response within %.1fs; firmware lacks PIPE_WRITE", TIMEOUT_PIPE_START)
             return None
 
         try:
@@ -2080,6 +2178,138 @@ class OpenDisplayDevice:
         params = PipeParams(w_eff, n_eff, frame_eff, selective, compressed)
         _LOGGER.info(
             "PIPE_WRITE negotiated: W=%d N=%d frame=%d selective=%s compressed=%s (dev max %d/%d/%d, ver %d)",
+            w_eff,
+            n_eff,
+            frame_eff,
+            selective,
+            compressed,
+            dev_max_window,
+            dev_max_ack_every,
+            dev_max_frame,
+            ver,
+        )
+        return params
+
+    async def _negotiate_pipe_partial(
+        self,
+        compressed: bool,
+        total_size: int,
+        old_etag: int,
+        region: PartialRegion,
+        _retry_uncompressed: bool = True,
+    ) -> PipeParams | None:
+        """Probe + negotiate a partial-region sliding-window transfer via 0x0080.
+
+        Sends an extended PIPE_WRITE_START (flags bit1 + 12-byte geometry) and
+        interprets the response per Part 1 §1.2. A partial 0x0080 is a valid pipe
+        probe, so this also updates ``_pipe_probed`` / ``_pipe_supported``.
+
+        Returns:
+            PipeParams(partial=True) on an ACK confirming partial (flags bit1),
+            or None when the caller should fall back to the legacy 0x76 flow
+            (silence / garble / other NACK / partial-flag rejected / bit1 clear).
+
+        Raises:
+            _PipePartialEtagMismatch: NACK 0x05 — caller skips 0x76, goes full.
+            _PipePartialRejected: NACK 0x06/0x07 — caller skips 0x76, goes full.
+        """
+        req_frame = DEFAULT_MAX_FRAME  # HA GATT ceiling; also our client_max_frame
+        partial = PipePartialRequest(
+            old_etag=old_etag, x=region.rx, y=region.ry, w=region.rw, h=region.rh
+        )
+        # The 0x0080 is the single pre-stream write; _write re-authenticates here
+        # (once, never again mid-stream).
+        await self._write(
+            build_pipe_write_start_command(
+                compressed,
+                self._max_queue_size,
+                self._blocks_per_ack,
+                req_frame,
+                total_size,
+                partial=partial,
+            )
+        )
+        try:
+            resp = await self._read(TIMEOUT_PIPE_START)
+        except BLETimeoutError:
+            _LOGGER.debug(
+                "No 0x0080 partial response within %.1fs; firmware lacks PIPE_WRITE", TIMEOUT_PIPE_START
+            )
+            self._pipe_probed = True
+            self._pipe_supported = False
+            return None
+
+        try:
+            ok, payload = parse_pipe_start_response(resp)
+        except InvalidResponseError as err:
+            _LOGGER.debug("Garbled 0x0080 partial response (%s); falling back to legacy", err)
+            self._pipe_probed = True
+            self._pipe_supported = False
+            return None
+
+        if not ok:
+            err_code = cast(int, payload)
+            # The device answered 0x0080, so pipe write itself is supported.
+            self._pipe_probed = True
+            self._pipe_supported = True
+            if err_code == PIPE_START_NACK_COMPRESSION and compressed and _retry_uncompressed:
+                _LOGGER.info(
+                    "Device rejected compressed pipe-partial (err 0x02); retrying uncompressed still-partial"
+                )
+                return await self._negotiate_pipe_partial(
+                    False, total_size, old_etag, region, _retry_uncompressed=False
+                )
+            if err_code == PIPE_START_NACK_COMPRESSION:
+                # A second 0x02 (or 0x02 on an already-uncompressed request) means
+                # the partial flag bit itself is unknown — older pipe-capable
+                # firmware. Cache the negative so we never re-send a partial 0x0080
+                # this connection.
+                _LOGGER.info(
+                    "Device rejected the pipe-partial flag (err 0x02); disabling pipe-partial this connection"
+                )
+                self._pipe_partial_supported = False
+                return None
+            if err_code == PIPE_START_NACK_ETAG_MISMATCH:
+                raise _PipePartialEtagMismatch(
+                    "Device rejected pipe-partial START: displayed etag mismatch (0x05)"
+                )
+            if err_code in (PIPE_START_NACK_PARTIAL_UNSUPPORTED, PIPE_START_NACK_RECT_INVALID):
+                if err_code == PIPE_START_NACK_PARTIAL_UNSUPPORTED:
+                    # bpp/driver can't do partial at all — never retry this connection.
+                    self._pipe_partial_supported = False
+                raise _PipePartialRejected(
+                    f"Device rejected pipe-partial START (err 0x{err_code:02x})"
+                )
+            _LOGGER.info(
+                "pipe-partial START NACK (err 0x%02x); falling back to legacy", err_code
+            )
+            return None
+
+        ver, dev_max_window, dev_max_ack_every, dev_max_frame, flags = cast(
+            "tuple[int, int, int, int, int]", payload
+        )
+        # A valid ACK is a valid pipe probe.
+        self._pipe_probed = True
+        self._pipe_supported = True
+        if not (flags & PIPE_FLAG_PARTIAL):
+            # Requested partial but the device did not confirm bit1 → older
+            # pipe-capable firmware. Abandon the pipe attempt; the subsequent 0x76
+            # START resets the orphaned firmware session (Part 1 §1.2).
+            _LOGGER.info(
+                "Device ACKed 0x0080 without the partial bit; pipe-partial unsupported this connection"
+            )
+            self._pipe_partial_supported = False
+            return None
+        self._pipe_partial_supported = True
+        # Min-rule (Part 1 §1.1) — identical to _negotiate_pipe.
+        w_eff = max(1, min(self._max_queue_size, dev_max_window, 32))
+        n_eff = max(1, min(self._blocks_per_ack, dev_max_ack_every, w_eff))
+        frame_eff = min(req_frame, dev_max_frame)
+        selective = bool(flags & 0x01)
+        params = PipeParams(w_eff, n_eff, frame_eff, selective, compressed, partial=True)
+        _LOGGER.info(
+            "pipe-partial negotiated: W=%d N=%d frame=%d selective=%s compressed=%s "
+            "(dev max %d/%d/%d, ver %d)",
             w_eff,
             n_eff,
             frame_eff,
@@ -2122,6 +2352,10 @@ class OpenDisplayDevice:
         # Always keep at least one frame so the receiver's total check + END
         # handshake run even for an empty payload (mirrors legacy START/END).
         chunks = [payload[i : i + size] for i in range(0, len(payload), size)] or [b""]
+        if params.partial and new_etag is None:
+            # An etag-less partial END would make firmware commit displayed_etag=0
+            # on a successful refresh, silently desyncing the client PartialState.
+            raise ProtocolError("PIPE_WRITE partial transfer requires a new_etag for the END commit")
         self._pipe_params = params
         chunk_timeout = (
             self.TIMEOUT_PIPE_DATA_COMPRESSED if params.compressed else self.TIMEOUT_PIPE_DATA_UNCOMPRESSED
@@ -2129,10 +2363,19 @@ class OpenDisplayDevice:
 
         try:
             auto_completed = await self._send_pipe_chunks(chunks, params, chunk_timeout, progress_callback)
-            # Uncompressed transfers ALWAYS auto-complete (firmware resets pipe
-            # state and sends an unsolicited END_ACK once total_size is reached),
-            # so the explicit END path below is compressed-only. Sending an END
-            # after auto-complete would be NACKed and desync etag accounting.
+            # Uncompressed full-frame transfers ALWAYS auto-complete (firmware
+            # resets pipe state and sends an unsolicited END_ACK once total_size is
+            # reached), so the explicit END path below is skipped there. Compressed
+            # and partial transfers use the explicit END (partial firmware never
+            # auto-completes — Part 1 §1.5). Sending an END after auto-complete
+            # would be NACKed and desync etag accounting.
+            if params.partial and auto_completed:
+                # Partial firmware must never auto-complete; an unsolicited END_ACK
+                # here is a contract violation (would have refreshed FULL, not
+                # REFRESH_PARTIAL, with no committed etag).
+                raise ProtocolError(
+                    "PIPE_WRITE partial transfer auto-completed unexpectedly (unsolicited END_ACK)"
+                )
             if not auto_completed:
                 await self._await_pipe_end_ack(chunks, refresh_mode, new_etag, params)
 
@@ -2142,7 +2385,7 @@ class OpenDisplayDevice:
             response = await self._read(self.TIMEOUT_REFRESH)
             command, _ = check_response_type(response)
             if command == CommandCode.DIRECT_WRITE_REFRESH_TIMEOUT:
-                raise ProtocolError("Display refresh timed out (device sent 0x74)")
+                raise RefreshTimeoutError("Display refresh timed out (device sent 0x74)")
             if command != CommandCode.DIRECT_WRITE_REFRESH_COMPLETE:
                 raise ProtocolError(f"Unexpected response waiting for refresh: {command.name} (0x{command:04x})")
             _LOGGER.info("Display refresh complete (pipe)")
@@ -2164,23 +2407,27 @@ class OpenDisplayDevice:
         tokens on ACK, retransmits only missing chunks (selective repeat) — or
         rewinds when the receiver does not buffer out-of-order (bit0 clear).
 
-        Completion contract differs by path:
-        - Compressed: returns once every chunk is acked; the caller sends the
-          explicit 0x0082 END (firmware can only verify totals at zlib flush).
+        Completion contract is set by ``explicit_end = params.compressed or
+        params.partial``:
+        - explicit-END path (compressed OR partial): returns once every chunk is
+          acked; the caller sends the explicit 0x0082 END. Compressed firmware can
+          only verify totals at zlib flush; partial firmware never auto-completes
+          (Part 1 §1.5) because only the 0x0082 carries the refresh mode + new_etag.
           A tail of < N_eff unacked frames never earns a cadence ACK, so the tail
           wait uses TIMEOUT_PIPE_TAIL_FLUSH and a dup-probe instead of stalling
           on chunk_timeout.
-        - Uncompressed: the client sends exactly total_size bytes, so firmware
-          ALWAYS auto-completes — flush-ACK, then an unsolicited {0x00,0x82},
-          resetting its pipe state before any explicit END could arrive. This
-          sender therefore keeps reading past the flush-ACK until that END_ACK
-          and returns True (mirroring legacy _send_data_chunks' 0x72-in-place-of-
-          0x71 handling); the caller must NOT send END.
+        - auto-complete path (uncompressed full-frame only): the client sends
+          exactly total_size bytes, so firmware ALWAYS auto-completes — flush-ACK,
+          then an unsolicited {0x00,0x82}, resetting its pipe state before any
+          explicit END could arrive. This sender therefore keeps reading past the
+          flush-ACK until that END_ACK and returns True (mirroring legacy
+          _send_data_chunks' 0x72-in-place-of-0x71 handling); the caller must NOT
+          send END.
 
         Returns:
-            True if the device auto-completed (unsolicited END_ACK — always the
-            case for uncompressed), False on normal compressed completion
-            (caller sends END).
+            True if the device auto-completed (unsolicited END_ACK — only the
+            uncompressed full-frame path), False on normal explicit-END completion
+            (compressed or partial; caller sends END).
 
         Raises:
             ProtocolError: On a fatal NACK, MAX_RETX/MAX_PTO exhaustion, a missing
@@ -2188,6 +2435,9 @@ class OpenDisplayDevice:
         """
         n = len(chunks)
         window = params.window
+        # Partial transfers never auto-complete (Part 1 §1.5), so they use the
+        # same explicit-END completion contract compressed transfers use today.
+        explicit_end = params.compressed or params.partial
         max_retx = 3 * window
         acked: set[int] = set()
         window_base = 0  # lowest unacked
@@ -2195,6 +2445,7 @@ class OpenDisplayDevice:
         pending_retx: dict[int, int] = {}  # missing idx → ACKs seen since last (re)transmit
         retx_count = 0
         pto_count = 0
+        stall_acks = 0  # consecutive ACKs that neither advance window_base nor expose a hole
         bytes_total = sum(len(c) for c in chunks)
         bytes_sent_hw = 0
 
@@ -2213,9 +2464,10 @@ class OpenDisplayDevice:
                     progress_callback(min(bytes_sent_hw, bytes_total), bytes_total)
                 next_to_send += 1
 
-            # Compressed: all acked → done, caller sends the explicit END.
-            # Uncompressed: keep reading for the unsolicited auto-complete END_ACK.
-            if window_base >= n and params.compressed:
+            # Explicit-END (compressed or partial): all acked → done, caller sends
+            # the explicit END. Uncompressed full-frame: keep reading for the
+            # unsolicited auto-complete END_ACK.
+            if window_base >= n and explicit_end:
                 break
 
             # 2. Block for an ACK (credit exhausted or tail pending). Compressed
@@ -2224,7 +2476,7 @@ class OpenDisplayDevice:
             # unacked chunks (a genuinely lost tail chunk must be repaired by
             # retransmit, not surface as a fatal END NACK at zlib flush).
             tail_flush = (
-                params.compressed
+                explicit_end
                 and next_to_send >= n
                 and 0 < n - window_base < params.ack_every
                 and not (acked and max(acked) >= window_base)  # no known holes
@@ -2273,18 +2525,36 @@ class OpenDisplayDevice:
             pto_count = 0
             highest_seen, ack_mask = parse_pipe_data_ack(resp)
             acked |= unpack_ack_ranges(highest_seen, ack_mask, window_base)
+            prev_base = window_base
             while window_base in acked:
                 pending_retx.pop(window_base, None)
                 window_base += 1
+            # Progress bound: an ACK stream that never advances the cumulative
+            # point and never exposes a hole would otherwise reset pto_count each
+            # pass and loop forever (only reachable with pathological firmware —
+            # real firmware ACKs in response to frames, not unsolicited).
+            if window_base > prev_base:
+                stall_acks = 0
             if window_base >= n:
-                # Loop top: compressed breaks (caller sends END); uncompressed
-                # keeps reading for the unsolicited auto-complete END_ACK.
+                # Loop top: explicit-end (compressed or partial) breaks (caller
+                # sends END); uncompressed full-frame keeps reading for the
+                # unsolicited auto-complete END_ACK.
+                stall_acks += 1
+                if stall_acks > max_retx:
+                    raise ProtocolError(
+                        f"PIPE_WRITE aborted: {stall_acks} ACKs without auto-complete END_ACK"
+                    )
                 continue
 
             # 4. Loss handling — holes below the highest received are definite losses.
             highest_recv = max(acked) if acked else window_base - 1
             missing = [i for i in range(window_base, min(highest_recv, next_to_send)) if i not in acked]
             if not missing:
+                stall_acks += 1
+                if stall_acks > max_retx:
+                    raise ProtocolError(
+                        f"PIPE_WRITE aborted: {stall_acks} consecutive ACKs without progress"
+                    )
                 continue
 
             if params.selective:
@@ -2317,20 +2587,24 @@ class OpenDisplayDevice:
         new_etag: int | None,
         params: PipeParams,
     ) -> None:
-        """Send 0x0082 END and wait for the END_ACK (compressed transfers only).
+        """Send 0x0082 END and wait for the END_ACK (explicit-END transfers).
 
-        Uncompressed transfers never reach here: firmware always auto-completes
-        them (see _send_pipe_chunks), and an END sent after that reset would be
-        NACKed. Called only after ``_send_pipe_chunks`` has seen every chunk
-        acked, so the transfer is complete; a trailing tail-flush PIPE_ACK may
-        precede the END_ACK in the queue and is skipped. An END_NACK or data
-        NACK aborts (the caller's existing retry-from-scratch recovers).
+        Reached by compressed transfers and ALL partial transfers (partial never
+        auto-completes — the END alone carries the refresh selector + new_etag).
+        Uncompressed full-frame transfers never reach here: firmware always
+        auto-completes them (see _send_pipe_chunks), and an END sent after that
+        reset would be NACKed. Called only after ``_send_pipe_chunks`` has seen
+        every chunk acked, so the transfer is complete; a trailing tail-flush
+        PIPE_ACK may precede the END_ACK in the queue and is skipped. An
+        END_NACK or data NACK aborts (the caller's existing retry-from-scratch
+        recovers).
         """
         del chunks  # completeness already guaranteed by the sender loop
         end_cmd = build_pipe_write_end_command(refresh_mode.value, new_etag)
         await self._write_pipe_frame(end_cmd, response=True)
 
         end_timeout = self.TIMEOUT_COMPRESSED_END_ACK if params.compressed else self.TIMEOUT_UNCOMPRESSED_END_ACK
+        stray_acks = 0
         while True:
             resp = await self._read(end_timeout)
             kind = classify_pipe_frame(resp)
@@ -2342,7 +2616,15 @@ class OpenDisplayDevice:
                 err, _hs, _mask = parse_pipe_data_nack(resp)
                 raise ProtocolError(f"PIPE_WRITE data NACK during END: err=0x{err:02x}")
             if kind == PIPE_FRAME_ACK:
-                continue  # tail-flush ACK preceding END_ACK — ignore, keep reading
+                # Tail-flush ACK preceding END_ACK — ignore, keep reading. Bounded:
+                # firmware sends at most one flush ACK per END; an unending ACK
+                # stream would otherwise renew end_timeout forever.
+                stray_acks += 1
+                if stray_acks > 32:
+                    raise ProtocolError(
+                        f"PIPE_WRITE aborted: {stray_acks} ACK frames while awaiting END_ACK"
+                    )
+                continue
             raise ProtocolError(f"Unexpected frame awaiting END_ACK: {resp[:8].hex()}")
 
     def _extract_capabilities_from_config(self) -> DeviceCapabilities:

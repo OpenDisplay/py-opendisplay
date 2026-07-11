@@ -343,11 +343,13 @@ class DisplayConfig:
     def supports_pipe_write(self) -> bool:
         """Check if display advertises sliding-window PIPE_WRITE (bit 0x10).
 
-        Secondary / positive gate only: firmware echoes the STORED TLV, so a
-        device flashed with pipe-capable firmware but an older config will not
-        set this bit. The 0x0080 probe is therefore authoritative (see
-        ``OpenDisplayDevice._negotiate_pipe``); this bit is an optional
-        fast-confidence signal, never a disqualifier for old firmware.
+        Hard pre-flight gate: uploads only attempt a 0x0080 probe when this bit
+        is set (full pipe in ``_execute_upload``; pipe-partial additionally in
+        ``_maybe_upload_partial``). Firmware echoes the STORED TLV, so a device
+        flashed with pipe-capable firmware but an older config will not set the
+        bit and stays on the legacy path until its config is updated. When the
+        gate passes, the 0x0080 negotiation remains authoritative for the
+        transfer parameters.
         """
         return bool(self.transmission_modes & 0x10)
 

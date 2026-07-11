@@ -17,6 +17,7 @@ from test_pipe_write import (
     data_ack,
     data_nack,
     make_device,
+    start_ack,
 )
 
 from opendisplay.crypto import decrypt_response, derive_session_id, derive_session_key
@@ -27,11 +28,13 @@ from opendisplay.protocol.commands import ENCRYPTED_CHUNK_SIZE
 
 
 def _params(window: int = 4, ack_every: int = 2, max_frame: int = 244, selective: bool = True,
-            compressed: bool = True) -> PipeParams:
+            compressed: bool = True, partial: bool = False) -> PipeParams:
     """Default compressed=True: the explicit-END contract, where the sender returns
-    False after all chunks are acked. Uncompressed transfers ALWAYS auto-complete
-    (firmware sends an unsolicited END_ACK) — tested separately below."""
-    return PipeParams(window, ack_every, max_frame, selective, compressed)
+    False after all chunks are acked. Uncompressed full-frame transfers ALWAYS
+    auto-complete (firmware sends an unsolicited END_ACK) — tested separately
+    below. partial=True also uses the explicit-END contract (partial never
+    auto-completes, Part 1 §1.5)."""
+    return PipeParams(window, ack_every, max_frame, selective, compressed, partial=partial)
 
 
 def _data_frames(conn: ScriptedConn) -> list[bytes]:
@@ -315,6 +318,84 @@ async def test_uncompressed_missing_end_ack_aborts() -> None:
     assert all(w[:2] != b"\x00\x82" for w in conn.written)
 
 
+# ─── Uncompressed partial explicit-END contract (Part 1 §1.5) ────────────────
+
+
+@pytest.mark.asyncio
+async def test_uncompressed_partial_returns_false_after_all_acked() -> None:
+    """Uncompressed *partial* never auto-completes: once every chunk is acked the
+    sender breaks and returns False (caller sends the explicit END) — it must NOT
+    keep reading for an unsolicited END_ACK the way full-frame uncompressed does."""
+    dev, conn = make_device([data_ack({0, 1})], max_queue_size=4)
+    auto = await dev._send_pipe_chunks(
+        [b"a", b"b"], _params(window=4, compressed=False, partial=True), chunk_timeout=5.0
+    )
+    assert auto is False  # explicit-END contract → caller sends END
+    assert all(w[:2] != b"\x00\x82" for w in conn.written)  # sender never emits END itself
+
+
+@pytest.mark.asyncio
+async def test_uncompressed_partial_tail_flush_dup_probe() -> None:
+    """A < N_eff partial tail earns no cadence ACK → short flush timeout + dup-probe,
+    exactly like the compressed tail (the explicit_end substitution)."""
+    dev, conn = make_device(
+        [data_ack({0, 1}), BLETimeoutError, data_ack({0, 1, 2})],
+        max_queue_size=4,
+    )
+    auto = await dev._send_pipe_chunks(
+        [b"a", b"b", b"c"], _params(window=4, ack_every=2, compressed=False, partial=True), chunk_timeout=5.0
+    )
+    assert auto is False
+    assert conn.timeouts[0] == pytest.approx(5.0)  # cadence ACK owed (3 unacked >= N)
+    assert conn.timeouts[1] == pytest.approx(0.5)  # tail flush (1 unacked < N, no holes)
+    assert conn.timeouts[2] == pytest.approx(0.5)
+    assert _seqs(conn) == [0, 1, 2, 2]  # dup-probe resent the oldest unacked tail chunk
+
+
+@pytest.mark.asyncio
+async def test_single_chunk_partial_completes() -> None:
+    dev, conn = make_device([data_ack({0})], max_queue_size=8)
+    auto = await dev._send_pipe_chunks(
+        [b"z"], _params(window=8, compressed=False, partial=True), chunk_timeout=5.0
+    )
+    assert auto is False
+    assert _seqs(conn) == [0]
+
+
+@pytest.mark.asyncio
+async def test_run_pipe_upload_partial_auto_complete_is_contract_violation() -> None:
+    """If firmware wrongly auto-completes a partial transfer, _run_pipe_upload must
+    raise (an unsolicited END_ACK would have refreshed FULL with no committed etag)."""
+    dev, conn = make_device([END_ACK], max_queue_size=8)
+    with pytest.raises(ProtocolError, match="auto-completed unexpectedly"):
+        await dev._run_pipe_upload(
+            b"z",
+            _params(window=8, compressed=False, partial=True),
+            RefreshMode.PARTIAL,
+            total_size=1,
+            progress_callback=None,
+            new_etag=0xABCD,
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_pipe_upload_partial_sends_explicit_end_selector_2() -> None:
+    """Partial upload always sends END = [0x02][new_etag BE]."""
+    dev, conn = make_device([data_ack({0}), END_ACK, REFRESH_COMPLETE], max_queue_size=8)
+    committed = await dev._run_pipe_upload(
+        b"z",
+        _params(window=8, compressed=False, partial=True),
+        RefreshMode.PARTIAL,
+        total_size=1,
+        progress_callback=None,
+        new_etag=0xABCD,
+    )
+    assert committed is True
+    end_frames = [w for w in conn.written if w[:2] == b"\x00\x82"]
+    assert len(end_frames) == 1
+    assert end_frames[0] == b"\x00\x82" + bytes([2]) + (0xABCD).to_bytes(4, "big")
+
+
 # ─── _run_pipe_upload / _await_pipe_end_ack ──────────────────────────────────
 
 
@@ -527,3 +608,41 @@ async def test_encrypted_nack_decrypts_and_aborts() -> None:
 def test_encrypted_chunk_capacity_beats_legacy() -> None:
     # Sanity: 212 > legacy encrypted 154.
     assert 212 > ENCRYPTED_CHUNK_SIZE
+
+
+@pytest.mark.asyncio
+async def test_encrypted_full_pipe_end_to_end_through_execute_upload() -> None:
+    """Encrypted session, FULL-frame pipe, all the way through _execute_upload:
+    encrypted 0x0080 negotiation, encrypted 0x0081 data, firmware auto-complete
+    (encrypted unsolicited END_ACK at the 31-byte decrypt floor), encrypted
+    0x73. Every host frame must be a valid CCM envelope; no plaintext leak and
+    no spurious explicit END."""
+    from opendisplay.crypto import encrypt_command
+
+    dev, conn = make_device([], max_queue_size=16)
+    _make_session(dev)
+
+    def enc(plain: bytes, ctr: int) -> bytes:
+        # Device→host responses use the same CCM envelope as commands.
+        return encrypt_command(dev._session_key, dev._session_id, ctr, plain[:2], plain[2:])
+
+    # start_ack (8 B), data ack for chunk 0, unsolicited auto-complete END_ACK
+    # (2-byte plaintext → 31-byte envelope, the exact decrypt-floor boundary),
+    # then refresh-complete.
+    conn._responses = [enc(start_ack(), 0), enc(data_ack({0}), 1), enc(END_ACK, 2), enc(REFRESH_COMPLETE, 3)]
+    assert len(conn._responses[2]) == 31  # END_ACK rides the >=31 decrypt boundary
+
+    committed = await dev._execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False, new_etag=0x1234)
+
+    assert committed is False  # auto-complete never commits an etag
+    # Every write is encrypted: valid envelope, no plaintext opcode on the wire.
+    plaintexts = []
+    for w in conn.written:
+        assert len(w) >= 31
+        cmd_code, payload = decrypt_response(dev._session_key, w)
+        plaintexts.append(cmd_code.to_bytes(2, "big") + payload)
+    assert plaintexts[0][:2] == b"\x00\x80"
+    assert len(plaintexts[0]) == 12  # full-frame START: no partial extension
+    assert any(p[:2] == b"\x00\x81" and p[3:] == b"ABCD" for p in plaintexts)
+    assert all(p[:2] != b"\x00\x82" for p in plaintexts)  # auto-complete: no explicit END
+    assert all(p[:2] != b"\x00\x70" for p in plaintexts)  # never fell back to legacy

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+from dataclasses import dataclass
 from enum import IntEnum
 
 from ..models.buzzer_activate import BuzzerActivateConfig
@@ -62,9 +63,17 @@ MAX_START_PAYLOAD = 200  # Maximum bytes in START command (prevents MTU issues)
 # Sliding-window PIPE_WRITE (0x0080-0x0082) constants
 PIPE_VERSION = 1  # Protocol version carried in the 0x0080 request/response
 PIPE_FLAG_COMPRESSED = 0x01  # 0x0080 flags bit0: streamed bytes are zlib-compressed
+PIPE_FLAG_PARTIAL = 0x02  # 0x0080 flags bit1: transfer is a partial-region refresh
 PIPE_FRAME_OVERHEAD = 3  # Plaintext 0x0081 header: cmd(2) + seq(1)
 DEFAULT_MAX_FRAME = 244  # HA native GATT write ceiling (client_max_frame request)
-TIMEOUT_PIPE_PROBE = 2.0  # Seconds to wait for a 0x0080 response before legacy fallback
+# Seconds to wait for the 0x0080 START response. Pipe attempts are gated on the
+# config advertising transmission_modes bit 0x10, so this is a normal command
+# timeout, not a fast discovery probe: a gated-in device WILL answer, but on
+# ESP32 the ACK is queued and only flushed after panel bring-up returns, which
+# can take up to the color-panel busy cap (~30 s worst case). Silence still
+# falls back to legacy — it now means a stale config bit (pipe-less firmware),
+# paid at most once per connection thanks to the probe cache.
+TIMEOUT_PIPE_START = 30.0
 MAX_PTO = 3  # Consecutive silent probe timeouts before aborting a pipe transfer
 
 
@@ -281,27 +290,61 @@ def build_direct_write_end_with_etag(refresh_mode: int, new_etag: int) -> bytes:
     return cmd + refresh_mode.to_bytes(1, byteorder="big") + new_etag.to_bytes(4, byteorder="big")
 
 
+@dataclass(frozen=True)
+class PipePartialRequest:
+    """Partial-region geometry appended to a PIPE_WRITE_START (0x0080) request.
+
+    All fields ride the wire little-endian, matching the rest of the pipe header
+    (NOTE: the legacy 0x76 partial START packs the same geometry big-endian — that
+    byte order is deliberately NOT copied here).
+
+    Attributes:
+        old_etag: uint32 currently displayed etag (nonzero; must equal the device's
+            displayed_etag or the device NACKs 0x05).
+        x: Rectangle origin x (uint16, must be a multiple of 8).
+        y: Rectangle origin y (uint16).
+        w: Rectangle width (uint16, nonzero, must be a multiple of 8).
+        h: Rectangle height (uint16, nonzero).
+    """
+
+    old_etag: int
+    x: int
+    y: int
+    w: int
+    h: int
+
+
 def build_pipe_write_start_command(
     compressed: bool,
     window: int,
     ack_every: int,
     max_frame: int,
     total_size: int,
+    *,
+    partial: PipePartialRequest | None = None,
 ) -> bytes:
     """Build a PIPE_WRITE_START (0x0080) start + negotiation command.
 
     One round trip carries both the transfer parameters and the negotiation
     request; the device replies with its own maxima (see parse_pipe_start_response).
 
-    Wire (12-byte payload):
+    Wire (10-byte header, or 22-byte payload when ``partial`` is set):
         [0x00][0x80][ver:1][flags:1][req_window:1][req_ack_every:1]
                     [client_max_frame:2 LE][total_size:4 LE]
+        --- appended iff flags bit1 (PIPE_FLAG_PARTIAL) is set ---
+                    [old_etag:4 LE][x:2 LE][y:2 LE][w:2 LE][h:2 LE]
         - ver         = PIPE_VERSION (1)
-        - flags bit0  = compressed (zlib, window_bits <= 9); other bits reserved 0
+        - flags bit0  = compressed (zlib, window_bits <= 9)
+        - flags bit1  = partial-region refresh (0x02); other bits reserved 0
         - req_window  = requested "max queue size" W (tokens in flight), 1..32
         - req_ack_every = requested "blocks per ack" N, 1..32
         - client_max_frame = client MTU-derived frame ceiling (<= 244)
-        - total_size  = decompressed panel byte total (both modes)
+        - total_size  = decompressed panel byte total (partial: plane_size*2)
+
+    The 12-byte partial extension is packed little-endian via ``struct.pack`` to
+    match the rest of the pipe header; the legacy 0x76 START packs the same fields
+    big-endian and that byte order is intentionally not reused. ``partial=None``
+    yields the exact same bytes as before the extension was added.
 
     Unlike legacy compressed 0x70 START, this header is fixed-length and carries
     NO inline data — all payload flows via 0x0081 DATA frames.
@@ -312,6 +355,8 @@ def build_pipe_write_start_command(
         ack_every: Requested ACK cadence (blocks per ack).
         max_frame: Client max frame size in bytes.
         total_size: Decompressed panel byte total.
+        partial: Optional partial-region geometry (keyword-only). When set, flags
+            bit1 is raised and the 12-byte geometry is appended.
 
     Returns:
         Command bytes for 0x0080.
@@ -330,8 +375,18 @@ def build_pipe_write_start_command(
 
     cmd = CommandCode.PIPE_WRITE_START.to_bytes(2, byteorder="big")
     flags = PIPE_FLAG_COMPRESSED if compressed else 0
+    if partial is not None:
+        if not 1 <= partial.old_etag <= 0xFFFFFFFF:
+            raise ValueError(f"partial old_etag must be a nonzero uint32, got {partial.old_etag}")
+        for name, value in (("x", partial.x), ("y", partial.y), ("w", partial.w), ("h", partial.h)):
+            if not 0 <= value <= 0xFFFF:
+                raise ValueError(f"partial {name} out of uint16 range: {value}")
+        flags |= PIPE_FLAG_PARTIAL
     header = bytes([PIPE_VERSION, flags, window, ack_every])
-    return cmd + header + struct.pack("<H", max_frame) + struct.pack("<I", total_size)
+    packet = cmd + header + struct.pack("<H", max_frame) + struct.pack("<I", total_size)
+    if partial is not None:
+        packet += struct.pack("<IHHHH", partial.old_etag, partial.x, partial.y, partial.w, partial.h)
+    return packet
 
 
 def build_pipe_write_data_command(seq: int, chunk: bytes) -> bytes:
@@ -367,7 +422,9 @@ def build_pipe_write_end_command(refresh_mode: int, new_etag: int | None = None)
     The etag tail mirrors build_direct_write_end_with_etag; presence is by length.
 
     Args:
-        refresh_mode: Display refresh mode (0=full, 1=fast/partial).
+        refresh_mode: Display refresh mode. Full-frame transfers: 0=full, 1=fast.
+            Partial-negotiated transfers (PIPE_FLAG_PARTIAL): 0=full, 1=fast,
+            2=partial; firmware defaults to partial when the byte is absent.
         new_etag: Optional uint32 etag to commit on the device.
 
     Returns:

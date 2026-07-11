@@ -22,6 +22,7 @@ from .exceptions import (
     OTAError,
     OTANotSupportedError,
     ProtocolError,
+    RefreshTimeoutError,
     TruncatedConfigError,
 )
 from .landing import LANDING_URL_PREFIX, build_landing_payload, build_landing_url
@@ -101,6 +102,7 @@ __all__ = [
     "BLEConnectionError",
     "BLETimeoutError",
     "ProtocolError",
+    "RefreshTimeoutError",
     "ConfigParseError",
     "TruncatedConfigError",
     "InvalidResponseError",

@@ -278,6 +278,9 @@ PIPE_START_NACK_BAD_PARAMS = 0x01  # bad version / params
 PIPE_START_NACK_COMPRESSION = 0x02  # compression unsupported (retry uncompressed)
 PIPE_START_NACK_SIZE = 0x03  # total_size mismatch vs panel config
 PIPE_START_NACK_BUSY = 0x04  # busy / bad state
+PIPE_START_NACK_ETAG_MISMATCH = 0x05  # partial: old_etag == 0 or != device displayed_etag
+PIPE_START_NACK_PARTIAL_UNSUPPORTED = 0x06  # partial: bpp != 1 or unsupported driver
+PIPE_START_NACK_RECT_INVALID = 0x07  # partial: rect zero-size / OOB / misaligned
 
 # 0x0081 DATA NACK error codes (all fatal, Part 1 §1.3)
 PIPE_DATA_NACK_DECOMPRESS = 0x02
@@ -306,6 +309,10 @@ class PipeParams:
         selective: Response flags bit0 — receiver buffers out-of-order chunks
             (selective repeat). When False the sender uses rewind-style recovery.
         compressed: Whether this transfer streams zlib-compressed bytes.
+        partial: Whether this is a partial-region refresh (0x0080 flags bit1
+            requested and confirmed by the device's ACK flags bit1). Partial
+            transfers never auto-complete, so the sender always uses the explicit
+            0x0082 END completion contract.
     """
 
     window: int
@@ -313,6 +320,7 @@ class PipeParams:
     max_frame: int
     selective: bool
     compressed: bool
+    partial: bool = False
 
 
 def parse_pipe_start_response(data: bytes) -> tuple[bool, object]:

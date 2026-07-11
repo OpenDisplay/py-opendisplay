@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* partial-region refresh over the PIPE_WRITE sliding window (0x0080 flags bit1
+  `PIPE_FLAG_PARTIAL` + 12-byte LE geometry; ACK flags bit1 confirms). Small mono
+  partial updates now get the pipe's throughput/robustness and the e-paper partial
+  waveform, with the legacy 0x76 path retained as fallback. New START NACK codes
+  0x05 (etag mismatch) / 0x06 (partial unsupported) / 0x07 (rect invalid) drive the
+  fallback ladder. No new capability bit — eligibility is inferred from the existing
+  `supports_pipe_write` + `partial_update_support` signals. Works unchanged under an
+  encrypted session.
+* PIPE_WRITE (full and partial) is now hard-gated on the device config advertising
+  `transmission_modes` bit 0x10 (`supports_pipe_write`): a device whose config lacks
+  the bit never receives a 0x0080 probe and stays on the legacy path. When the gate
+  passes, the 0x0080 negotiation remains authoritative for transfer parameters.
+  Previously the bit was advisory and the probe alone decided.
+* With the config gate in place, the 0x0080 START wait is no longer a 2 s discovery
+  probe: `TIMEOUT_PIPE_PROBE` is replaced by `TIMEOUT_PIPE_START` (30 s, a normal
+  command timeout sized for ESP32's response-queue flush landing after slow color
+  panel bring-up). Silence still falls back to legacy (stale config bit), cached per
+  connection.
+* Hardening: the sliding-window sender and END_ACK waiter now bound pathological
+  ACK streams that never make progress (previously loops without a progress
+  guarantee, reachable only with buggy/hostile firmware).
+
 ## [7.11.2](https://github.com/OpenDisplay/py-opendisplay/compare/v7.11.1...v7.11.2) (2026-07-06)
 
 

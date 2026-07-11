@@ -27,6 +27,18 @@ class ProtocolError(OpenDisplayError):
     pass
 
 
+class RefreshTimeoutError(ProtocolError):
+    """Display refresh timed out (device sent 0x74) after the image was delivered.
+
+    Distinct from other ProtocolErrors because it fires *after* the transfer
+    completed: the device already cleared its displayed etag, so callers must
+    not treat it as a cleanly-aborted transfer (e.g. the pipe-partial path
+    re-raises instead of falling back to a full upload).
+    """
+
+    pass
+
+
 class ConfigParseError(ProtocolError):
     """Failed to parse device configuration."""
 
