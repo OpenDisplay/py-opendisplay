@@ -36,6 +36,7 @@ from .encoding import (
     zlib_window_bits,
 )
 from .exceptions import (
+    AuthenticationError,
     AuthenticationFailedError,
     AuthenticationRequiredError,
     AuthenticationSessionExistsError,
@@ -1841,6 +1842,16 @@ class OpenDisplayDevice:
                     # propagates too (not caught below): the END may already have
                     # committed on the device, so falling back to full and
                     # re-baselining state on an unknown outcome would be unsafe.
+                    raise
+                except (AuthenticationError, IntegrityCheckError):
+                    # An auth/session failure or a decrypt-integrity rejection is NOT
+                    # a clean, safe-to-retry protocol abort. Auth errors MUST surface
+                    # so the caller (e.g. Home Assistant) can trigger reauth instead
+                    # of silently retrying; an integrity failure signals an out-of-sync
+                    # encrypted channel that a full upload over the same session would
+                    # likely hit again. Masking either as a full-upload fallback would
+                    # hide it, so re-raise. Only the genuine protocol NACKs below are
+                    # safe to recover from with a full upload.
                     raise
                 except ProtocolError as exc:
                     # Mid-stream NACK / MAX_RETX / END NACK before any refresh — the
