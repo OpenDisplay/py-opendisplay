@@ -18,10 +18,7 @@ from opendisplay.transport.connection import MAX_CACHE_RETRIES, BLEConnection
 
 # A representative ESPHome-proxy stale-cache failure: the cached CCCD handle no
 # longer exists on the device, so the notify-enable descriptor write is rejected.
-_INVALID_HANDLE = (
-    "Bluetooth GATT Error address=CC:2D:73:41:2B:F1 handle=25 "
-    "error=1 description=Invalid handle"
-)
+_INVALID_HANDLE = "Bluetooth GATT Error address=CC:2D:73:41:2B:F1 handle=25 error=1 description=Invalid handle"
 
 
 def _connected(client: object) -> BLEConnection:

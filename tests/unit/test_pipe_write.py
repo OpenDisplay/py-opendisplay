@@ -568,9 +568,7 @@ async def test_negotiate_partial_ack_bit1_returns_partial_params() -> None:
 async def test_negotiate_partial_ack_bit1_clear_caches_negative() -> None:
     # Device ACKs pipe write but does NOT set the partial bit → unsupported.
     dev, conn = make_device([start_ack(flags=0x01)], max_queue_size=16)
-    params = await dev._negotiate_pipe_partial(
-        compressed=False, total_size=16, old_etag=0x1, region=make_region()
-    )
+    params = await dev._negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
     assert params is None
     assert dev._pipe_supported is True  # pipe write itself works
     assert dev._pipe_partial_supported is False
@@ -604,9 +602,7 @@ async def test_negotiate_partial_nack_rect_invalid_raises_no_cache() -> None:
 async def test_negotiate_partial_compressed_02_retries_uncompressed_then_caches() -> None:
     # Compressed partial → 0x02 → retry uncompressed-still-partial → 0x02 → give up.
     dev, conn = make_device([start_nack(0x02), start_nack(0x02)], max_queue_size=16)
-    params = await dev._negotiate_pipe_partial(
-        compressed=True, total_size=16, old_etag=0x1, region=make_region()
-    )
+    params = await dev._negotiate_pipe_partial(compressed=True, total_size=16, old_etag=0x1, region=make_region())
     assert params is None
     starts = [w for w in conn.written if w[:2] == b"\x00\x80"]
     assert len(starts) == 2
@@ -619,9 +615,7 @@ async def test_negotiate_partial_compressed_02_retries_uncompressed_then_caches(
 @pytest.mark.asyncio
 async def test_negotiate_partial_silence_returns_none() -> None:
     dev, _ = make_device([BLETimeoutError], max_queue_size=16)
-    params = await dev._negotiate_pipe_partial(
-        compressed=False, total_size=16, old_etag=0x1, region=make_region()
-    )
+    params = await dev._negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
     assert params is None
     assert dev._pipe_probed is True
     assert dev._pipe_supported is False

@@ -120,8 +120,7 @@ class BLEConnection:
                     await self._clear_cache_and_drop()
                     raise BLEConnectionError(f"Failed to connect: {e}") from e
                 _LOGGER.debug(
-                    "Connect to %s failed (%s); clearing GATT cache and retrying "
-                    "(attempt %d/%d)",
+                    "Connect to %s failed (%s); clearing GATT cache and retrying (attempt %d/%d)",
                     self.mac_address,
                     e,
                     attempt + 1,
@@ -134,8 +133,7 @@ class BLEConnection:
         # Bounded attempts exhausted: the connection was already dropped by
         # _clear_cache_and_drop() above.
         raise BLEConnectionError(
-            f"Failed to connect after {MAX_CACHE_RETRIES + 1} attempts "
-            f"(last error: {last_error})"
+            f"Failed to connect after {MAX_CACHE_RETRIES + 1} attempts (last error: {last_error})"
         ) from last_error
 
     def _is_stale_cache_error(self, err: Exception) -> bool:

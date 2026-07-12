@@ -614,9 +614,7 @@ def test_gate_full_frame_whole_panel_rect_and_total_size():
     conn = ScriptedConn([start_ack(flags=0x03), data_ack({0}), END_ACK, REFRESH_COMPLETE])
     device._connection = conn
 
-    asyncio.run(
-        device.upload_prepared_image((b"\x00" * 16, None, new), refresh_mode=RefreshMode.PARTIAL, state=state)
-    )
+    asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), refresh_mode=RefreshMode.PARTIAL, state=state))
 
     start = next(w for w in conn.written if w[:2] == b"\x00\x80")
     total_size = struct.unpack("<I", start[8:12])[0]
