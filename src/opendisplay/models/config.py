@@ -205,7 +205,14 @@ class PowerOption:
     voltage_scaling_factor: int  # uint16
     deep_sleep_current_ua: int  # uint32
     deep_sleep_time_seconds: int  # uint16
-    reserved: bytes  # 10 bytes
+    # Offsets 20-25 were formerly part of the 10-byte reserved blob; firmware
+    # now uses them for named fields (BQ25616 charger control + wake/screen).
+    charge_enable_pin: int  # uint8 (BQ25616 CE; 0/0xFF = unused)
+    charge_state_pin: int  # uint8 (0/0xFF = unused)
+    charger_flags: int  # uint8 bitfield (bit0/bit1 active-low)
+    min_wake_time_seconds: int  # uint16 (0 -> firmware default 120 s)
+    screen_timeout_seconds: int  # uint8 EPD keep-alive; fw clamps to 30, forced 0 on AXP2101
+    reserved: bytes  # 4 bytes (offsets 26-29)
 
     @property
     def battery_mah(self) -> int:
@@ -263,7 +270,12 @@ class PowerOption:
             voltage_scaling_factor=int.from_bytes(data[12:14], "little"),
             deep_sleep_current_ua=int.from_bytes(data[14:18], "little"),
             deep_sleep_time_seconds=int.from_bytes(data[18:20], "little"),
-            reserved=data[20:30],
+            charge_enable_pin=data[20],
+            charge_state_pin=data[21],
+            charger_flags=data[22],
+            min_wake_time_seconds=int.from_bytes(data[23:25], "little"),
+            screen_timeout_seconds=data[25],
+            reserved=data[26:30],
         )
 
 

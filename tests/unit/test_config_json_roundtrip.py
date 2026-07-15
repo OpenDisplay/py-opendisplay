@@ -15,6 +15,7 @@ from opendisplay.models.config import (
     SystemConfig,
 )
 from opendisplay.models.config_json import config_from_json, config_to_json
+from opendisplay.protocol.config_parser import _parse_power_option
 from opendisplay.protocol.config_serializer import serialize_power_option
 
 
@@ -32,7 +33,12 @@ def _base_config(**overrides) -> GlobalConfig:
         voltage_scaling_factor=0,
         deep_sleep_current_ua=0,
         deep_sleep_time_seconds=0,
-        reserved=b"\x00" * 10,
+        charge_enable_pin=0xFF,
+        charge_state_pin=0xFF,
+        charger_flags=0,
+        min_wake_time_seconds=0,
+        screen_timeout_seconds=0,
+        reserved=b"\x00" * 4,
     )
     return GlobalConfig(
         system=SystemConfig(ic_type=0, communication_modes=0, device_flags=0, pwr_pin=0xFF, reserved=b"\x00" * 15),
@@ -100,12 +106,9 @@ def test_binary_input_pins_and_reserved_survive_json_roundtrip() -> None:
     assert b.reserved == bytes(range(14))  # ADC thresholds / power_off blob preserved
 
 
-def test_power_option_reserved_survives_json_roundtrip() -> None:
-    """PowerOption reserved bytes (offsets 20-29: charger pins, min_wake_time_seconds,
-    screen_timeout_seconds) must survive binary -> JSON -> binary instead of being zeroed."""
-    # Non-zero sentinel occupying all 10 reserved bytes (wire offsets 20-29).
-    sentinel = bytes([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA])
-    power = PowerOption(
+def _sentinel_power() -> PowerOption:
+    """PowerOption with distinct non-zero values in the promoted offsets 20-25 and tail 26-29."""
+    return PowerOption(
         power_mode=0,
         battery_capacity_mah=b"\x00\x00\x00",
         sleep_timeout_ms=0,
@@ -118,15 +121,48 @@ def test_power_option_reserved_survives_json_roundtrip() -> None:
         voltage_scaling_factor=0,
         deep_sleep_current_ua=0,
         deep_sleep_time_seconds=0,
-        reserved=sentinel,
+        charge_enable_pin=0x11,  # offset 20
+        charge_state_pin=0x22,  # offset 21
+        charger_flags=0x33,  # offset 22
+        min_wake_time_seconds=0x4455,  # offsets 23-24 (uint16 LE)
+        screen_timeout_seconds=0x66,  # offset 25
+        reserved=bytes([0x77, 0x88, 0x99, 0xAA]),  # offsets 26-29
     )
-    cfg = _base_config(displays=[_display()], power=power)
+
+
+def test_power_option_named_fields_survive_json_roundtrip() -> None:
+    """The five promoted fields (offsets 20-25) and the 4-byte reserved tail (26-29)
+    must survive binary -> JSON -> binary by name instead of being zeroed."""
+    cfg = _base_config(displays=[_display()], power=_sentinel_power())
 
     back = config_from_json(config_to_json(cfg))
+    p = back.power
+    assert p.charge_enable_pin == 0x11
+    assert p.charge_state_pin == 0x22
+    assert p.charger_flags == 0x33
+    assert p.min_wake_time_seconds == 0x4455
+    assert p.screen_timeout_seconds == 0x66
+    assert p.reserved == bytes([0x77, 0x88, 0x99, 0xAA])
 
-    packet = serialize_power_option(back.power)
+    packet = serialize_power_option(p)
     assert len(packet) == 30
-    assert packet[20:30] == sentinel  # offsets 20-29 preserved, not zeroed
+    # offsets 20-29 preserved byte-for-byte, not zeroed
+    assert packet[20:30] == bytes([0x11, 0x22, 0x33, 0x55, 0x44, 0x66, 0x77, 0x88, 0x99, 0xAA])
+
+
+def test_power_option_parse_serialize_symmetry_new_offsets() -> None:
+    """serialize -> parse round-trips the promoted offsets 20-25 and tail 26-29."""
+    original = _sentinel_power()
+    packet = serialize_power_option(original)
+    assert len(packet) == 30
+    parsed = _parse_power_option(packet)
+    assert parsed.charge_enable_pin == 0x11
+    assert parsed.charge_state_pin == 0x22
+    assert parsed.charger_flags == 0x33
+    assert parsed.min_wake_time_seconds == 0x4455
+    assert parsed.screen_timeout_seconds == 0x66
+    assert parsed.reserved == bytes([0x77, 0x88, 0x99, 0xAA])
+    assert serialize_power_option(parsed) == packet
 
 
 def test_legacy_zero_reserved_still_parses() -> None:
