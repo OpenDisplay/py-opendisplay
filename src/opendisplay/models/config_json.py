@@ -140,6 +140,11 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
                 "voltage_scaling_factor": f"0x{pwr.voltage_scaling_factor:x}",
                 "deep_sleep_current_ua": f"0x{pwr.deep_sleep_current_ua:x}",
                 "deep_sleep_time_seconds": f"0x{pwr.deep_sleep_time_seconds:x}",
+                "charge_enable_pin": f"0x{pwr.charge_enable_pin:x}",
+                "charge_state_pin": f"0x{pwr.charge_state_pin:x}",
+                "charger_flags": f"0x{pwr.charger_flags:x}",
+                "min_wake_time_seconds": f"0x{pwr.min_wake_time_seconds:x}",
+                "screen_timeout_seconds": f"0x{pwr.screen_timeout_seconds:x}",
                 "reserved": _hex_bytes(pwr.reserved),
             },
         }
@@ -506,7 +511,12 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                 voltage_scaling_factor=_parse_int(fields.get("voltage_scaling_factor", "0")),
                 deep_sleep_current_ua=_parse_int(fields.get("deep_sleep_current_ua", "0")),
                 deep_sleep_time_seconds=_parse_int(fields.get("deep_sleep_time_seconds", "0")),
-                reserved=_parse_hex_bytes(fields.get("reserved", "0x0"), 10),
+                charge_enable_pin=_parse_int(fields.get("charge_enable_pin", "0xff")),
+                charge_state_pin=_parse_int(fields.get("charge_state_pin", "0xff")),
+                charger_flags=_parse_int(fields.get("charger_flags", "0")),
+                min_wake_time_seconds=_parse_int(fields.get("min_wake_time_seconds", "0")),
+                screen_timeout_seconds=_parse_int(fields.get("screen_timeout_seconds", "0")),
+                reserved=_parse_hex_bytes(fields.get("reserved", "0x0"), 4),
             )
 
         elif packet_id == 32:  # 0x20 = display
