@@ -44,6 +44,7 @@ from .exceptions import (
     ImageEncodingError,
     IntegrityCheckError,
     InvalidResponseError,
+    NfcNotSupportedError,
     ProtocolError,
     RefreshTimeoutError,
     TruncatedConfigError,
@@ -52,7 +53,7 @@ from .landing import build_landing_url
 from .models.buzzer_activate import BuzzerActivateConfig
 from .models.capabilities import DeviceCapabilities
 from .models.config import GlobalConfig
-from .models.enums import BoardManufacturer, FitMode, RefreshMode, Rotation
+from .models.enums import BoardManufacturer, FitMode, NfcRecordType, RefreshMode, Rotation
 from .models.firmware import FirmwareVersion
 from .models.led_flash import LedFlashConfig
 from .partial import (
@@ -72,6 +73,9 @@ from .protocol import (
     MAX_COMPRESSED_SIZE,
     MAX_PTO,
     MAX_START_PAYLOAD,
+    NFC_CHUNK_SIZE,
+    NFC_INLINE_MAX,
+    NFC_WRITE_MAX_TOTAL,
     PIPE_FLAG_PARTIAL,
     PIPE_FRAME_OVERHEAD,
     TIMEOUT_PIPE_START,
@@ -90,6 +94,10 @@ from .protocol import (
     build_direct_write_start_uncompressed,
     build_enter_dfu_command,
     build_led_activate_command,
+    build_nfc_write_data_command,
+    build_nfc_write_end_command,
+    build_nfc_write_inline_command,
+    build_nfc_write_start_command,
     build_pipe_write_data_command,
     build_pipe_write_end_command,
     build_pipe_write_start_command,
@@ -108,6 +116,8 @@ from .protocol import (
     validate_ack_response,
 )
 from .protocol.responses import (
+    NFC_STATUS_CHUNK_ACK,
+    NFC_STATUS_WRITE_OK,
     PIPE_FRAME_ACK,
     PIPE_FRAME_END_ACK,
     PIPE_FRAME_END_NACK,
@@ -122,6 +132,7 @@ from .protocol.responses import (
     parse_authenticate_success,
     strip_command_echo,
     unpack_command_code,
+    validate_nfc_response,
 )
 from .transport import BLEConnection
 
@@ -422,6 +433,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
     TIMEOUT_FIRST_CHUNK = 10.0  # First chunk may take longer
     TIMEOUT_CONFIG_CHUNK = 2.0  # Subsequent config read chunks (interrogate)
     TIMEOUT_ACK = 5.0  # Command acknowledgments
+    TIMEOUT_NFC_WRITE = 15.0  # NFC EEPROM commit (inline write / chunk end): slow I2C work
     TIMEOUT_UNCOMPRESSED_DATA_ACK = 90.0  # Uncompressed DATA: bbepWriteData() blocks SPI on Spectra/ACeP (~60s max)
     TIMEOUT_UNCOMPRESSED_END_ACK = 90.0  # Uncompressed END: some firmware variants refresh before replying (~60s max)
     TIMEOUT_COMPRESSED_END_ACK = 90.0  # Compressed END: decompression + full SPI write to IC (~60s on Spectra/ACeP)
@@ -1274,6 +1286,130 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         response = await self._read(response_timeout)
         validate_ack_response(response, CommandCode.BUZZER_ACTIVATE)
         return response
+
+    @_serialized
+    async def write_nfc(
+        self,
+        rec_type: NfcRecordType | int,
+        payload: bytes,
+        timeout: float | None = None,
+    ) -> None:
+        """Write an NDEF record to the device's NFC tag via NFC_ENDPOINT (0x0083).
+
+        Payloads up to NFC_INLINE_MAX (120) bytes are sent as a single inline
+        write. Larger payloads (up to NFC_WRITE_MAX_TOTAL, 512 bytes) are sent
+        as a chunked write: a start frame, one or more NFC_CHUNK_SIZE (120)
+        byte data frames, and an end frame that commits the write.
+
+        Args:
+            rec_type: NDEF record type (see NfcRecordType).
+            payload: Record payload bytes, 1..NFC_WRITE_MAX_TOTAL.
+            timeout: Optional override for the commit read (the inline write's
+                response, or the chunked write's end response). Defaults to
+                TIMEOUT_NFC_WRITE because the EEPROM commit is slow I2C work.
+                Intermediate chunk-stage ACKs during a chunked write always
+                use TIMEOUT_ACK.
+
+        Raises:
+            RuntimeError: If device is not connected.
+            ValueError: If payload length is outside 1..NFC_WRITE_MAX_TOTAL.
+            NfcWriteError: If firmware rejects the write with an error frame.
+            NfcNotSupportedError: If the device does not respond to the first
+                frame of the write sequence (firmware older than the NFC
+                write feature stays silent on the unknown opcode).
+            InvalidResponseError: If a response frame is malformed or carries
+                an unexpected status.
+        """
+        if self._connection is None:
+            raise RuntimeError("Device not connected")
+        if not 1 <= len(payload) <= NFC_WRITE_MAX_TOTAL:
+            raise ValueError(f"payload length must be 1..{NFC_WRITE_MAX_TOTAL}, got {len(payload)}")
+
+        commit_timeout = self.TIMEOUT_NFC_WRITE if timeout is None else timeout
+        first_read = True
+
+        async def _read_nfc(read_timeout: float) -> bytes:
+            nonlocal first_read
+            try:
+                response = await self._read(read_timeout)
+            except BLETimeoutError:
+                if first_read:
+                    raise NfcNotSupportedError() from None
+                raise
+            finally:
+                first_read = False
+            return response
+
+        if len(payload) <= NFC_INLINE_MAX:
+            await self._write(build_nfc_write_inline_command(int(rec_type), payload))
+            response = await _read_nfc(commit_timeout)
+            validate_nfc_response(response, NFC_STATUS_WRITE_OK)
+            return
+
+        await self._write(build_nfc_write_start_command(int(rec_type), len(payload)))
+        response = await _read_nfc(self.TIMEOUT_ACK)
+        validate_nfc_response(response, NFC_STATUS_CHUNK_ACK)
+
+        for offset in range(0, len(payload), NFC_CHUNK_SIZE):
+            chunk = payload[offset : offset + NFC_CHUNK_SIZE]
+            await self._write(build_nfc_write_data_command(chunk))
+            response = await _read_nfc(self.TIMEOUT_ACK)
+            validate_nfc_response(response, NFC_STATUS_CHUNK_ACK)
+
+        await self._write(build_nfc_write_end_command())
+        response = await _read_nfc(commit_timeout)
+        validate_nfc_response(response, NFC_STATUS_WRITE_OK)
+
+    async def write_nfc_url(self, url: str, timeout: float | None = None) -> None:
+        """Write a URI NDEF record containing the given URL.
+
+        The URL is sent verbatim as UTF-8; firmware builds the NDEF URI
+        record from the payload.
+
+        Args:
+            url: URL to write.
+            timeout: Optional override; see write_nfc.
+        """
+        await self.write_nfc(NfcRecordType.URI, url.encode("utf-8"), timeout)
+
+    async def write_nfc_text(self, text: str, timeout: float | None = None) -> None:
+        """Write a TEXT NDEF record containing the given text.
+
+        The text is sent verbatim as UTF-8.
+
+        Args:
+            text: Text to write.
+            timeout: Optional override; see write_nfc.
+        """
+        await self.write_nfc(NfcRecordType.TEXT, text.encode("utf-8"), timeout)
+
+    async def write_nfc_mime(
+        self,
+        mime_type: str,
+        body: bytes | str,
+        timeout: float | None = None,
+    ) -> None:
+        """Write a MIME NDEF record with a length-prefixed MIME type header.
+
+        The host payload format is ``bytes([len(mt)]) + mt + body`` where
+        ``mt`` is the MIME type encoded as UTF-8, confirmed against the web
+        BLE tester and firmware MIME parser.
+
+        Args:
+            mime_type: MIME type string (e.g. "text/vcard"). Must encode to
+                1..255 bytes as UTF-8.
+            body: Record body, as bytes or a UTF-8 string.
+            timeout: Optional override; see write_nfc.
+
+        Raises:
+            ValueError: If the encoded MIME type is outside 1..255 bytes.
+        """
+        mt = mime_type.encode("utf-8")
+        if not 1 <= len(mt) <= 255:
+            raise ValueError(f"mime_type must encode to 1..255 bytes, got {len(mt)}")
+        body_bytes = body.encode("utf-8") if isinstance(body, str) else body
+        payload = bytes([len(mt)]) + mt + body_bytes
+        await self.write_nfc(NfcRecordType.MIME, payload, timeout)
 
     @_serialized
     async def write_config(self, config: GlobalConfig) -> None:
