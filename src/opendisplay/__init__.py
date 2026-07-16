@@ -37,7 +37,7 @@ from .models.advertisement import (
     decode_button_event,
     parse_advertisement,
 )
-from .models.buzzer_activate import BuzzerActivateConfig, BuzzerPattern, BuzzerStep
+from .models.buzzer_activate import BuzzerActivateConfig, BuzzerPattern, BuzzerStep, note_to_index
 from .models.capabilities import DeviceCapabilities
 from .models.config import (
     BinaryInputs,
@@ -123,6 +123,7 @@ __all__ = [
     "BuzzerActivateConfig",
     "BuzzerPattern",
     "BuzzerStep",
+    "note_to_index",
     "LedFlashConfig",
     "LedFlashStep",
     "firmware_ota_asset",

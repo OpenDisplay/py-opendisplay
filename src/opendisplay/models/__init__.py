@@ -8,7 +8,7 @@ from .advertisement import (
     decode_button_event,
     parse_advertisement,
 )
-from .buzzer_activate import BuzzerActivateConfig, BuzzerPattern, BuzzerStep
+from .buzzer_activate import BuzzerActivateConfig, BuzzerPattern, BuzzerStep, note_to_index
 from .capabilities import DeviceCapabilities
 from .config import (
     BinaryInputs,
@@ -66,6 +66,7 @@ __all__ = [
     "BuzzerActivateConfig",
     "BuzzerPattern",
     "BuzzerStep",
+    "note_to_index",
     "BusType",
     "DIYBoardType",
     "config_from_json",
