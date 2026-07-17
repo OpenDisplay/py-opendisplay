@@ -21,24 +21,56 @@ class TestHzToIndex:
     def test_silence_at_negative(self):
         assert hz_to_index(-100) == 0
 
-    def test_minimum_frequency(self):
-        assert hz_to_index(400) == 1
+    def test_low_landmark_frequency(self):
+        # 400 Hz maps to index 117 (bottom of the firmware's playable window)
+        assert hz_to_index(400) == 117
 
-    def test_maximum_frequency(self):
-        assert hz_to_index(12000) == 255
+    def test_high_landmark_frequency(self):
+        # 12000 Hz maps to index 234 (top of the firmware's playable window)
+        assert hz_to_index(12000) == 234
 
-    def test_midpoint_frequency(self):
-        # 6200 Hz is the midpoint → index ~128
-        idx = hz_to_index(6200)
-        assert 126 <= idx <= 130
+    def test_6200_hz(self):
+        assert hz_to_index(6200) == 212
 
     def test_clamps_above_max(self):
         assert hz_to_index(99999) == 255
 
-    def test_clamps_below_min_non_zero(self):
-        # Values between 1 and 399 Hz should still produce index 1 (not 0)
+    def test_low_non_zero(self):
+        # Any positive Hz below the anchor still produces at least index 1 (not 0)
         assert hz_to_index(1) == 1
-        assert hz_to_index(399) == 1
+        # 399 Hz is not "below min" any more; it maps to 117 like 400 Hz
+        assert hz_to_index(399) == 117
+
+    def test_concert_a4(self):
+        # Reference doc §4.2: nA4 = 440 Hz exactly at idx 120
+        assert hz_to_index(440) == 120
+
+    def test_a5_octave(self):
+        # nA5 = 880 Hz at idx 144; one octave up is exactly +24 quarter-tones
+        assert hz_to_index(880) == 144
+        assert hz_to_index(880) - hz_to_index(440) == 24
+
+    def test_landmark_1000_hz(self):
+        assert hz_to_index(1000) == 148
+
+    def test_landmark_2000_hz(self):
+        assert hz_to_index(2000) == 172
+
+    def test_landmark_523_hz(self):
+        assert hz_to_index(523) == 126
+
+    def test_landmark_11840_hz(self):
+        assert hz_to_index(11840) == 234
+
+    def test_landmark_21714_hz(self):
+        assert hz_to_index(21714) == 255
+
+    @pytest.mark.parametrize("idx", [117, 120, 126, 144, 148, 172, 212, 234])
+    def test_round_trip(self, idx):
+        # Feeding the firmware's frequency for an index back through hz_to_index
+        # recovers that index.
+        hz = round(13.75 * 2 ** (idx / 24))
+        assert hz_to_index(hz) == idx
 
 
 class TestMsToUnits:
@@ -88,6 +120,12 @@ class TestBuzzerActivateConfigToBytes:
         assert data[1] == 1  # 1 pattern
         assert data[2] == 1  # 1 step
         assert len(data) == 5
+
+    def test_single_tone_a4_wire_bytes(self):
+        # Reference doc §7.1 worked example: 440 Hz / 200 ms -> freq_idx 120 (0x78),
+        # dur_units 40 (0x28).
+        config = BuzzerActivateConfig.single_tone(frequency_hz=440, duration_ms=200)
+        assert config.to_bytes() == bytes([1, 1, 1, 120, 40])
 
     def test_silence_tone(self):
         config = BuzzerActivateConfig.single_tone(frequency_hz=0, duration_ms=50)

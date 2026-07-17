@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-_MIN_HZ = 400
-_MAX_HZ = 12000
+_ANCHOR_HZ = 13.75
 _DURATION_UNIT_MS = 5
 
 # Quarter-tone note model (see BUZZER_MUSIC_PROTOCOL_REFERENCE.md §4).
@@ -24,10 +24,24 @@ _NOTE_FRACTIONS = frozenset({1, 2, 4, 8, 16, 32})
 
 
 def hz_to_index(hz: int) -> int:
-    """Convert frequency in Hz to firmware tone index (0-255). 0 Hz → silence."""
+    """Convert Hz to firmware quarter-tone index (0-255). 0/negative Hz -> 0 (silence).
+
+    Inverse of the firmware scale Freq(idx) = 13.75 * 2**(idx/24) Hz.
+
+    Examples:
+        idx 1   -> ~14.15 Hz    (nAm1p, the bottom note in the table)
+        idx 120 -> 440.00 Hz    (nA4, concert pitch A)
+        idx 255 -> ~21714.33 Hz (nE10p, the top note in the table)
+
+    Indices outside the firmware's playable window [117, 234] are octave-folded
+    by the firmware itself (preserving pitch class) before being driven onto the
+    speaker -- this protects the buzzer hardware from being driven outside its
+    safe operating range. This helper only produces a valid 0-255 index; it does
+    not need to replicate that folding.
+    """
     if hz <= 0:
         return 0
-    idx = round(1 + (hz - _MIN_HZ) * 254 / (_MAX_HZ - _MIN_HZ))
+    idx = round(_STEPS_PER_OCTAVE * math.log2(hz / _ANCHOR_HZ))
     return max(1, min(255, idx))
 
 
@@ -171,7 +185,7 @@ def _parse_token(token: str, *, tempo: int, default_ms: int, default_length: int
 class BuzzerStep:
     """A single tone step: one frequency for one duration."""
 
-    frequency_index: int  # 0=silence, 1–255 → 400–12000 Hz
+    frequency_index: int  # 0=silence; 1–255 → quarter-tone note, Freq = 13.75 * 2**(idx/24) Hz
     duration_units: int  # ×5 ms each; range 1–255
 
 
