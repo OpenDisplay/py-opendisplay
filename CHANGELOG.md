@@ -26,6 +26,13 @@
   ACK streams that never make progress (previously loops without a progress
   guarantee, reachable only with buggy/hostile firmware).
 
+## [7.13.1](https://github.com/OpenDisplay/py-opendisplay/compare/v7.13.0...v7.13.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **transport:** close all BLE notification-watcher leak paths ([d99313a](https://github.com/OpenDisplay/py-opendisplay/commit/d99313a11d07913db3fc0c5d13bce60544e4fcb6))
+
 ## [7.13.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.12.0...v7.13.0) (2026-07-16)
 
 
