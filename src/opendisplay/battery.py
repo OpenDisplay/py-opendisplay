@@ -69,6 +69,34 @@ _SOC_SUPERCAP: list[tuple[int, int]] = [
     (3000, 0),
 ]
 
+# Seeed reTerminal E-series (E1001/E1002/E1003/E1004) single-cell LiPo, derived
+# from Seeed's own ESPHome reference config's calibrate_linear breakpoints (10%
+# steps). The odd 5%-step entries are the midpoints of the surrounding pair,
+# added for finer resolution.
+_SOC_SEEED_LI_ION: list[tuple[int, int]] = [
+    (4150, 100),
+    (4055, 95),
+    (3960, 90),
+    (3935, 85),
+    (3910, 80),
+    (3880, 75),
+    (3850, 70),
+    (3825, 65),
+    (3800, 60),
+    (3775, 55),
+    (3750, 50),
+    (3715, 45),
+    (3680, 40),
+    (3630, 35),
+    (3580, 30),
+    (3535, 25),
+    (3490, 20),
+    (3450, 15),
+    (3410, 10),
+    (3300, 5),
+    (3270, 0),
+]
+
 
 def _interpolate(table: list[tuple[int, int]], voltage_mv: int) -> int:
     """Linearly interpolate SOC from a voltage lookup table.
@@ -119,5 +147,7 @@ def voltage_to_percent(
             return _interpolate(_SOC_LITHIUM_PRIMARY, voltage_mv)
         case CapacityEstimator.SUPERCAP:
             return _interpolate(_SOC_SUPERCAP, voltage_mv)
+        case CapacityEstimator.SEEED_LI_ION:
+            return _interpolate(_SOC_SEEED_LI_ION, voltage_mv)
         case _:
             return None

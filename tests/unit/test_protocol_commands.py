@@ -1,10 +1,19 @@
 import pytest
 
 from opendisplay.models.buzzer_activate import BuzzerActivateConfig
+from opendisplay.models.enums import NfcRecordType
 from opendisplay.models.led_flash import LedFlashConfig, LedFlashStep
 from opendisplay.protocol.commands import (
     CHUNK_SIZE,
     CONFIG_CHUNK_SIZE,
+    NFC_CHUNK_SIZE,
+    NFC_INLINE_MAX,
+    NFC_SUB_READ,
+    NFC_SUB_WRITE_DATA,
+    NFC_SUB_WRITE_END,
+    NFC_SUB_WRITE_INLINE,
+    NFC_SUB_WRITE_START,
+    NFC_WRITE_MAX_TOTAL,
     CommandCode,
     build_buzzer_activate_command,
     build_deep_sleep_command,
@@ -13,6 +22,10 @@ from opendisplay.protocol.commands import (
     build_direct_write_start_compressed,
     build_direct_write_start_uncompressed,
     build_led_activate_command,
+    build_nfc_write_data_command,
+    build_nfc_write_end_command,
+    build_nfc_write_inline_command,
+    build_nfc_write_start_command,
     build_read_config_command,
     build_read_fw_version_command,
     build_reboot_command,
@@ -187,6 +200,7 @@ class TestCommandCode:
         assert CommandCode.DIRECT_WRITE_END == 0x0072
         assert CommandCode.LED_ACTIVATE == 0x0073
         assert CommandCode.BUZZER_ACTIVATE == 0x0077
+        assert CommandCode.NFC_ENDPOINT == 0x0083
 
     def test_command_code_to_bytes(self):
         """Test command codes convert to correct big-endian bytes."""
@@ -263,3 +277,123 @@ class TestWriteConfigChunking:
             first, chunks = build_write_config_command(data)
             # first chunk (200) + continuations (200 each) == ceil(total/200) chunks
             assert 1 + len(chunks) == math.ceil(total / CONFIG_CHUNK_SIZE)
+
+
+class TestNfcSubcommandConstants:
+    """Sub-opcode and size constants for the NFC endpoint (command 0x0083)."""
+
+    def test_subcommand_values(self):
+        assert NFC_SUB_READ == 0x00
+        assert NFC_SUB_WRITE_INLINE == 0x01
+        assert NFC_SUB_WRITE_START == 0x10
+        assert NFC_SUB_WRITE_DATA == 0x11
+        assert NFC_SUB_WRITE_END == 0x12
+
+    def test_size_constants(self):
+        assert NFC_INLINE_MAX == 120
+        assert NFC_CHUNK_SIZE == 120
+        assert NFC_WRITE_MAX_TOTAL == 512
+
+
+class TestNfcRecordType:
+    """NfcRecordType enum values (used with the 0x0083 NFC endpoint)."""
+
+    def test_values(self):
+        assert NfcRecordType.TEXT == 0
+        assert NfcRecordType.URI == 1
+        assert NfcRecordType.WELL_KNOWN_RAW == 2
+        assert NfcRecordType.MIME == 3
+        assert NfcRecordType.RAW_NDEF == 4
+
+
+class TestBuildNfcWriteInlineCommand:
+    """build_nfc_write_inline_command wire format: [0x00][0x83][0x01][rec_type:1][len:2 BE][payload]."""
+
+    def test_wire_format(self):
+        cmd = build_nfc_write_inline_command(NfcRecordType.URI, b"https://x")
+        assert cmd == b"\x00\x83\x01\x01\x00\x09https://x"
+
+    def test_accepts_plain_int_rec_type(self):
+        cmd = build_nfc_write_inline_command(0, b"hi")
+        assert cmd == b"\x00\x83\x01\x00\x00\x02hi"
+
+    def test_empty_payload_raises(self):
+        with pytest.raises(ValueError):
+            build_nfc_write_inline_command(NfcRecordType.TEXT, b"")
+
+    def test_payload_over_u16_limit_raises(self):
+        with pytest.raises(ValueError):
+            build_nfc_write_inline_command(NfcRecordType.TEXT, b"a" * 0x10000)
+
+    def test_payload_at_u16_limit_is_accepted(self):
+        payload = b"a" * 0xFFFF
+        cmd = build_nfc_write_inline_command(NfcRecordType.TEXT, payload)
+        assert cmd[4:6] == (0xFFFF).to_bytes(2, "big")
+
+    def test_rec_type_below_range_raises(self):
+        with pytest.raises(ValueError):
+            build_nfc_write_inline_command(-1, b"x")
+
+    def test_rec_type_above_range_raises(self):
+        with pytest.raises(ValueError):
+            build_nfc_write_inline_command(256, b"x")
+
+
+class TestBuildNfcWriteStartCommand:
+    """build_nfc_write_start_command wire format: [0x00][0x83][0x10][rec_type:1][total_len:2 BE]."""
+
+    def test_wire_format(self):
+        cmd = build_nfc_write_start_command(3, 300)
+        assert cmd == b"\x00\x83\x10\x03\x01\x2c"
+
+    def test_total_len_zero_raises(self):
+        with pytest.raises(ValueError):
+            build_nfc_write_start_command(0, 0)
+
+    def test_total_len_over_max_raises(self):
+        with pytest.raises(ValueError):
+            build_nfc_write_start_command(0, NFC_WRITE_MAX_TOTAL + 1)
+
+    def test_total_len_at_max_is_accepted(self):
+        cmd = build_nfc_write_start_command(0, NFC_WRITE_MAX_TOTAL)
+        assert cmd[4:6] == NFC_WRITE_MAX_TOTAL.to_bytes(2, "big")
+
+    def test_total_len_at_one_is_accepted(self):
+        cmd = build_nfc_write_start_command(0, 1)
+        assert cmd[4:6] == (1).to_bytes(2, "big")
+
+    def test_rec_type_below_range_raises(self):
+        with pytest.raises(ValueError):
+            build_nfc_write_start_command(-1, 10)
+
+    def test_rec_type_above_range_raises(self):
+        with pytest.raises(ValueError):
+            build_nfc_write_start_command(256, 10)
+
+
+class TestBuildNfcWriteDataCommand:
+    """build_nfc_write_data_command wire format: [0x00][0x83][0x11][bytes]."""
+
+    def test_wire_format(self):
+        cmd = build_nfc_write_data_command(b"\x01\x02")
+        assert cmd == b"\x00\x83\x11\x01\x02"
+
+    def test_empty_chunk_raises(self):
+        with pytest.raises(ValueError):
+            build_nfc_write_data_command(b"")
+
+    def test_chunk_over_max_raises(self):
+        with pytest.raises(ValueError):
+            build_nfc_write_data_command(b"a" * (NFC_CHUNK_SIZE + 1))
+
+    def test_chunk_at_max_is_accepted(self):
+        chunk = b"a" * NFC_CHUNK_SIZE
+        cmd = build_nfc_write_data_command(chunk)
+        assert cmd == b"\x00\x83\x11" + chunk
+
+
+class TestBuildNfcWriteEndCommand:
+    """build_nfc_write_end_command wire format: [0x00][0x83][0x12]."""
+
+    def test_wire_format(self):
+        assert build_nfc_write_end_command() == b"\x00\x83\x12"

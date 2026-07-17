@@ -44,6 +44,9 @@ class CommandCode(IntEnum):
     PIPE_WRITE_DATA = 0x0081  # Windowed data frame (seq + chunk); also device→host ACK/NACK opcode
     PIPE_WRITE_END = 0x0082  # End sliding-window transfer and trigger display refresh
 
+    # NFC write endpoint (firmware NFC_ENDPOINT)
+    NFC_ENDPOINT = 0x0083  # Read/write the NFC tag NDEF record (sub-opcode selects the operation)
+
 
 # Protocol constants
 SERVICE_UUID = "00002446-0000-1000-8000-00805F9B34FB"
@@ -75,6 +78,16 @@ DEFAULT_MAX_FRAME = 244  # HA native GATT write ceiling (client_max_frame reques
 # paid at most once per connection thanks to the probe cache.
 TIMEOUT_PIPE_START = 30.0
 MAX_PTO = 3  # Consecutive silent probe timeouts before aborting a pipe transfer
+
+# NFC write endpoint (0x0083) sub-opcodes and size limits
+NFC_SUB_READ = 0x00  # Read the current NDEF record (not built here)
+NFC_SUB_WRITE_INLINE = 0x01  # Single-shot write: rec_type + len + payload in one packet
+NFC_SUB_WRITE_START = 0x10  # Begin a chunked write: rec_type + total_len
+NFC_SUB_WRITE_DATA = 0x11  # Chunked write data frame
+NFC_SUB_WRITE_END = 0x12  # Commit a chunked write
+NFC_INLINE_MAX = 120  # Firmware policy: payloads above this size must use chunked write
+NFC_CHUNK_SIZE = 120  # Maximum bytes per NFC_SUB_WRITE_DATA chunk
+NFC_WRITE_MAX_TOTAL = 512  # Firmware hard limit on total NDEF payload size
 
 
 def build_read_config_command() -> bytes:
@@ -439,6 +452,98 @@ def build_pipe_write_end_command(refresh_mode: int, new_etag: int | None = None)
     if not 0 <= new_etag <= 0xFFFFFFFF:
         raise ValueError(f"new_etag out of uint32 range: {new_etag}")
     return cmd + refresh_mode.to_bytes(1, byteorder="big") + new_etag.to_bytes(4, byteorder="big")
+
+
+def build_nfc_write_inline_command(rec_type: int, payload: bytes) -> bytes:
+    """Build an NFC_ENDPOINT inline write (sub-opcode 0x01).
+
+    Wire: [0x00][0x83][0x01][rec_type:1][len:2 BE][payload]
+
+    This builder only enforces the wire-level u16 length field. The firmware's
+    120-byte inline-vs-chunked policy (NFC_INLINE_MAX) is the caller's concern
+    (see device method) and is not validated here.
+
+    Args:
+        rec_type: NDEF record type (see NfcRecordType), 0..255.
+        payload: Record payload bytes.
+
+    Returns:
+        Command bytes for 0x0083/0x01.
+
+    Raises:
+        ValueError: If payload is empty, payload exceeds 0xFFFF bytes, or
+            rec_type is outside 0..255.
+    """
+    if not 0 <= rec_type <= 0xFF:
+        raise ValueError(f"rec_type out of uint8 range: {rec_type}")
+    if len(payload) == 0:
+        raise ValueError("payload must not be empty")
+    if len(payload) > 0xFFFF:
+        raise ValueError(f"payload length {len(payload)} exceeds uint16 range")
+
+    cmd = CommandCode.NFC_ENDPOINT.to_bytes(2, byteorder="big")
+    return cmd + bytes([NFC_SUB_WRITE_INLINE, rec_type]) + len(payload).to_bytes(2, byteorder="big") + payload
+
+
+def build_nfc_write_start_command(rec_type: int, total_len: int) -> bytes:
+    """Build an NFC_ENDPOINT chunked-write start (sub-opcode 0x10).
+
+    Wire: [0x00][0x83][0x10][rec_type:1][total_len:2 BE]
+
+    Args:
+        rec_type: NDEF record type (see NfcRecordType), 0..255.
+        total_len: Total payload size the following DATA chunks will carry,
+            1..NFC_WRITE_MAX_TOTAL (the firmware hard-rejects larger writes).
+
+    Returns:
+        Command bytes for 0x0083/0x10.
+
+    Raises:
+        ValueError: If total_len is outside 1..NFC_WRITE_MAX_TOTAL, or
+            rec_type is outside 0..255.
+    """
+    if not 0 <= rec_type <= 0xFF:
+        raise ValueError(f"rec_type out of uint8 range: {rec_type}")
+    if not 1 <= total_len <= NFC_WRITE_MAX_TOTAL:
+        raise ValueError(f"total_len must be 1..{NFC_WRITE_MAX_TOTAL}, got {total_len}")
+
+    cmd = CommandCode.NFC_ENDPOINT.to_bytes(2, byteorder="big")
+    return cmd + bytes([NFC_SUB_WRITE_START, rec_type]) + total_len.to_bytes(2, byteorder="big")
+
+
+def build_nfc_write_data_command(chunk: bytes) -> bytes:
+    """Build an NFC_ENDPOINT chunked-write data frame (sub-opcode 0x11).
+
+    Wire: [0x00][0x83][0x11][bytes]
+
+    Args:
+        chunk: Chunk payload bytes, 1..NFC_CHUNK_SIZE.
+
+    Returns:
+        Command bytes for 0x0083/0x11.
+
+    Raises:
+        ValueError: If chunk is empty or exceeds NFC_CHUNK_SIZE.
+    """
+    if len(chunk) == 0:
+        raise ValueError("chunk must not be empty")
+    if len(chunk) > NFC_CHUNK_SIZE:
+        raise ValueError(f"chunk size {len(chunk)} exceeds maximum {NFC_CHUNK_SIZE}")
+
+    cmd = CommandCode.NFC_ENDPOINT.to_bytes(2, byteorder="big")
+    return cmd + bytes([NFC_SUB_WRITE_DATA]) + chunk
+
+
+def build_nfc_write_end_command() -> bytes:
+    """Build an NFC_ENDPOINT chunked-write end / commit (sub-opcode 0x12).
+
+    Wire: [0x00][0x83][0x12]
+
+    Returns:
+        Command bytes for 0x0083/0x12.
+    """
+    cmd = CommandCode.NFC_ENDPOINT.to_bytes(2, byteorder="big")
+    return cmd + bytes([NFC_SUB_WRITE_END])
 
 
 def build_led_activate_command(

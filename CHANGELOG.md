@@ -26,6 +26,23 @@
   ACK streams that never make progress (previously loops without a progress
   guarantee, reachable only with buggy/hostile firmware).
 
+## [7.13.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.12.0...v7.13.0) (2026-07-16)
+
+
+### Features
+
+* add melody notation parser and builder ([22f5319](https://github.com/OpenDisplay/py-opendisplay/commit/22f5319e9b827d8a0159404cb479f1903cec7045))
+* add named PowerOption fields for charger, min-wake, and screen-timeout ([4e02599](https://github.com/OpenDisplay/py-opendisplay/commit/4e02599a5c2a45092887eeebeccaa48503ffce8d))
+* add NFC endpoint protocol builders (command 0x0083) ([9763d5c](https://github.com/OpenDisplay/py-opendisplay/commit/9763d5c0664303e8cb24f696efdf77522b3595fe))
+* add NFC response validation and typed exceptions ([5439897](https://github.com/OpenDisplay/py-opendisplay/commit/5439897c2c42dc078362f60184faf1c139ad130a))
+* add NFC tag write support (command 0x0083) ([d7f49c0](https://github.com/OpenDisplay/py-opendisplay/commit/d7f49c09b5569b7e09299284e4532ced5de659e8))
+* add write_nfc device methods ([1d3051d](https://github.com/OpenDisplay/py-opendisplay/commit/1d3051d7338c408dcfa8f2cb9eb68a1981f0e2c5))
+
+
+### Bug Fixes
+
+* preserve PowerOption reserved bytes across JSON round-trip ([4507538](https://github.com/OpenDisplay/py-opendisplay/commit/4507538f640f4f79854bf5852bf5f7a32939c9e4))
+
 ## [7.12.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.11.2...v7.12.0) (2026-07-13)
 
 

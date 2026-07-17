@@ -407,6 +407,11 @@ def _minimal_power() -> PowerOption:
         voltage_scaling_factor=100,
         deep_sleep_current_ua=0,
         deep_sleep_time_seconds=0,
+        charge_enable_pin=0xFF,
+        charge_state_pin=0xFF,
+        charger_flags=0,
+        min_wake_time_seconds=0,
+        screen_timeout_seconds=0,
         reserved=b"\x00" * 10,
     )
 

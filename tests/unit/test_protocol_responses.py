@@ -1,15 +1,21 @@
 """Test protocol response parsing."""
 
+import re
+
 import pytest
 
-from opendisplay.exceptions import InvalidResponseError
+from opendisplay.exceptions import InvalidResponseError, NfcNotSupportedError, NfcWriteError, ProtocolError
 from opendisplay.protocol.commands import CommandCode
 from opendisplay.protocol.responses import (
+    NFC_ERROR_MESSAGES,
+    NFC_STATUS_CHUNK_ACK,
+    NFC_STATUS_WRITE_OK,
     check_response_type,
     parse_firmware_version,
     strip_command_echo,
     unpack_command_code,
     validate_ack_response,
+    validate_nfc_response,
 )
 
 
@@ -215,3 +221,97 @@ class TestParseFirmwareVersion:
 
         with pytest.raises(InvalidResponseError, match="missing SHA hash"):
             parse_firmware_version(data)
+
+
+class TestValidateNfcResponse:
+    """Test validate_nfc_response() for the NFC_ENDPOINT (0x0083) command."""
+
+    def test_write_ok_status(self):
+        """Test {0x00, 0x83, 0x81} (inline write / chunk end) is accepted."""
+        data = bytes([0x00, 0x83, NFC_STATUS_WRITE_OK])
+        assert validate_nfc_response(data, NFC_STATUS_WRITE_OK) is None
+
+    def test_chunk_ack_status(self):
+        """Test {0x00, 0x83, 0x82} (chunk start / chunk data ACK) is accepted."""
+        data = bytes([0x00, 0x83, NFC_STATUS_CHUNK_ACK])
+        assert validate_nfc_response(data, NFC_STATUS_CHUNK_ACK) is None
+
+    def test_wrong_status_raises_invalid_response(self):
+        """Test a well-formed OK frame with a status the caller didn't expect."""
+        data = bytes([0x00, 0x83, NFC_STATUS_CHUNK_ACK])
+        with pytest.raises(InvalidResponseError):
+            validate_nfc_response(data, NFC_STATUS_WRITE_OK)
+
+    @pytest.mark.parametrize("error_code", sorted(NFC_ERROR_MESSAGES))
+    def test_error_frame_raises_nfc_write_error(self, error_code):
+        """Test each documented error code maps to its message and is carried on the exception."""
+        data = bytes([0xFF, 0x83, 0xFF, error_code])
+        with pytest.raises(NfcWriteError, match=re.escape(NFC_ERROR_MESSAGES[error_code])) as exc_info:
+            validate_nfc_response(data, NFC_STATUS_WRITE_OK)
+        assert exc_info.value.error_code == error_code
+
+    def test_error_frame_unmapped_code(self):
+        """Test an error code outside the documented table still raises with the code attached."""
+        data = bytes([0xFF, 0x83, 0xFF, 0x99])
+        with pytest.raises(NfcWriteError) as exc_info:
+            validate_nfc_response(data, NFC_STATUS_WRITE_OK)
+        assert exc_info.value.error_code == 0x99
+
+    def test_short_frame_raises_invalid_response(self):
+        """Test a frame too short to be a valid response raises InvalidResponseError."""
+        data = bytes([0x00, 0x83])
+        with pytest.raises(InvalidResponseError):
+            validate_nfc_response(data, NFC_STATUS_WRITE_OK)
+
+    def test_empty_frame_raises_invalid_response(self):
+        """Test an empty response raises InvalidResponseError."""
+        with pytest.raises(InvalidResponseError):
+            validate_nfc_response(b"", NFC_STATUS_WRITE_OK)
+
+    def test_garbage_frame_raises_invalid_response(self):
+        """Test a frame that is neither the expected OK shape nor the error shape."""
+        data = bytes([0x12, 0x34, 0x56])
+        with pytest.raises(InvalidResponseError):
+            validate_nfc_response(data, NFC_STATUS_WRITE_OK)
+
+    def test_short_error_frame_raises_invalid_response(self):
+        """Test a truncated error frame (missing the error code byte) is not silently accepted."""
+        data = bytes([0xFF, 0x83, 0xFF])
+        with pytest.raises(InvalidResponseError):
+            validate_nfc_response(data, NFC_STATUS_WRITE_OK)
+
+    def test_all_error_codes_documented(self):
+        """Test the error table covers the firmware's documented codes 1-9."""
+        assert set(NFC_ERROR_MESSAGES) == set(range(1, 10))
+
+
+class TestNfcExceptions:
+    """Test the NFC-specific exception types added alongside validate_nfc_response()."""
+
+    def test_nfc_write_error_carries_code(self):
+        """Test NfcWriteError exposes the firmware error_code attribute."""
+        exc = NfcWriteError("NFC write failed", error_code=3)
+        assert exc.error_code == 3
+        assert str(exc) == "NFC write failed"
+
+    def test_nfc_write_error_defaults_code_to_none(self):
+        """Test error_code defaults to None when not supplied."""
+        exc = NfcWriteError("NFC write failed")
+        assert exc.error_code is None
+
+    def test_nfc_write_error_is_protocol_error(self):
+        """Test NfcWriteError fits the existing ProtocolError hierarchy."""
+        assert issubclass(NfcWriteError, ProtocolError)
+
+    def test_nfc_not_supported_error_is_protocol_error(self):
+        """Test NfcNotSupportedError fits the existing ProtocolError hierarchy."""
+        assert issubclass(NfcNotSupportedError, ProtocolError)
+
+    def test_nfc_not_supported_error_hedges_in_message(self):
+        """Test the default guidance hedges rather than asserting firmware definitely lacks NFC.
+
+        Pre-0x83 firmware stays silent on unknown opcodes, so a missing response
+        is inconclusive (could be a dropped packet); the message must not overclaim.
+        """
+        exc = NfcNotSupportedError()
+        assert "may not support" in str(exc).lower()

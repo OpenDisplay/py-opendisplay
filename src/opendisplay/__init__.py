@@ -18,6 +18,8 @@ from .exceptions import (
     ImageEncodingError,
     IntegrityCheckError,
     InvalidResponseError,
+    NfcNotSupportedError,
+    NfcWriteError,
     OpenDisplayError,
     OTAError,
     OTANotSupportedError,
@@ -37,7 +39,7 @@ from .models.advertisement import (
     decode_button_event,
     parse_advertisement,
 )
-from .models.buzzer_activate import BuzzerActivateConfig, BuzzerPattern, BuzzerStep
+from .models.buzzer_activate import BuzzerActivateConfig, BuzzerPattern, BuzzerStep, note_to_index
 from .models.capabilities import DeviceCapabilities
 from .models.config import (
     BinaryInputs,
@@ -67,6 +69,7 @@ from .models.enums import (
     ICType,
     NfcFieldDetectMode,
     NfcIcType,
+    NfcRecordType,
     OpenDisplayBoardType,
     PartialUpdateSupport,
     PowerMode,
@@ -108,6 +111,8 @@ __all__ = [
     "InvalidResponseError",
     "ImageEncodingError",
     "IntegrityCheckError",
+    "NfcNotSupportedError",
+    "NfcWriteError",
     "OTAError",
     "OTANotSupportedError",
     "find_nrf_dfu_device",
@@ -123,6 +128,7 @@ __all__ = [
     "BuzzerActivateConfig",
     "BuzzerPattern",
     "BuzzerStep",
+    "note_to_index",
     "LedFlashConfig",
     "LedFlashStep",
     "firmware_ota_asset",
@@ -163,6 +169,7 @@ __all__ = [
     "SolumBoardType",
     "TouchIcType",
     "NfcIcType",
+    "NfcRecordType",
     "FlashIcType",
     "NfcFieldDetectMode",
     "ActiveLevel",

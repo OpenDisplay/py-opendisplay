@@ -169,7 +169,12 @@ def serialize_power_option(config: PowerOption) -> bytes:
     - voltage_scaling_factor: uint16
     - deep_sleep_current_ua: uint32
     - deep_sleep_time_seconds: uint16
-    - reserved: 10 bytes
+    - charge_enable_pin: uint8
+    - charge_state_pin: uint8
+    - charger_flags: uint8
+    - min_wake_time_seconds: uint16
+    - screen_timeout_seconds: uint8
+    - reserved: 4 bytes
 
     Args:
         config: PowerOption instance
@@ -203,9 +208,19 @@ def serialize_power_option(config: PowerOption) -> bytes:
         config.deep_sleep_time_seconds,
     )
 
-    # Pad with reserved bytes to 30 total
-    reserved = config.reserved if config.reserved else b"\x00" * 10
-    return data + reserved[:10].ljust(10, b"\x00")
+    # Named fields at offsets 20-25 (formerly part of the reserved blob)
+    data += struct.pack(
+        "<BBBHB",
+        config.charge_enable_pin,
+        config.charge_state_pin,
+        config.charger_flags,
+        config.min_wake_time_seconds,
+        config.screen_timeout_seconds,
+    )
+
+    # Pad with reserved bytes (offsets 26-29) to 30 total
+    reserved = config.reserved if config.reserved else b"\x00" * 4
+    return data + reserved[:4].ljust(4, b"\x00")
 
 
 def serialize_display_config(config: DisplayConfig) -> bytes:

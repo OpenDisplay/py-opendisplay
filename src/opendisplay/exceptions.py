@@ -111,6 +111,32 @@ class IntegrityCheckError(ProtocolError):
     pass
 
 
+class NfcWriteError(ProtocolError):
+    """Device rejected an NFC_ENDPOINT (0x0083) write with an error frame.
+
+    Raised when the firmware returns ``{0xFF, 0x83, 0xFF, err}``. ``error_code``
+    carries the raw firmware error byte (see ``NFC_ERROR_MESSAGES``) so callers
+    can distinguish e.g. a too-large record from NFC being disabled in config.
+    """
+
+    def __init__(self, message: str, error_code: int | None = None) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+
+
+class NfcNotSupportedError(ProtocolError):
+    """Device did not respond to an NFC_ENDPOINT (0x0083) command.
+
+    Firmware older than the NFC write feature stays silent on unknown opcodes,
+    so a missing response is inconclusive rather than a confirmed rejection;
+    it could also be a dropped packet. Raised when a write times out waiting
+    for any 0x0083 response.
+    """
+
+    def __init__(self, message: str = "Device may not support NFC write (no response to NFC command)") -> None:
+        super().__init__(message)
+
+
 class ImageEncodingError(OpenDisplayError):
     """Failed to encode image."""
 

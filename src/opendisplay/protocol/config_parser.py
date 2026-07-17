@@ -329,7 +329,15 @@ def _parse_power_option(data: bytes) -> PowerOption:
         deep_sleep_time_seconds,
     ) = struct.unpack_from("<HBBBBBBHIH", data, 4)  # tx_power is uint8, not int8
 
-    reserved = data[20:30]  # 10 reserved bytes, not 12
+    (
+        charge_enable_pin,
+        charge_state_pin,
+        charger_flags,
+        min_wake_time_seconds,
+        screen_timeout_seconds,
+    ) = struct.unpack_from("<BBBHB", data, 20)  # named fields at offsets 20-25
+
+    reserved = data[26:30]  # 4 reserved bytes (offsets 26-29)
 
     return PowerOption(
         power_mode=power_mode,
@@ -344,6 +352,11 @@ def _parse_power_option(data: bytes) -> PowerOption:
         voltage_scaling_factor=voltage_scaling_factor,
         deep_sleep_current_ua=deep_sleep_current_ua,
         deep_sleep_time_seconds=deep_sleep_time_seconds,
+        charge_enable_pin=charge_enable_pin,
+        charge_state_pin=charge_state_pin,
+        charger_flags=charger_flags,
+        min_wake_time_seconds=min_wake_time_seconds,
+        screen_timeout_seconds=screen_timeout_seconds,
         reserved=reserved,
     )
 

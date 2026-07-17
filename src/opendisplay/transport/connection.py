@@ -194,6 +194,25 @@ class BLEConnection:
         # Start notifications
         await self._setup_notifications()
 
+    async def _stop_notifications(self) -> None:
+        """Best-effort release of the notification subscription (and its BlueZ
+        watcher) for the current client.
+
+        Called before every disconnect so the watcher is released even if the
+        subsequent ACL disconnect raises or is flaky. A disconnect that fails
+        while notifications are still registered is the watcher-leak precondition:
+        stopping notifications first makes nulling the client reference afterwards
+        safe. Never raises.
+        """
+        client = self._client
+        char = self._notification_characteristic
+        if client is None or char is None or not client.is_connected:
+            return
+        try:
+            await client.stop_notify(char)
+        except Exception as err:  # noqa: BLE001 - best-effort; link may be tearing down
+            _LOGGER.debug("stop_notify during teardown failed: %s", err)
+
     async def _clear_cache_and_drop(self) -> None:
         """Clear the proxy GATT cache on the current client, then disconnect it."""
         if self._client is None:
@@ -204,21 +223,31 @@ class BLEConnection:
                 await clear()  # pylint: disable=not-callable
             except Exception as err:  # noqa: BLE001 - best-effort
                 _LOGGER.debug("clear_cache during connect retry failed: %s", err)
+        # Release the notification watcher BEFORE disconnecting so a flaky
+        # disconnect can't strand it (the watcher-leak precondition). The retry
+        # loop relies on _client being None afterwards, so we always null below.
+        await self._stop_notifications()
         try:
             await self._client.disconnect()
         except Exception:  # noqa: BLE001
             pass
+        self._notification_characteristic = None
         self._client = None
 
     async def disconnect(self) -> None:
-        """Disconnect from device."""
+        """Disconnect from device, releasing notifications first."""
         if self._client and self._client.is_connected:
+            # Stop notifications before disconnecting so a disconnect that raises
+            # can't leave the BlueZ watcher registered (the watcher-leak that
+            # delivers stray/duplicate frames to a later connection).
+            await self._stop_notifications()
             try:
                 _LOGGER.debug("Disconnecting from %s", self.mac_address)
                 await self._client.disconnect()
             except Exception as e:
                 _LOGGER.warning("Error during disconnect: %s", e)
             finally:
+                self._notification_characteristic = None
                 self._client = None
 
     async def clear_cache(self) -> bool:

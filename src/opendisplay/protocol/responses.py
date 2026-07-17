@@ -10,6 +10,7 @@ from ..exceptions import (
     AuthenticationRequiredError,
     AuthenticationSessionExistsError,
     InvalidResponseError,
+    NfcWriteError,
 )
 from ..models.firmware import FirmwareVersion
 from .commands import RESPONSE_HIGH_BIT_FLAG, CommandCode
@@ -456,3 +457,58 @@ def classify_pipe_frame(data: bytes) -> str:
     if len(data) >= 2 and data[0] == 0xFF and data[1] == 0x82:
         return PIPE_FRAME_END_NACK
     return PIPE_FRAME_OTHER
+
+
+# ─── NFC_ENDPOINT (0x0083) responses ───────────────────────────────────────
+
+# Status byte in the {0x00, 0x83, status} OK frame.
+NFC_STATUS_WRITE_OK = 0x81  # Inline write committed, or chunked write end committed
+NFC_STATUS_CHUNK_ACK = 0x82  # Chunk-stage ACK (chunk start accepted, chunk data accepted)
+
+# Error codes carried in the {0xFF, 0x83, 0xFF, err} error frame. Error frames
+# are always sent plaintext by firmware, even over an encrypted connection.
+NFC_ERROR_MESSAGES: dict[int, str] = {
+    1: "NFC write failed: malformed command",
+    2: "NFC write failed: read failed",
+    3: "NFC write failed: write failed (NFC disabled in config, IC error, or record too large for the NFC EEPROM)",
+    4: "NFC write failed: unknown sub-command",
+    5: "NFC write failed: invalid record type",
+    6: "NFC write failed: invalid length",
+    7: "NFC write failed: no active chunk session",
+    8: "NFC write failed: chunk overflow",
+    9: "NFC write failed: length mismatch at end",
+}
+
+
+def validate_nfc_response(data: bytes, expected_status: int) -> None:
+    """Validate an NFC_ENDPOINT (0x0083) response frame.
+
+    Unlike ``validate_ack_response``, this distinguishes the two OK statuses
+    (0x81 write-committed vs. 0x82 chunk-stage ACK) and decodes the firmware's
+    dedicated NFC error frame.
+
+    Args:
+        data: Decrypted response bytes (``cmd(2) + payload``).
+        expected_status: NFC_STATUS_WRITE_OK or NFC_STATUS_CHUNK_ACK, whichever
+            the caller's request should produce.
+
+    Raises:
+        NfcWriteError: If the device returned ``{0xFF, 0x83, 0xFF, err}``.
+        InvalidResponseError: If the frame is too short, has an unexpected
+            command echo, or an OK frame with a status other than
+            ``expected_status``.
+    """
+    if len(data) >= 4 and data[0] == 0xFF and data[1] == 0x83 and data[2] == 0xFF:
+        error_code = data[3]
+        message = NFC_ERROR_MESSAGES.get(error_code, f"NFC write failed: unknown error code 0x{error_code:02x}")
+        raise NfcWriteError(message, error_code=error_code)
+
+    if len(data) >= 3 and data[0] == 0x00 and data[1] == 0x83:
+        status = data[2]
+        if status == expected_status:
+            return
+        raise InvalidResponseError(
+            f"NFC response status mismatch: expected 0x{expected_status:02x}, got 0x{status:02x}"
+        )
+
+    raise InvalidResponseError(f"Unexpected NFC_ENDPOINT response: {data[:4].hex()}")

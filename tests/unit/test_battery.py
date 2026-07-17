@@ -38,6 +38,13 @@ from opendisplay.models.enums import CapacityEstimator
         # SUPERCAP — clamping
         (CapacityEstimator.SUPERCAP, 6000, 100),
         (CapacityEstimator.SUPERCAP, 1000, 0),
+        # SEEED_LI_ION — exact breakpoints (Seeed reTerminal E-series)
+        (CapacityEstimator.SEEED_LI_ION, 4150, 100),
+        (CapacityEstimator.SEEED_LI_ION, 3750, 50),
+        (CapacityEstimator.SEEED_LI_ION, 3270, 0),
+        # SEEED_LI_ION — clamping
+        (CapacityEstimator.SEEED_LI_ION, 4500, 100),
+        (CapacityEstimator.SEEED_LI_ION, 3000, 0),
     ],
 )
 def test_exact_values(chemistry: CapacityEstimator, voltage_mv: int, expected: int) -> None:
@@ -52,6 +59,8 @@ def test_exact_values(chemistry: CapacityEstimator, voltage_mv: int, expected: i
         (CapacityEstimator.LI_ION, 3770, 46, 48),
         # LIFEPO4 — midpoint between 3400 mV (90%) and 3350 mV (80%)
         (CapacityEstimator.LIFEPO4, 3375, 84, 86),
+        # SEEED_LI_ION — midpoint between 3960 mV (90%) and 3910 mV (80%)
+        (CapacityEstimator.SEEED_LI_ION, 3935, 84, 86),
     ],
 )
 def test_interpolation(chemistry: CapacityEstimator, voltage_mv: int, low: int, high: int) -> None:
@@ -73,6 +82,8 @@ def test_lifepo4_flat_plateau() -> None:
     [
         # raw int — CapacityEstimator.LI_ION == 1
         (1, 4200),
+        # raw int — CapacityEstimator.SEEED_LI_ION == 5
+        (5, 4150),
     ],
 )
 def test_accepts_raw_int_chemistry(chemistry: int, voltage_mv: int) -> None:
