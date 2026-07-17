@@ -9,7 +9,7 @@ import hmac
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from epaper_dithering import ColorScheme, DitherMode, dither_image
@@ -581,18 +581,31 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         await self._conn.connect()
 
-        # Authenticate before any other commands if key provided
-        if self._encryption_key is not None:
-            await self.authenticate(self._encryption_key)
+        # The link is now up with notifications registered. If any step below
+        # raises, __aexit__ will NOT run (Python only calls it when __aenter__
+        # returns) — so we must tear the link down here or leak the connection
+        # and its BlueZ notification watcher. BaseException, not Exception: the
+        # real triggers are AuthenticationRequiredError on a keyless probe AND
+        # CancelledError from an outer asyncio.timeout() (e.g. the HA config-flow
+        # connection probe).
+        try:
+            # Authenticate before any other commands if key provided
+            if self._encryption_key is not None:
+                await self.authenticate(self._encryption_key)
 
-        # Auto-interrogate if no config or capabilities provided
-        if self._config is None and self._capabilities is None:
-            _LOGGER.info("No config provided, auto-interrogating device")
-            await self.interrogate()
+            # Auto-interrogate if no config or capabilities provided
+            if self._config is None and self._capabilities is None:
+                _LOGGER.info("No config provided, auto-interrogating device")
+                await self.interrogate()
 
-        # Extract capabilities from config if available
-        if self._config and not self._capabilities:
-            self._capabilities = self._extract_capabilities_from_config()
+            # Extract capabilities from config if available
+            if self._config and not self._capabilities:
+                self._capabilities = self._extract_capabilities_from_config()
+        except BaseException:
+            with suppress(Exception):
+                await self._conn.disconnect()
+            self._clear_session()
+            raise
 
         return self
 
