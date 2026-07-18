@@ -63,6 +63,63 @@ class TestEncodeImageGrayscale16:
         assert len(result) == 4  # ceil(3/2)=2 bytes/row × 2 rows
 
 
+class TestEncodeBwgbrySplit:
+    """BWGBRY_SPLIT (wire scheme 8): left half-plane then right half-plane."""
+
+    def test_half_planes_pack_left_then_right(self) -> None:
+        """4×2 image: left 2 cols then right 2 cols, with BWGBRY nibble remap."""
+        from opendisplay.encoding.images import encode_4bpp
+
+        # Row0: L0=0,L1=1 | R0=2,R1=3  → left 0x01, right 0x23
+        # Row1: L0=4,L1=5 | R0=1,R1=0  → left 0x56 (4→5,5→6), right 0x10
+        img = _palette_image([[0, 1, 2, 3], [4, 5, 1, 0]])
+        row_major = encode_4bpp(img, bwgbry_mapping=True, half_planes=False)
+        split = encode_4bpp(img, bwgbry_mapping=True, half_planes=True)
+        assert row_major == bytes([0x01, 0x23, 0x56, 0x10])
+        assert split == bytes([0x01, 0x56, 0x23, 0x10])
+        assert len(split) == len(row_major)
+
+    def test_prepare_image_uses_split_for_wire_scheme_8(self) -> None:
+        from epaper_dithering import DitherMode
+
+        from opendisplay.color_scheme import COLOR_SCHEME_BWGBRY_SPLIT
+        from opendisplay.device import prepare_image
+        from opendisplay.encoding.images import encode_4bpp
+        from opendisplay.models.capabilities import DeviceCapabilities
+
+        caps = DeviceCapabilities(
+            width=4,
+            height=2,
+            color_scheme=ColorScheme.BWGBRY,
+            wire_color_scheme=COLOR_SCHEME_BWGBRY_SPLIT,
+        )
+        # Already-quantized solid black avoids dither noise in the assert.
+        img = Image.new("RGB", (4, 2), (0, 0, 0))
+        data, _compressed, dithered = prepare_image(
+            img,
+            capabilities=caps,
+            use_measured_palettes=False,
+            dither_mode=DitherMode.NONE,
+            compress=False,
+        )
+        expected = encode_4bpp(dithered, bwgbry_mapping=True, half_planes=True)
+        assert data == expected
+
+    def test_resolve_firmware_color_scheme_8(self) -> None:
+        from opendisplay.color_scheme import (
+            COLOR_SCHEME_BWGBRY_SPLIT,
+            color_scheme_display_name,
+            resolve_firmware_color_scheme,
+        )
+
+        scheme, wire = resolve_firmware_color_scheme(COLOR_SCHEME_BWGBRY_SPLIT)
+        assert scheme is ColorScheme.BWGBRY
+        assert wire == 8
+        assert color_scheme_display_name(scheme, wire) == "BWGBRY_SPLIT"
+        assert color_scheme_display_name(scheme, scheme.value) == "BWGBRY"
+        assert color_scheme_display_name(ColorScheme.MONO) == "MONO"
+
+
 class TestFitImage:
     """Tests for fit_image covering mode preservation and P-mode conversion."""
 

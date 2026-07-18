@@ -81,6 +81,7 @@ class SeeedBoardType(IntEnum):
     OPENDISPLAY_73_COLOR_KIT = 11
     RETERMINAL_E1001 = 12
     RETERMINAL_E1002 = 13
+    RETERMINAL_E1004 = 14
 
 
 class WaveshareBoardType(IntEnum):
@@ -236,6 +237,7 @@ _BOARD_TYPE_NAMES_SEEED: Final[dict[SeeedBoardType, str]] = {
     SeeedBoardType.OPENDISPLAY_73_COLOR_KIT: 'OpenDisplay 7.3" Color Kit',
     SeeedBoardType.RETERMINAL_E1001: "reTerminal E1001",
     SeeedBoardType.RETERMINAL_E1002: "reTerminal E1002",
+    SeeedBoardType.RETERMINAL_E1004: "reTerminal E1004",
 }
 
 _BOARD_TYPE_NAMES_WAVESHARE: Final[dict[WaveshareBoardType, str]] = {

@@ -189,15 +189,18 @@ async def test_rewind_fallback_when_bit0_clear() -> None:
 
 @pytest.mark.asyncio
 async def test_retransmit_repaced_per_new_ack() -> None:
-    """Two successive ACKs still showing the hole → chunk retransmitted each time."""
+    """Hole still missing after PIPE_RETX_ACK_SPACING ACKs → retransmit again."""
+    # Newly detected hole retransmits immediately; the next ACK (spacing=2) must
+    # elapse before a second retransmit — matches the web client's pacing.
     ack1 = data_ack({0, 2, 3})
-    ack2 = data_ack({0, 2, 3})  # still missing 1
-    ack3 = data_ack({0, 1, 2, 3})
-    dev, conn = make_device([ack1, ack2, ack3], max_queue_size=4)
+    ack2 = data_ack({0, 2, 3})  # still missing 1; spacing not met yet
+    ack3 = data_ack({0, 2, 3})  # spacing met → second retransmit
+    ack4 = data_ack({0, 1, 2, 3})
+    dev, conn = make_device([ack1, ack2, ack3, ack4], max_queue_size=4)
     chunks = [b"a", b"b", b"c", b"d"]
     await dev._send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
     seqs = _seqs(conn)
-    # Initial 0,1,2,3 + retransmit on ack1 + retransmit on ack2 = chunk 1 sent 3x.
+    # Initial 0,1,2,3 + retx on ack1 + retx on ack3 = chunk 1 sent 3x.
     assert seqs.count(1) == 3
 
 
@@ -236,13 +239,28 @@ async def test_max_pto_aborts() -> None:
 
 @pytest.mark.asyncio
 async def test_max_retx_aborts() -> None:
-    """ACKs perpetually reporting the same hole → abort after 3*W retransmits."""
-    # W=2 → MAX_RETX=6. Deliver many ACKs still missing chunk 1.
-    acks = [data_ack({0, 2})] * 20  # chunk 1 always missing (2 received, 3 not sent yet)
+    """ACKs perpetually reporting the same hole → abort after scaled MAX_RETX."""
+    # W=2, n=3 → max_retx = max(6, ceil(1.5)) = 6. Deliver many ACKs still missing chunk 1.
+    acks = [data_ack({0, 2})] * 30  # chunk 1 always missing (2 received, 3 not sent yet)
     dev, conn = make_device(acks, max_queue_size=2)
     chunks = [b"a", b"b", b"c"]
     with pytest.raises(ProtocolError, match="MAX_RETX"):
         await dev._send_pipe_chunks(chunks, _params(window=2), chunk_timeout=5.0)
+
+
+def test_max_retx_budget_scales_with_chunk_count() -> None:
+    """Large transfers get ceil(n * 0.5), not a flat 3*W (web-client parity)."""
+    import math
+
+    from opendisplay.protocol import PIPE_MAX_RETX_FRACTION
+
+    def budget(n: int, window: int) -> int:
+        return max(3 * window, math.ceil(n * PIPE_MAX_RETX_FRACTION))
+
+    assert budget(3, 16) == 48  # small transfer: floor wins
+    assert budget(4000, 16) == 2000  # E1004-scale: fraction wins (was aborting at 48)
+    assert budget(100, 2) == 50
+
 
 
 # ─── Compressed tail-flush (regression: MAJOR 1) ─────────────────────────────

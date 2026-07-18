@@ -433,7 +433,7 @@ async def _info(device_kwargs: dict[str, Any], output_json: bool) -> None:
                     "fw": fw,
                     "width": device.width,
                     "height": device.height,
-                    "color_str": device.color_scheme.name,
+                    "color_str": device.color_scheme_name,
                     "rotation": display.rotation_enum if display else device.rotation,
                     "active_w_mm": display.active_width_mm if display else None,
                     "active_h_mm": display.active_height_mm if display else None,

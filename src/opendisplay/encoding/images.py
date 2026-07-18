@@ -95,7 +95,7 @@ def encode_image(
     if color_scheme == ColorScheme.BWGBRY:
         # 6-color Spectra 6 display uses 4bpp with special firmware values
         # Palette indices 0-5 map to firmware values 0,1,2,3,5,6 (4 is skipped!)
-        return encode_4bpp(image, bwgbry_mapping=True)
+        return encode_4bpp(image, bwgbry_mapping=True, half_planes=False)
     if color_scheme == ColorScheme.GRAYSCALE_4:
         # 4-gray needs two 1-bit controller planes, not packed 2bpp; the packed
         # form is not accepted by any firmware path. prepare_image routes 4-gray
@@ -166,7 +166,11 @@ def encode_2bpp(image: Image.Image, codes: tuple[int, int, int, int] | None = No
     return packed.astype(np.uint8).tobytes()
 
 
-def encode_4bpp(image: Image.Image, bwgbry_mapping: bool = False) -> bytes:
+def encode_4bpp(
+    image: Image.Image,
+    bwgbry_mapping: bool = False,
+    half_planes: bool = False,
+) -> bytes:
     """Encode image to 4-bits-per-pixel format (16 colors).
 
     Format: 2 pixels per byte, MSB first
@@ -180,6 +184,9 @@ def encode_4bpp(image: Image.Image, bwgbry_mapping: bool = False) -> bytes:
         image: Palette image (mode 'P')
         bwgbry_mapping: If True, remap palette indices for BWGBRY firmware
                         (0→0, 1→1, 2→2, 3→3, 4→5, 5→6)
+        half_planes: If True (firmware color_scheme 8 / BWGBRY_SPLIT), pack the
+            left half-plane first (all rows), then the right half-plane, so
+            dual-CS panels can stream CS1 then CS2 without a framebuffer.
 
     Returns:
         Encoded bytes
@@ -188,7 +195,7 @@ def encode_4bpp(image: Image.Image, bwgbry_mapping: bool = False) -> bytes:
         raise ValueError(f"Expected palette image, got {image.mode}")
 
     pixels = np.asarray(image)
-    height, width = pixels.shape
+    _height, width = pixels.shape
 
     idx = (pixels & 0x0F).astype(np.uint8)
 
@@ -199,10 +206,18 @@ def encode_4bpp(image: Image.Image, bwgbry_mapping: bool = False) -> bytes:
         lut = np.array([0, 1, 2, 3, 5, 6] + [0] * 10, dtype=np.uint8)
         idx = lut[idx]
 
-    # Zero-pad width to an even number (matches the per-row byte boundary),
-    # then pack 2 pixels per byte, high nibble first.
-    if width & 1:
-        idx = np.pad(idx, ((0, 0), (0, 1)))
-    idx = idx.reshape(height, -1, 2)
-    packed = (idx[:, :, 0] << 4) | idx[:, :, 1]
-    return packed.astype(np.uint8).tobytes()
+    def _pack_plane(plane: np.ndarray) -> bytes:
+        # Zero-pad width to an even number (per-row byte boundary), then pack
+        # 2 pixels per byte, high nibble first.
+        h, w = plane.shape
+        p = plane
+        if w & 1:
+            p = np.pad(p, ((0, 0), (0, 1)))
+        p = p.reshape(h, -1, 2)
+        packed = (p[:, :, 0] << 4) | p[:, :, 1]
+        return packed.astype(np.uint8).tobytes()
+
+    if half_planes:
+        mid = width // 2
+        return _pack_plane(idx[:, :mid]) + _pack_plane(idx[:, mid:])
+    return _pack_plane(idx)

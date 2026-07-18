@@ -7,6 +7,7 @@ import asyncio
 import functools
 import hmac
 import logging
+import math
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
@@ -15,6 +16,11 @@ from typing import TYPE_CHECKING, TypeVar, cast
 from epaper_dithering import ColorScheme, DitherMode, dither_image
 from PIL import Image
 
+from .color_scheme import (
+    COLOR_SCHEME_BWGBRY_SPLIT,
+    color_scheme_display_name,
+    resolve_firmware_color_scheme,
+)
 from .crypto import (
     compute_challenge_response,
     compute_server_proof,
@@ -29,6 +35,7 @@ from .encoding import (
     FIRMWARE_ZLIB_WINDOW_BITS,
     compress_image_data,
     encode_2bpp,
+    encode_4bpp,
     encode_bitplanes,
     encode_gray4_bitplanes,
     encode_image,
@@ -78,6 +85,8 @@ from .protocol import (
     NFC_WRITE_MAX_TOTAL,
     PIPE_FLAG_PARTIAL,
     PIPE_FRAME_OVERHEAD,
+    PIPE_MAX_RETX_FRACTION,
+    PIPE_RETX_ACK_SPACING,
     TIMEOUT_PIPE_START,
     CommandCode,
     PipeParams,
@@ -204,11 +213,13 @@ def _capabilities_from_config(config: GlobalConfig) -> DeviceCapabilities:
 
     display = config.displays[0]
     rotation = display.rotation_enum
+    dither_scheme, wire_scheme = resolve_firmware_color_scheme(display.color_scheme)
     return DeviceCapabilities(
         width=display.pixel_width,
         height=display.pixel_height,
-        color_scheme=ColorScheme.from_value(display.color_scheme),
+        color_scheme=dither_scheme,
         rotation=rotation.value if isinstance(rotation, Rotation) else 0,
+        wire_color_scheme=wire_scheme,
     )
 
 
@@ -362,6 +373,12 @@ def prepare_image(
         # yellow/red swapped relative to the dither palette; apply the per-panel
         # code table so the firmware's raw-nibble direct write shows the right color.
         image_data = encode_2bpp(dithered, codes=get_bwry_codes(panel_ic_type))
+    elif color_scheme == ColorScheme.BWGBRY:
+        image_data = encode_4bpp(
+            dithered,
+            bwgbry_mapping=True,
+            half_planes=(capabilities.wire_scheme == COLOR_SCHEME_BWGBRY_SPLIT),
+        )
     else:
         image_data = encode_image(dithered, color_scheme)
 
@@ -871,8 +888,14 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
     @property
     def color_scheme(self) -> ColorScheme:
-        """Get display color scheme."""
+        """Get display color scheme (dither palette; BWGBRY for scheme 8)."""
         return self._ensure_capabilities().color_scheme
+
+    @property
+    def color_scheme_name(self) -> str:
+        """Firmware-facing color scheme name (BWGBRY_SPLIT when wire value is 8)."""
+        caps = self._ensure_capabilities()
+        return color_scheme_display_name(caps.color_scheme, caps.wire_scheme)
 
     @property
     def rotation(self) -> int:
@@ -2566,7 +2589,10 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # Partial transfers never auto-complete (Part 1 §1.5), so they use the
         # same explicit-END completion contract compressed transfers use today.
         explicit_end = params.compressed or params.partial
-        max_retx = 3 * window
+        # Flat 3*W is fine for small transfers but starves multi-thousand-chunk
+        # uploads (E1004 ~960KB): BLE write-without-response drops are normal and
+        # legitimately need more repairs. Match the web client's scaled budget.
+        max_retx = max(3 * window, math.ceil(n * PIPE_MAX_RETX_FRACTION))
         acked: set[int] = set()
         window_base = 0  # lowest unacked
         next_to_send = 0
@@ -2674,12 +2700,17 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 continue
 
             if params.selective:
+                # Selective repeat, oldest first. pending_retx counts ACKs seen
+                # since a chunk was last (re)sent — wait PIPE_RETX_ACK_SPACING
+                # ACKs before repeating so an in-flight repair isn't double-counted.
                 for m in missing:  # oldest first
-                    if m not in pending_retx:
-                        do_retx = True  # newly detected
+                    seen = pending_retx.get(m)
+                    if seen is None:
+                        do_retx = True  # newly detected hole
                     else:
-                        pending_retx[m] += 1  # a new ACK still shows it missing
-                        do_retx = pending_retx[m] >= 1  # one implicit RTT of spacing
+                        seen += 1
+                        pending_retx[m] = seen
+                        do_retx = seen >= PIPE_RETX_ACK_SPACING
                     if do_retx:
                         await _send(m)
                         pending_retx[m] = 0
@@ -2759,5 +2790,5 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             display = self._config.displays[0]
             raise ImageEncodingError(
                 f"Device uses unsupported color scheme value {display.color_scheme}. "
-                "Reconfigure the device to a supported color scheme (0–5)."
+                "Reconfigure the device to a supported color scheme (0–8)."
             ) from exc

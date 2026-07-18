@@ -101,6 +101,7 @@ class TestBoardTypeEnums:
         assert SeeedBoardType.OPENDISPLAY_73_COLOR_KIT == 11
         assert SeeedBoardType.RETERMINAL_E1001 == 12
         assert SeeedBoardType.RETERMINAL_E1002 == 13
+        assert SeeedBoardType.RETERMINAL_E1004 == 14
 
     def test_waveshare_board_type_values(self):
         """Test Waveshare board type values."""
@@ -138,6 +139,7 @@ class TestBoardTypeEnums:
         assert get_board_type_name(BoardManufacturer.SEEED, 11) == 'OpenDisplay 7.3" Color Kit'
         assert get_board_type_name(BoardManufacturer.SEEED, 12) == "reTerminal E1001"
         assert get_board_type_name(BoardManufacturer.SEEED, 13) == "reTerminal E1002"
+        assert get_board_type_name(BoardManufacturer.SEEED, 14) == "reTerminal E1004"
         assert get_board_type_name(BoardManufacturer.SEEED, 99) is None
         assert get_board_type_name(99, 0) is None
 

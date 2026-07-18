@@ -9,6 +9,8 @@ from epaper_dithering import (
     ColorScheme,
 )
 
+from .color_scheme import resolve_firmware_color_scheme
+
 # Panel IDs that support 4-gray mode (from firmware mapEpd)
 PANELS_4GRAY: frozenset[int] = frozenset(
     {
@@ -105,7 +107,10 @@ def get_palette_for_display(
     Returns:
         ColorPalette if measured data exists and use_measured=True, otherwise ColorScheme enum
     """
-    scheme = color_scheme if isinstance(color_scheme, ColorScheme) else ColorScheme.from_value(color_scheme)
+    if isinstance(color_scheme, ColorScheme):
+        scheme = color_scheme
+    else:
+        scheme, _wire = resolve_firmware_color_scheme(color_scheme)
 
     if use_measured and panel_ic_type is not None:
         key = (panel_ic_type, scheme)
