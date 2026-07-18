@@ -245,7 +245,71 @@ class AdvertisementTracker:
                         timestamp=now,
                     )
                 )
+                if not prev.pressed and not curr.pressed:
+                    events.append(
+                        ButtonChangeEvent(
+                            address=address,
+                            byte_index=curr.byte_index,
+                            event_type="button_down",
+                            button_id=curr.button_id,
+                            pressed=True,
+                            press_count=curr.press_count,
+                            previous_press_count=prev.press_count,
+                            raw=curr.raw,
+                            previous_raw=prev.raw,
+                            timestamp=now,
+                        )
+                    )
+                    events.append(
+                        ButtonChangeEvent(
+                            address=address,
+                            byte_index=curr.byte_index,
+                            event_type="button_up",
+                            button_id=curr.button_id,
+                            pressed=False,
+                            press_count=curr.press_count,
+                            previous_press_count=prev.press_count,
+                            raw=curr.raw,
+                            previous_raw=prev.raw,
+                            timestamp=now,
+                        )
+                    )
                 continue
+
+            missed_short_press = (
+                curr.press_count > prev.press_count
+                and not prev.pressed
+                and not curr.pressed
+            )
+            if missed_short_press:
+                events.append(
+                    ButtonChangeEvent(
+                        address=address,
+                        byte_index=curr.byte_index,
+                        event_type="button_down",
+                        button_id=curr.button_id,
+                        pressed=True,
+                        press_count=curr.press_count,
+                        previous_press_count=prev.press_count,
+                        raw=curr.raw,
+                        previous_raw=prev.raw,
+                        timestamp=now,
+                    )
+                )
+                events.append(
+                    ButtonChangeEvent(
+                        address=address,
+                        byte_index=curr.byte_index,
+                        event_type="button_up",
+                        button_id=curr.button_id,
+                        pressed=False,
+                        press_count=curr.press_count,
+                        previous_press_count=prev.press_count,
+                        raw=curr.raw,
+                        previous_raw=prev.raw,
+                        timestamp=now,
+                    )
+                )
 
             if prev.pressed != curr.pressed:
                 events.append(

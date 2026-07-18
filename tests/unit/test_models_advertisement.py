@@ -225,6 +225,44 @@ class TestParseAdvertisement:
         assert third_events[0].button_id == 2
         assert third_events[0].pressed is False
 
+    def test_advertisement_tracker_emits_synthetic_press_on_missed_short_press(self):
+        """Count can increase while released if press+release fell between adverts."""
+        tracker = AdvertisementTracker()
+        address = "AA:BB:CC:DD:EE:FF"
+
+        first = parse_advertisement(_v1_payload(bytes([0x0A]) + bytes(10), loop_counter=1))  # id=2, count=1, up
+        second = parse_advertisement(_v1_payload(bytes([0x12]) + bytes(10), loop_counter=2))  # id=2, count=2, up
+
+        assert tracker.update(address, first, timestamp=1.0) == []
+
+        events = tracker.update(address, second, timestamp=2.0)
+        assert [e.event_type for e in events] == ["button_down", "button_up", "press_count_changed"]
+        assert events[0].button_id == 2
+        assert events[0].pressed is True
+        assert events[1].pressed is False
+        assert events[2].press_count == 2
+        assert events[2].previous_press_count == 1
+
+    def test_advertisement_tracker_emits_synthetic_press_on_missed_slot_change(self):
+        """Another button in the group may tap between adverts without a held state."""
+        tracker = AdvertisementTracker()
+        address = "AA:BB:CC:DD:EE:FF"
+
+        first = parse_advertisement(_v1_payload(bytes([0x0A]) + bytes(10), loop_counter=1))  # id=2, count=1, up
+        second = parse_advertisement(_v1_payload(bytes([0x09]) + bytes(10), loop_counter=2))  # id=1, count=1, up
+
+        assert tracker.update(address, first, timestamp=1.0) == []
+
+        events = tracker.update(address, second, timestamp=2.0)
+        assert [e.event_type for e in events] == [
+            "button_slot_changed",
+            "button_down",
+            "button_up",
+        ]
+        assert events[0].button_id == 1
+        assert events[1].pressed is True
+        assert events[2].pressed is False
+
 
 class TestTouchEventData:
     """Test TouchEventData parsing from dynamic data bytes."""
