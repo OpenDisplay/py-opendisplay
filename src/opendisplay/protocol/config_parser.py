@@ -498,7 +498,7 @@ def _parse_data_bus(data: bytes) -> DataBus:
 
 
 def _parse_binary_inputs(data: bytes) -> BinaryInputs:
-    """Parse BinaryInputs packet (0x25, 30 bytes)."""
+    """Parse BinaryInputs packet (0x25, 30 bytes) using the canonical field order."""
     if len(data) < 30:
         raise ConfigParseError(f"BinaryInputs too short: {len(data)} bytes (need 30)")
 
@@ -506,7 +506,9 @@ def _parse_binary_inputs(data: bytes) -> BinaryInputs:
     reserved_pins = data[3:11]  # 8 reserved pin bytes
     input_flags, invert, pullups, pulldowns = struct.unpack_from("<BBBB", data, 11)
     button_data_byte_index = data[15]
-    reserved = data[16:30]
+    power_off_flags = data[16]
+    power_off_hold_sec = data[17]
+    reserved = data[18:30]
 
     return BinaryInputs(
         instance_number=instance_num,
@@ -518,6 +520,8 @@ def _parse_binary_inputs(data: bytes) -> BinaryInputs:
         pullups=pullups,
         pulldowns=pulldowns,
         button_data_byte_index=button_data_byte_index,
+        power_off_flags=power_off_flags,
+        power_off_hold_sec=power_off_hold_sec,
         reserved=reserved,
     )
 

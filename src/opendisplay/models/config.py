@@ -580,7 +580,9 @@ class DataBus:
 class BinaryInputs:
     """Binary inputs configuration (TLV packet type 0x25, repeatable max 4).
 
-    Size: 30 bytes (packed struct from firmware)
+    Size: 30 bytes (packed struct from firmware). Wire order is
+    ``button_data_byte_index``, ``power_off_flags``, ``power_off_hold_sec``,
+    then the 12-byte reserved tail.
     """
 
     instance_number: int  # uint8
@@ -591,12 +593,14 @@ class BinaryInputs:
     invert: int  # uint8 bitfield
     pullups: int  # uint8 bitfield
     pulldowns: int  # uint8 bitfield
-    reserved: bytes = b""  # 14 bytes
     button_data_byte_index: int = 0  # uint8 (v1+): dynamic return byte index (0-10)
+    power_off_flags: int = 0  # uint8 bitfield
+    power_off_hold_sec: int = 0  # uint8; 0 = firmware default
+    reserved: bytes = b""  # 12 bytes
 
     SIZE: ClassVar[int] = 30
-    # ADC ladder packs (N, id_base) + (N+1) LE uint16 thresholds into reserved[14].
-    MAX_LADDER_BUTTONS: ClassVar[int] = 5
+    # ADC ladder packs (N, id_base) + (N+1) LE uint16 thresholds into reserved[12].
+    MAX_LADDER_BUTTONS: ClassVar[int] = 4
     MAX_BUTTON_ID: ClassVar[int] = 7  # button id is a 3-bit field in the report byte
     MAX_BUTTON_DATA_BYTE_INDEX: ClassVar[int] = 10  # index into the 11-byte MSD block
 
@@ -646,7 +650,9 @@ class BinaryInputs:
             pullups=0,
             pulldowns=0,
             button_data_byte_index=button_data_byte_index,
-            reserved=reserved.ljust(14, b"\x00"),
+            power_off_flags=0,
+            power_off_hold_sec=0,
+            reserved=reserved.ljust(12, b"\x00"),
         )
 
     @classmethod
@@ -665,7 +671,9 @@ class BinaryInputs:
             pullups=data[13],
             pulldowns=data[14],
             button_data_byte_index=data[15],
-            reserved=data[16:30],
+            power_off_flags=data[16],
+            power_off_hold_sec=data[17],
+            reserved=data[18:30],
         )
 
 

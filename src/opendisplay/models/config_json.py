@@ -272,8 +272,9 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
                     "pullups": f"0x{binary_input.pullups:x}",
                     "pulldowns": f"0x{binary_input.pulldowns:x}",
                     "button_data_byte_index": f"0x{binary_input.button_data_byte_index:x}",
-                    # reserved holds ADC-ladder thresholds + power_off_flags/hold;
-                    # export the raw blob so a round-trip preserves them.
+                    "power_off_flags": f"0x{binary_input.power_off_flags:x}",
+                    "power_off_hold_sec": f"0x{binary_input.power_off_hold_sec:x}",
+                    # reserved is the canonical 12-byte tail, including ADC ladder data.
                     "reserved": _hex_bytes(binary_input.reserved),
                 },
             }
@@ -604,7 +605,9 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                     pullups=_parse_int(fields.get("pullups", "0")),
                     pulldowns=_parse_int(fields.get("pulldowns", "0")),
                     button_data_byte_index=_parse_int(fields.get("button_data_byte_index", "0")),
-                    reserved=_parse_hex_bytes(fields.get("reserved", "0x0"), 14),
+                    power_off_flags=_parse_int(fields.get("power_off_flags", "0")),
+                    power_off_hold_sec=_parse_int(fields.get("power_off_hold_sec", "0")),
+                    reserved=_parse_hex_bytes(fields.get("reserved", "0x0"), 12),
                 )
             )
 
