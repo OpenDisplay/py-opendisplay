@@ -447,10 +447,12 @@ def serialize_binary_inputs(config: BinaryInputs) -> bytes:
     data += bytes([config.button_data_byte_index & 0xFF])
 
     # Long-press power-off fields precede the remaining reserved tail.
-    data += bytes([
-        config.power_off_flags & 0xFF,
-        config.power_off_hold_sec & 0xFF,
-    ])
+    data += bytes(
+        [
+            config.power_off_flags & 0xFF,
+            config.power_off_hold_sec & 0xFF,
+        ]
+    )
 
     # Pad with reserved bytes to 30 total
     reserved = config.reserved if config.reserved else b"\x00" * 12
