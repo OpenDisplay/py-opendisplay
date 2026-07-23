@@ -7,6 +7,7 @@ import asyncio
 import functools
 import hmac
 import logging
+import math
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
@@ -78,6 +79,8 @@ from .protocol import (
     NFC_WRITE_MAX_TOTAL,
     PIPE_FLAG_PARTIAL,
     PIPE_FRAME_OVERHEAD,
+    PIPE_MAX_RETX_FRACTION,
+    PIPE_RETX_ACK_SPACING,
     TIMEOUT_PIPE_START,
     CommandCode,
     PipeParams,
@@ -2575,7 +2578,10 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # Partial transfers never auto-complete (Part 1 §1.5), so they use the
         # same explicit-END completion contract compressed transfers use today.
         explicit_end = params.compressed or params.partial
-        max_retx = 3 * window
+        # Flat 3*W is fine for small transfers but starves multi-thousand-chunk
+        # uploads (E1004 ~960KB): BLE write-without-response drops are normal and
+        # legitimately need more repairs. Match the web client's scaled budget.
+        max_retx = max(3 * window, math.ceil(n * PIPE_MAX_RETX_FRACTION))
         acked: set[int] = set()
         window_base = 0  # lowest unacked
         next_to_send = 0
@@ -2683,12 +2689,17 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 continue
 
             if params.selective:
+                # Selective repeat, oldest first. pending_retx counts ACKs seen
+                # since a chunk was last (re)sent — wait PIPE_RETX_ACK_SPACING
+                # ACKs before repeating so an in-flight repair isn't double-counted.
                 for m in missing:  # oldest first
-                    if m not in pending_retx:
-                        do_retx = True  # newly detected
+                    seen = pending_retx.get(m)
+                    if seen is None:
+                        do_retx = True  # newly detected hole
                     else:
-                        pending_retx[m] += 1  # a new ACK still shows it missing
-                        do_retx = pending_retx[m] >= 1  # one implicit RTT of spacing
+                        seen += 1
+                        pending_retx[m] = seen
+                        do_retx = seen >= PIPE_RETX_ACK_SPACING
                     if do_retx:
                         await _send(m)
                         pending_retx[m] = 0

@@ -78,6 +78,12 @@ DEFAULT_MAX_FRAME = 244  # HA native GATT write ceiling (client_max_frame reques
 # paid at most once per connection thanks to the probe cache.
 TIMEOUT_PIPE_START = 30.0
 MAX_PTO = 3  # Consecutive silent probe timeouts before aborting a pipe transfer
+# Match the web client (ble-common.js): a flat 3*W retx budget starves multi-thousand-
+# chunk uploads when the BLE controller silently drops write-without-response frames.
+PIPE_MAX_RETX_FRACTION = 0.5  # per-transfer retx budget as a fraction of chunk count
+# ACKs a retransmit gets to land before repeating it. Spacing 1 burns the budget on
+# in-flight holes; the web client uses 2 (~one RTT at typical N_eff).
+PIPE_RETX_ACK_SPACING = 2
 
 # NFC write endpoint (0x0083) sub-opcodes and size limits
 NFC_SUB_READ = 0x00  # Read the current NDEF record (not built here)
