@@ -204,10 +204,17 @@ def _capabilities_from_config(config: GlobalConfig) -> DeviceCapabilities:
 
     display = config.displays[0]
     rotation = display.rotation_enum
+    color_scheme = ColorScheme.from_value(display.color_scheme)
+    if color_scheme == ColorScheme.GRAYSCALE_8:
+        # GRAYSCALE_8 is library-local value 9 (epaper-dithering uses it for
+        # non-OpenDisplay 8-gray panels); it is never a valid firmware wire
+        # value. from_value(9) succeeds in 6.0.0, so guard here rather than
+        # letting a bogus config fail deep inside encode_image.
+        raise ValueError(f"color_scheme {display.color_scheme} (GRAYSCALE_8) is not a valid device wire value")
     return DeviceCapabilities(
         width=display.pixel_width,
         height=display.pixel_height,
-        color_scheme=ColorScheme.from_value(display.color_scheme),
+        color_scheme=color_scheme,
         rotation=rotation.value if isinstance(rotation, Rotation) else 0,
     )
 
@@ -220,6 +227,8 @@ _DIRECT_WRITE_PIXELS_PER_BYTE: dict[ColorScheme, int] = {
     ColorScheme.BWY: 8,
     ColorScheme.BWRY: 4,
     ColorScheme.BWGBRY: 2,
+    ColorScheme.BWGBRY_SPLIT: 2,
+    ColorScheme.SEVEN_COLOR: 2,
     ColorScheme.GRAYSCALE_16: 2,
 }
 
@@ -2759,5 +2768,5 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             display = self._config.displays[0]
             raise ImageEncodingError(
                 f"Device uses unsupported color scheme value {display.color_scheme}. "
-                "Reconfigure the device to a supported color scheme (0–5)."
+                "Reconfigure the device to a supported color scheme (0–8)."
             ) from exc

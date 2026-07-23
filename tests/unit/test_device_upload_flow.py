@@ -19,6 +19,7 @@ from epaper_dithering import ColorScheme
 from opendisplay import OpenDisplayDevice
 from opendisplay.exceptions import (
     AuthenticationRequiredError,
+    ImageEncodingError,
     IntegrityCheckError,
 )
 from opendisplay.models.capabilities import DeviceCapabilities
@@ -60,7 +61,9 @@ class _FakeConnection:
         return self._responses.pop(0)
 
 
-def _make_config(transmission_modes: int = 0x02, width: int = 4, height: int = 4) -> GlobalConfig:
+def _make_config(
+    transmission_modes: int = 0x02, width: int = 4, height: int = 4, color_scheme: int = ColorScheme.MONO.value
+) -> GlobalConfig:
     return GlobalConfig(
         system=SystemConfig(ic_type=0, communication_modes=0, device_flags=0, pwr_pin=0xFF, reserved=b"\x00" * 17),
         manufacturer=ManufacturerData(manufacturer_id=0, board_type=0, board_revision=0, reserved=b"\x00" * 18),
@@ -101,7 +104,7 @@ def _make_config(transmission_modes: int = 0x02, width: int = 4, height: int = 4
                 cs_pin=0xFF,
                 data_pin=0,
                 partial_update_support=0,
-                color_scheme=ColorScheme.MONO.value,
+                color_scheme=color_scheme,
                 transmission_modes=transmission_modes,
                 clk_pin=0,
                 reserved_pins=b"\x00" * 7,
@@ -598,3 +601,22 @@ async def test_gray4_compressed_start_rejected_falls_back_to_uncompressed() -> N
     )
     assert len(fake.written[0]) > 2  # compressed START (size + data embedded)
     assert fake.written[1] == b"\x00\x70"  # bare uncompressed START retry
+
+
+# ─── color_scheme capability guard ───────────────────────────────────────────
+
+
+def test_grayscale8_config_raises_image_encoding_error() -> None:
+    """color_scheme 9 (GRAYSCALE_8) is library-local, never a device wire value."""
+    config = _make_config(color_scheme=9)
+    device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config, max_queue_size=1)
+    with pytest.raises(ImageEncodingError, match=r"\(0–8\)"):
+        device._extract_capabilities_from_config()
+
+
+def test_out_of_range_color_scheme_raises_image_encoding_error() -> None:
+    """An out-of-range color_scheme surfaces as ImageEncodingError, not a bare ValueError."""
+    config = _make_config(color_scheme=99)
+    device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config, max_queue_size=1)
+    with pytest.raises(ImageEncodingError, match=r"\(0–8\)"):
+        device._extract_capabilities_from_config()

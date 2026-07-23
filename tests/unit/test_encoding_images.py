@@ -2,10 +2,12 @@
 
 import numpy as np
 import pytest
-from epaper_dithering import ColorScheme
+from epaper_dithering import ColorScheme, DitherMode
 from PIL import Image
 
-from opendisplay.encoding.images import encode_image, fit_image
+from opendisplay.device import prepare_image
+from opendisplay.encoding.images import encode_4bpp, encode_image, fit_image
+from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.enums import FitMode
 
 
@@ -61,6 +63,58 @@ class TestEncodeImageGrayscale16:
         img = _palette_image([[0, 1, 2], [3, 4, 5]])
         result = encode_image(img, ColorScheme.GRAYSCALE_16)
         assert len(result) == 4  # ceil(3/2)=2 bytes/row × 2 rows
+
+
+class TestEncodeBwgbrySplit:
+    """BWGBRY_SPLIT (wire scheme 8): left half-plane then right half-plane."""
+
+    def test_half_planes_pack_left_then_right(self) -> None:
+        """4×2 image: left 2 cols then right 2 cols, with BWGBRY nibble remap."""
+        # Row0: L0=0,L1=1 | R0=2,R1=3  → left 0x01, right 0x23
+        # Row1: L0=4,L1=5 | R0=1,R1=0  → left 0x56 (4→5,5→6), right 0x10
+        img = _palette_image([[0, 1, 2, 3], [4, 5, 1, 0]])
+        row_major = encode_4bpp(img, bwgbry_mapping=True, half_planes=False)
+        split = encode_4bpp(img, bwgbry_mapping=True, half_planes=True)
+        assert row_major == bytes([0x01, 0x23, 0x56, 0x10])
+        assert split == bytes([0x01, 0x56, 0x23, 0x10])
+        assert len(split) == len(row_major)
+
+    def test_encode_image_routes_split_packing(self) -> None:
+        """encode_image(BWGBRY_SPLIT) applies the bwgbry remap and half-plane split."""
+        img = _palette_image([[0, 1, 2, 3], [4, 5, 1, 0]])
+        result = encode_image(img, ColorScheme.BWGBRY_SPLIT)
+        assert result == bytes([0x01, 0x56, 0x23, 0x10])
+
+    def test_split_matches_bwgbry_length_and_multiset(self) -> None:
+        """Split output is a repacking of BWGBRY: same length and same byte multiset."""
+        img = _palette_image([[0, 1, 2, 3], [4, 5, 1, 0]])
+        split = encode_image(img, ColorScheme.BWGBRY_SPLIT)
+        bwgbry = encode_image(img, ColorScheme.BWGBRY)
+        assert len(split) == len(bwgbry)
+        assert sorted(split) == sorted(bwgbry)
+
+    def test_prepare_image_uses_split_packing(self) -> None:
+        """prepare_image(BWGBRY_SPLIT) end-to-end matches encode_4bpp split packing."""
+        caps = DeviceCapabilities(width=4, height=2, color_scheme=ColorScheme.BWGBRY_SPLIT)
+        img = Image.new("RGB", (4, 2), (0, 0, 0))
+        data, _compressed, dithered = prepare_image(
+            img,
+            capabilities=caps,
+            use_measured_palettes=False,
+            dither_mode=DitherMode.NONE,
+            compress=False,
+        )
+        assert data == encode_4bpp(dithered, bwgbry_mapping=True, half_planes=True)
+
+
+class TestEncodeSevenColor:
+    """SEVEN_COLOR (wire scheme 7): 4bpp with an identity index map."""
+
+    def test_identity_index_map(self) -> None:
+        """Index 4 stays 4 (no BWGBRY remap, which would turn it into 5)."""
+        img = _palette_image([[6, 4]])
+        result = encode_image(img, ColorScheme.SEVEN_COLOR)
+        assert result == bytes([0x64])
 
 
 class TestFitImage:
