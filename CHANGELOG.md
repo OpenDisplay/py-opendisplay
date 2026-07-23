@@ -26,6 +26,20 @@
   ACK streams that never make progress (previously loops without a progress
   guarantee, reachable only with buggy/hostile firmware).
 
+## [7.14.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.13.1...v7.14.0) (2026-07-23)
+
+
+### Features
+
+* support SEVEN_COLOR and BWGBRY_SPLIT color schemes (protocol v2) ([dcc61de](https://github.com/OpenDisplay/py-opendisplay/commit/dcc61de4017a94b858e79598bdeab9be17bd6334))
+* support SEVEN_COLOR and BWGBRY_SPLIT color schemes (protocol v2) ([c66182c](https://github.com/OpenDisplay/py-opendisplay/commit/c66182c3180993d833c99233021ee43a99d3b80b))
+
+
+### Bug Fixes
+
+* **transport:** scale PIPE_WRITE retransmit budget for large uploads ([a8e33db](https://github.com/OpenDisplay/py-opendisplay/commit/a8e33db03df182589e2541248029b7e3a43cd4ce))
+* **transport:** scale PIPE_WRITE retransmit budget for large uploads ([984039e](https://github.com/OpenDisplay/py-opendisplay/commit/984039e9f9b8c64e50f0f23a294ce35a834e79e3))
+
 ## [7.13.1](https://github.com/OpenDisplay/py-opendisplay/compare/v7.13.0...v7.13.1) (2026-07-17)
 
 
