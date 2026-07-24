@@ -85,7 +85,9 @@ def _binary_input() -> BinaryInputs:
         pullups=1,
         pulldowns=0,
         button_data_byte_index=4,
-        reserved=bytes(range(14)),
+        power_off_flags=0x05,
+        power_off_hold_sec=9,
+        reserved=bytes(range(12)),
     )
 
 
@@ -103,7 +105,9 @@ def test_binary_input_pins_and_reserved_survive_json_roundtrip() -> None:
     back = config_from_json(config_to_json(cfg))
     b = back.binary_inputs[0]
     assert b.reserved_pins == bytes([21, 22, 23, 24, 25, 26, 27, 28])
-    assert b.reserved == bytes(range(14))  # ADC thresholds / power_off blob preserved
+    assert b.power_off_flags == 0x05
+    assert b.power_off_hold_sec == 9
+    assert b.reserved == bytes(range(12))  # ADC ladder thresholds preserved
 
 
 def _sentinel_power() -> PowerOption:

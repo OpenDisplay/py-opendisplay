@@ -264,7 +264,9 @@ def test_config_to_json_binary_input_exports_button_data_byte_index() -> None:
                 pullups=0,
                 pulldowns=0,
                 button_data_byte_index=5,
-                reserved=b"\x00" * 14,
+                power_off_flags=0,
+                power_off_hold_sec=0,
+                reserved=b"\x00" * 12,
             )
         ],
     )
@@ -287,7 +289,9 @@ def test_serialize_binary_inputs_writes_button_data_byte_index_byte() -> None:
         pullups=0,
         pulldowns=0,
         button_data_byte_index=6,
-        reserved=b"\x00" * 14,
+        power_off_flags=0,
+        power_off_hold_sec=0,
+        reserved=b"\x00" * 12,
     )
 
     payload = serialize_binary_inputs(binary)
@@ -314,16 +318,17 @@ def test_adc_ladder_serializes_to_firmware_wire_contract() -> None:
     assert payload[1] == BinaryInputType.ADC_LADDER  # input_type
     assert payload[3] == 1  # reserved_pin_1 = ADC GPIO
     assert payload[15] == 5  # button_data_byte_index
-    # reserved[16:30] = N, id_base, then N+1 LE uint16 thresholds, zero-padded.
+    # offsets 16/17 are power-off fields; reserved[18:30] holds the ladder.
+    assert payload[16:18] == b"\x00\x00"
     expected_reserved = struct.pack("<BB", 4, 0) + struct.pack("<5H", 3850, 3163, 2132, 761, 0)
-    assert payload[16:30] == expected_reserved.ljust(14, b"\x00")
+    assert payload[18:30] == expected_reserved.ljust(12, b"\x00")
 
 
 @pytest.mark.parametrize(
     "thresholds",
     [
         [0],  # too few (N+1 must be >= 2)
-        [1, 2, 3, 4, 5, 6, 7],  # too many (N > MAX_LADDER_BUTTONS)
+        [1, 2, 3, 4, 5, 6],  # too many (N > MAX_LADDER_BUTTONS)
         [100, 100, 0],  # not strictly descending
         [100, 200, 0],  # ascending
         [70000, 0],  # threshold exceeds uint16

@@ -413,7 +413,9 @@ def serialize_binary_inputs(config: BinaryInputs) -> bytes:
     - pullups: uint8
     - pulldowns: uint8
     - button_data_byte_index: uint8
-    - reserved: 14 bytes
+    - power_off_flags: uint8
+    - power_off_hold_sec: uint8
+    - reserved: 12 bytes
 
     Args:
         config: BinaryInputs instance
@@ -444,9 +446,17 @@ def serialize_binary_inputs(config: BinaryInputs) -> bytes:
     # Dynamic return byte index (v1+ firmware feature)
     data += bytes([config.button_data_byte_index & 0xFF])
 
+    # Long-press power-off fields precede the remaining reserved tail.
+    data += bytes(
+        [
+            config.power_off_flags & 0xFF,
+            config.power_off_hold_sec & 0xFF,
+        ]
+    )
+
     # Pad with reserved bytes to 30 total
-    reserved = config.reserved if config.reserved else b"\x00" * 14
-    return data + reserved[:14].ljust(14, b"\x00")
+    reserved = config.reserved if config.reserved else b"\x00" * 12
+    return data + reserved[:12].ljust(12, b"\x00")
 
 
 def serialize_security_config(config: SecurityConfig) -> bytes:
