@@ -26,6 +26,18 @@
   ACK streams that never make progress (previously loops without a progress
   guarantee, reachable only with buggy/hostile firmware).
 
+## [7.14.1](https://github.com/OpenDisplay/py-opendisplay/compare/v7.14.0...v7.14.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* Fix ADC ladder BinaryInputs wire layout ([d04c32c](https://github.com/OpenDisplay/py-opendisplay/commit/d04c32c5c128d87336cca1555e0b336856f54b92))
+
+
+### Documentation
+
+* add AGENTS.md guidance for AI coding agents ([4593653](https://github.com/OpenDisplay/py-opendisplay/commit/4593653c024e7deed820027dba9f291b1bb60c9a))
+
 ## [7.14.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.13.1...v7.14.0) (2026-07-23)
 
 
