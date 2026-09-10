@@ -107,6 +107,7 @@ from .protocol import (
     build_pipe_write_data_command,
     build_pipe_write_end_command,
     build_pipe_write_start_command,
+    build_power_off_command,
     build_read_config_command,
     build_read_fw_version_command,
     build_read_msd_command,
@@ -1255,34 +1256,43 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         _LOGGER.info("Reboot command sent to %s - device will reset (connection will drop)", self.mac_address)
 
     @_serialized
-    async def deep_sleep(self) -> None:
-        """Put the device into deep sleep (command 0x0052).
+    async def deep_sleep(self, duration_seconds: int | None = None) -> None:
+        """Put the device into deep sleep (command 0x0053).
 
         Supported on ESP32 and Silabs Flex; nRF targets do not implement deep
         sleep. The command is sent encrypted when an active session exists.
+
+        Protocol 2.1 split the old single 0x0052 opcode in two: this method
+        now sends 0x0053 (CMD_DEEP_SLEEP). The hard rail-cut that used to
+        share that opcode is :meth:`power_off` (0x0052).
 
         The firmware's exact behavior depends on the target, and this method
         tolerates all of them — in every supported case the BLE link drops during
         or right after the command, so a disconnect (or a missing ACK) is treated
         as success, mirroring reboot() and trigger_dfu_bootloader():
 
-        - ESP32 with a D-FF power latch: firmware ACKs 0x0052, then powers off
+        - ESP32 with a D-FF power latch: firmware ACKs 0x0053, then powers off
           after ~100 ms (the link drops).
         - ESP32 without a power latch: firmware enters deep sleep immediately,
           tearing down BLE with no ACK (the write or read fails as the link drops).
-        - Silabs Flex: firmware ACKs 0x0052, then closes the connection and enters
+        - Silabs Flex: firmware ACKs 0x0053, then closes the connection and enters
           EM4 (wake on button/NFC).
+
+        Args:
+            duration_seconds: Optional one-shot wake-timer duration. The
+                firmware enforces a 60 second floor; this is not validated
+                client-side.
 
         Raises:
             ProtocolError: If the device explicitly reports that deep sleep is not
-                supported (protocol error frame 0xFF52).
+                supported (protocol error frame 0xFF53).
         """
         from .exceptions import BLEConnectionError
 
-        _LOGGER.debug("Sending deep sleep command (0x0052) to device %s", self.mac_address)
+        _LOGGER.debug("Sending deep sleep command (0x0053) to device %s", self.mac_address)
 
         try:
-            await self._write(build_deep_sleep_command())
+            await self._write(build_deep_sleep_command(duration_seconds))
         except BLEConnectionError as exc:
             # An ESP32 without a power latch tears down BLE synchronously as it
             # enters deep sleep, so the write-with-response confirmation can fail
@@ -1296,8 +1306,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             return
 
         # Targets that ACK before sleeping (ESP32 power-latch, Silabs Flex) reply
-        # with 0x0052 and then drop the link; a device that does not support the
-        # command replies with the 0xFF52 error frame (protocol: 0xFF [command_low]).
+        # with 0x0053 and then drop the link; a device that does not support the
+        # command replies with the 0xFF53 error frame (protocol: 0xFF [command_low]).
         # A disconnect or timeout here means the device slept without acking.
         try:
             response = await self._read(self.TIMEOUT_ACK)
@@ -1309,11 +1319,58 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             _LOGGER.info("Deep sleep command sent to %s — device is sleeping", self.mac_address)
             return
 
-        if len(response) >= 2 and unpack_command_code(response) == 0xFF52:
-            raise ProtocolError("Device reported deep sleep is not supported (command 0x0052)")
+        if len(response) >= 2 and unpack_command_code(response) == 0xFF53:
+            raise ProtocolError("Device reported deep sleep is not supported (command 0x0053)")
 
         validate_ack_response(response, CommandCode.DEEP_SLEEP)
         _LOGGER.info("Deep sleep command acknowledged by %s — device is sleeping", self.mac_address)
+
+    @_serialized
+    async def power_off(self) -> None:
+        """Cut power via the device's D-FF power latch (command 0x0052).
+
+        Only supported on boards with a power latch. This is a harder,
+        one-way cut than :meth:`deep_sleep` — there is no wake timer, only a
+        physical power button or reset can bring the device back. The
+        command is sent encrypted when an active session exists.
+
+        This shares 0x0052's old tolerate-the-disconnect behavior with
+        :meth:`deep_sleep`, since a board with a power latch is expected to
+        ACK and then drop the link as it cuts power.
+
+        Raises:
+            ProtocolError: If the device explicitly reports that it has no
+                power latch (protocol error frame 0xFF52).
+        """
+        from .exceptions import BLEConnectionError
+
+        _LOGGER.debug("Sending power off command (0x0052) to device %s", self.mac_address)
+
+        try:
+            await self._write(build_power_off_command())
+        except BLEConnectionError as exc:
+            _LOGGER.debug(
+                "Power off write did not confirm (expected — device powers off before responding): %s",
+                exc,
+            )
+            _LOGGER.info("Power off command sent to %s — device is powering off (connection dropped)", self.mac_address)
+            return
+
+        try:
+            response = await self._read(self.TIMEOUT_ACK)
+        except (BLEConnectionError, BLETimeoutError) as exc:
+            _LOGGER.debug(
+                "No power off ACK (expected — device dropped the link): %s",
+                exc,
+            )
+            _LOGGER.info("Power off command sent to %s — device is powering off", self.mac_address)
+            return
+
+        if len(response) >= 2 and unpack_command_code(response) == 0xFF52:
+            raise ProtocolError("Device reported it has no power latch (command 0x0052)")
+
+        validate_ack_response(response, CommandCode.POWER_OFF)
+        _LOGGER.info("Power off command acknowledged by %s — device is powering off", self.mac_address)
 
     @_serialized
     async def trigger_dfu_bootloader(self) -> None:
