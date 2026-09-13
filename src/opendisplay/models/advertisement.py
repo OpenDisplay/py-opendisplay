@@ -272,11 +272,7 @@ class AdvertisementTracker:
                     )
                 continue
 
-            missed_short_press = (
-                curr.press_count > prev.press_count
-                and not prev.pressed
-                and not curr.pressed
-            )
+            missed_short_press = curr.press_count > prev.press_count and not prev.pressed and not curr.pressed
             if missed_short_press:
                 events.append(
                     ButtonChangeEvent(
