@@ -89,7 +89,7 @@ class TestParseLandingUrl:
         )
 
     def test_zero_key_is_none(self):
-        """An all-zero key slot means "no key" and decodes to None."""
+        """An all-zero key slot (encryption off, or key hidden) decodes to None."""
         info = parse_landing_url(build_landing_url(0, b"\x01\x02\x03", None, 0))
         assert info.encryption_key is None
 

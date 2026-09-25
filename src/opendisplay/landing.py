@@ -11,7 +11,9 @@ the query string back into these fields:
     offset  size  field            notes
     0       2     tag_type         u16, BE (DisplayConfig.tag_type; 0 if none)
     2       3     device id        the device's unique id == the "OD######" name
-    5       16    AES key          encryption key, or all-zero if unknown
+    5       16    AES key          encryption key, or all-zero if the device has
+                                   no key (encryption off) or hides it (the
+                                   "show key on screen" security flag is off)
     21      2     manufacturer_id  u16, BE (OpenDisplay enum 0..4, NOT BLE 9286)
 
 The result is base64url-encoded (RFC 4648 sec. 5: '+'->'-', '/'->'_') with the
@@ -37,7 +39,12 @@ _LANDING_PATHS = frozenset({"/l", "/l/"})
 
 @dataclass(frozen=True, slots=True)
 class LandingInfo:
-    """Device identity decoded from a landing URL / on-screen QR code."""
+    """Device identity decoded from a landing URL / on-screen QR code.
+
+    ``encryption_key`` is ``None`` when the QR code carries no key: either the
+    device has encryption off, or it has a key but hides it because its "show
+    key on screen" security flag is off. The QR code alone can't tell which.
+    """
 
     tag_type: int
     device_id: bytes
@@ -101,7 +108,7 @@ def build_landing_url(
 def parse_landing_payload(payload: bytes) -> LandingInfo:
     """Decode the 23-byte identity payload (inverse of :func:`build_landing_payload`).
 
-    An all-zero key slot means "no key known" and is returned as ``None``.
+    An all-zero key slot is returned as ``None`` (see :class:`LandingInfo`).
 
     Raises:
         ValueError: If the payload is not exactly 23 bytes.
