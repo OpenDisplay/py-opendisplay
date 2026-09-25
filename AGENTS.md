@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`py-opendisplay` — a typed, async Python library (and `opendisplay` CLI) for OpenDisplay BLE e-paper displays: image upload with dithering, TLV config read/write, encryption, partial updates, and OTA firmware updates.
+`py-opendisplay` — a typed, async Python library (and `opendisplay` CLI) for OpenDisplay e-paper displays over BLE or WiFi/LAN: image upload with dithering, TLV config read/write, encryption, partial updates, and OTA firmware updates.
 
 ## Commands
 
@@ -34,7 +34,8 @@ Gotchas:
 
 `src/` layout, package `opendisplay`, fully typed (`py.typed`, mypy strict). Layered roughly bottom-up:
 
-- **`transport/connection.py`** — `BLEConnection`: bleak + bleak-retry-connector, notification queue, GATT service-cache handling with bounded stale-cache retries.
+- **`transport/`** — `base.py` defines the `Transport` abstraction the device talks through. `connection.py` is `BLEConnection` (alias `BleTransport`): bleak + bleak-retry-connector, notification queue, GATT service-cache handling with bounded stale-cache retries. `ip.py` is `TcpTransport`: TCP with optional TLS-PSK (the PSK is derived from the device master key, which is why the Python floor is 3.13).
+- **`discovery.py` / `discovery_ip.py`** — BLE scanning and zeroconf/mDNS discovery for LAN devices (the optional `wifi` extra).
 - **`protocol/`** — pure byte-level layer, no I/O. `commands.py` builds command frames (`CommandCode` enum: 0x0040 config read, 0x0070 direct write, 0x0076 partial, 0x0050 auth, …), `responses.py` parses ACK/NACK/response frames, `config_parser.py`/`config_serializer.py` round-trip the TLV device config.
 - **`models/`** — dataclasses only: `GlobalConfig` and its per-TLV-packet sections (`config.py`), enums, `config_json.py` (JSON import/export compatible with the Config Builder web tool), `advertisement.py` (parses both legacy 11-byte and v1 14-byte BLE advertisement formats; `AdvertisementTracker` derives button events from durable press counts, not the transient pressed bit).
 - **`encoding/`** — image → bitplane bytes (`bitplanes.py`, numpy-vectorized) and compression (`compression.py`). Actual dithering/palette mapping is done by the external `epaper-dithering` package; `display_palettes.py` holds measured per-panel palettes used instead of theoretical ColorScheme colors when available.
@@ -42,7 +43,7 @@ Gotchas:
 - **`crypto.py`** — AES-128 challenge-response authentication; after auth, all command traffic is transparently encrypted in `device.py`'s read/write path.
 - **`partial.py`** — `PartialState` for differential (flicker-free) 0x76 updates; caller-owned, persistable via `to_bytes()`.
 - **`ota.py`** — dispatch to optional `nrf-ota` (Nordic Legacy DFU, DFU device appears at MAC+1) or `silabs-ble-ota` (AppLoader, same MAC) extras. No BLE OTA for ESP32. macOS cannot do OTA (CoreBluetooth GATT cache).
-- **`cli.py`** — argparse CLI (`opendisplay` entry point; scan/info/upload/reboot/export-config/write-config), `rich` optional.
+- **`cli.py`** — argparse CLI (`opendisplay` entry point; subcommands are the `add_parser` calls), `rich` optional.
 
 ### Upload flow (the core path)
 
@@ -56,7 +57,7 @@ Compression capability is firmware-dependent: the `transmission_modes` bit 0x01 
 
 ### Protocol ground truth
 
-When protocol constants or firmware behavior are in question, verify against the firmware sources at `/Users/gabriel/Developer/OpenDisplay/Firmwares` (fetch and read `upstream/main` — local checkouts go stale) rather than trusting comments here.
+When protocol constants or firmware behavior are in question, verify against the firmware sources rather than trusting comments here: `OpenDisplay/Firmware` (nRF52840/ESP32), `OpenDisplay/Firmware_NRF`, `OpenDisplay/Firmware_NRF54`, and `OpenDisplay/Firmware_Silabs` on GitHub. If you have local checkouts (the maintainer's live under `~/Developer/OpenDisplay/Firmwares`), fetch and read `upstream/main`, because local branches go stale.
 
 ## Tests
 
