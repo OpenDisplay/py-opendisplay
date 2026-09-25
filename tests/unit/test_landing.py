@@ -6,8 +6,11 @@ import pytest
 
 from opendisplay.landing import (
     LANDING_URL_PREFIX,
+    LandingInfo,
     build_landing_payload,
     build_landing_url,
+    parse_landing_payload,
+    parse_landing_url,
 )
 
 # Canonical vector from issue #40 / the firmware on-screen QR code.
@@ -58,3 +61,70 @@ class TestBuildLandingUrl:
     def test_invalid_key_length(self):
         with pytest.raises(ValueError, match="encryption_key must be 16 bytes"):
             build_landing_payload(0, b"\x01\x02\x03", b"\x12" * 15, 3)
+
+
+class TestParseLandingUrl:
+    """Test parse_landing_url / parse_landing_payload (the inverse direction)."""
+
+    def test_canonical_vector(self):
+        """The firmware QR vector decodes to its documented fields."""
+        info = parse_landing_url(CANONICAL_URL)
+        assert info == LandingInfo(
+            tag_type=0,
+            device_id=b"\x4b\x3f\x63",
+            encryption_key=b"\x12" * 16,
+            manufacturer_id=3,
+        )
+        assert info.device_name == "OD4B3F63"
+
+    def test_round_trip(self):
+        """build -> parse returns the original fields."""
+        url = build_landing_url(0x0102, b"\xaa\xbb\xcc", bytes(range(16)), 4)
+        info = parse_landing_url(url)
+        assert (info.tag_type, info.device_id, info.encryption_key, info.manufacturer_id) == (
+            0x0102,
+            b"\xaa\xbb\xcc",
+            bytes(range(16)),
+            4,
+        )
+
+    def test_zero_key_is_none(self):
+        """An all-zero key slot means "no key" and decodes to None."""
+        info = parse_landing_url(build_landing_url(0, b"\x01\x02\x03", None, 0))
+        assert info.encryption_key is None
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            f"  {CANONICAL_URL}\n",
+            f"http://opendisplay.org/l/?{CANONICAL_PAYLOAD}",
+            f"https://opendisplay.org/l?{CANONICAL_PAYLOAD}",
+            f"https://OpenDisplay.org/l/?{CANONICAL_PAYLOAD}=",
+            f"https://www.opendisplay.org/l/?{CANONICAL_PAYLOAD}",
+        ],
+    )
+    def test_tolerated_variants(self, url):
+        """Whitespace, http, missing slash, case and padding are accepted."""
+        assert parse_landing_url(url).device_name == "OD4B3F63"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "",
+            "aabbccddee112233aabbccddee112233",
+            f"https://example.com/l/?{CANONICAL_PAYLOAD}",
+            f"https://opendisplay.org/x/?{CANONICAL_PAYLOAD}",
+            "https://opendisplay.org/l/?",
+            "https://opendisplay.org/l/?AAAA",  # too short
+            "https://opendisplay.org/l/?!!!notbase64!!!",
+        ],
+    )
+    def test_rejects_invalid(self, url):
+        """Anything that isn't a well-formed landing URL raises ValueError."""
+        with pytest.raises(ValueError):
+            parse_landing_url(url)
+
+    def test_payload_wrong_size(self):
+        """parse_landing_payload enforces the 23-byte layout."""
+        with pytest.raises(ValueError):
+            parse_landing_payload(b"\x00" * 22)
