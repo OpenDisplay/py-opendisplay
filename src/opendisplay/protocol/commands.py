@@ -38,7 +38,12 @@ class CommandCode(IntEnum):
     DIRECT_WRITE_PARTIAL_START = 0x0076  # Start a partial update transfer (stream via 0x71)
     BUZZER_ACTIVATE = 0x0077  # Host→device: trigger buzzer pattern (firmware 1.61+)
     ENTER_DFU = 0x0051  # Trigger DFU bootloader mode (nRF only)
-    DEEP_SLEEP = 0x0052  # Enter deep sleep now (ESP32 timer-wake / Silabs EM4; nRF unsupported)
+    # Protocol 2.1 split the old single 0x0052 "deep sleep" opcode in two:
+    # POWER_OFF (0x0052) is a hard rail-cut (D-FF power latch only) and
+    # DEEP_SLEEP (0x0053) is the timer-wake sleep this library sends. A peer
+    # still on 0x0052 for timer-wake sleep will now hit POWER_OFF instead.
+    POWER_OFF = 0x0052  # Hard rail-cut via D-FF power latch; NACKs on latch-less boards
+    DEEP_SLEEP = 0x0053  # Enter deep sleep now, optional [seconds:2 BE] one-shot wake timer
 
     # Sliding-window image transfer (PIPE_WRITE, firmware 2.x+)
     PIPE_WRITE_START = 0x0080  # Start + negotiate a sliding-window transfer
@@ -165,8 +170,8 @@ def build_enter_dfu_command() -> bytes:
     return CommandCode.ENTER_DFU.to_bytes(2, byteorder="big")
 
 
-def build_deep_sleep_command() -> bytes:
-    """Build command to put the device into deep sleep (command 0x0052).
+def build_deep_sleep_command(duration_seconds: int | None = None) -> bytes:
+    """Build command to put the device into deep sleep (command 0x0053).
 
     Supported on ESP32 (enters timer-wake deep sleep, or releases the D-FF power
     latch when one is configured) and Silabs Flex (arms EM4 button/NFC wake and
@@ -175,16 +180,38 @@ def build_deep_sleep_command() -> bytes:
 
     The response behavior varies by target and is best-effort — callers should
     tolerate the connection dropping during or right after the command:
-    - ESP32 with a power latch: replies 0x0052, then powers off after ~100 ms.
+    - ESP32 with a power latch: replies 0x0053, then powers off after ~100 ms.
     - ESP32 without a power latch: enters deep sleep immediately with no ACK;
       the BLE connection drops.
-    - Silabs Flex: replies 0x0052, then closes the link and enters EM4.
+    - Silabs Flex: replies 0x0053, then closes the link and enters EM4.
     - nRF: no response (deep sleep not supported).
+
+    Args:
+        duration_seconds: Optional one-shot wake-timer duration. The firmware
+            enforces a 60 second floor; this is not validated client-side.
+
+    Returns:
+        Command bytes: 0x0053 (2 bytes, big-endian), followed by
+        ``duration_seconds`` (2 bytes, big-endian) when given.
+    """
+    cmd = CommandCode.DEEP_SLEEP.to_bytes(2, byteorder="big")
+    if duration_seconds is not None:
+        cmd += struct.pack(">H", duration_seconds)
+    return cmd
+
+
+def build_power_off_command() -> bytes:
+    """Build command for a hard rail-cut power off (command 0x0052).
+
+    Only supported on boards with a D-FF power latch; latch-less boards NACK
+    with ``OD_ERR_POWER_OFF_UNSUPPORTED``. This is a harder, one-way cut than
+    :func:`build_deep_sleep_command` — there is no wake timer, only a physical
+    power button or reset can bring the device back.
 
     Returns:
         Command bytes: 0x0052 (2 bytes, big-endian)
     """
-    return CommandCode.DEEP_SLEEP.to_bytes(2, byteorder="big")
+    return CommandCode.POWER_OFF.to_bytes(2, byteorder="big")
 
 
 def build_direct_write_start_compressed(

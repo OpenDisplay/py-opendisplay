@@ -26,6 +26,7 @@ from opendisplay.protocol.commands import (
     build_nfc_write_end_command,
     build_nfc_write_inline_command,
     build_nfc_write_start_command,
+    build_power_off_command,
     build_read_config_command,
     build_read_fw_version_command,
     build_reboot_command,
@@ -64,8 +65,21 @@ class TestCommandBuilders:
         """Test DEEP_SLEEP command builder."""
         cmd = build_deep_sleep_command()
         assert len(cmd) == 2
-        assert cmd == b"\x00\x52"  # 0x0052 big-endian
+        assert cmd == b"\x00\x53"  # 0x0053 big-endian
         assert cmd == CommandCode.DEEP_SLEEP.to_bytes(2, "big")
+
+    def test_build_deep_sleep_command_with_duration(self):
+        """Test DEEP_SLEEP command builder with an optional wake-timer duration."""
+        cmd = build_deep_sleep_command(duration_seconds=90)
+        assert len(cmd) == 4
+        assert cmd == b"\x00\x53\x00\x5a"  # 0x0053 + 90 (big-endian)
+
+    def test_build_power_off_command(self):
+        """Test POWER_OFF command builder."""
+        cmd = build_power_off_command()
+        assert len(cmd) == 2
+        assert cmd == b"\x00\x52"  # 0x0052 big-endian
+        assert cmd == CommandCode.POWER_OFF.to_bytes(2, "big")
 
     def test_build_direct_write_start_uncompressed(self, real_upload_start_command):
         """Test uncompressed START command matches real data."""
@@ -200,6 +214,8 @@ class TestCommandCode:
         assert CommandCode.DIRECT_WRITE_END == 0x0072
         assert CommandCode.LED_ACTIVATE == 0x0073
         assert CommandCode.BUZZER_ACTIVATE == 0x0077
+        assert CommandCode.POWER_OFF == 0x0052
+        assert CommandCode.DEEP_SLEEP == 0x0053
         assert CommandCode.NFC_ENDPOINT == 0x0083
 
     def test_command_code_to_bytes(self):
