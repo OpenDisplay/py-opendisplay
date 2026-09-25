@@ -30,7 +30,14 @@ from .exceptions import (
     RefreshTimeoutError,
     TruncatedConfigError,
 )
-from .landing import LANDING_URL_PREFIX, build_landing_payload, build_landing_url
+from .landing import (
+    LANDING_URL_PREFIX,
+    LandingInfo,
+    build_landing_payload,
+    build_landing_url,
+    parse_landing_payload,
+    parse_landing_url,
+)
 from .models.advertisement import (
     AdvertisementData,
     AdvertisementTracker,
@@ -203,6 +210,9 @@ __all__ = [
     "voltage_to_percent",
     "build_landing_url",
     "build_landing_payload",
+    "parse_landing_url",
+    "parse_landing_payload",
+    "LandingInfo",
     "LANDING_URL_PREFIX",
     # Constants
     "SERVICE_UUID",

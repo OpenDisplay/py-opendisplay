@@ -11,20 +11,50 @@ the query string back into these fields:
     offset  size  field            notes
     0       2     tag_type         u16, BE (DisplayConfig.tag_type; 0 if none)
     2       3     device id        the device's unique id == the "OD######" name
-    5       16    AES key          encryption key, or all-zero if unknown
+    5       16    AES key          encryption key, or all-zero if the device has
+                                   no key (encryption off) or hides it (the
+                                   "show key on screen" security flag is off)
     21      2     manufacturer_id  u16, BE (OpenDisplay enum 0..4, NOT BLE 9286)
 
 The result is base64url-encoded (RFC 4648 sec. 5: '+'->'-', '/'->'_') with the
 trailing '=' padding stripped, then appended to ``LANDING_URL_PREFIX``.
+
+:func:`parse_landing_url` is the inverse: it turns a scanned QR code (or a
+pasted link) back into a :class:`LandingInfo`.
 """
 
 from __future__ import annotations
 
 import base64
+import binascii
+from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 LANDING_URL_PREFIX = "https://opendisplay.org/l/?"
 
 _PAYLOAD_SIZE = 23
+_LANDING_HOSTS = frozenset({"opendisplay.org", "www.opendisplay.org"})
+_LANDING_PATHS = frozenset({"/l", "/l/"})
+
+
+@dataclass(frozen=True, slots=True)
+class LandingInfo:
+    """Device identity decoded from a landing URL / on-screen QR code.
+
+    ``encryption_key`` is ``None`` when the QR code carries no key: either the
+    device has encryption off, or it has a key but hides it because its "show
+    key on screen" security flag is off. The QR code alone can't tell which.
+    """
+
+    tag_type: int
+    device_id: bytes
+    encryption_key: bytes | None
+    manufacturer_id: int
+
+    @property
+    def device_name(self) -> str:
+        """The "OD######" name the device advertises (upper-case hex)."""
+        return f"OD{self.device_id.hex().upper()}"
 
 
 def build_landing_payload(
@@ -73,3 +103,48 @@ def build_landing_url(
     payload = build_landing_payload(tag_type, device_id, encryption_key, manufacturer_id)
     encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
     return f"{LANDING_URL_PREFIX}{encoded}"
+
+
+def parse_landing_payload(payload: bytes) -> LandingInfo:
+    """Decode the 23-byte identity payload (inverse of :func:`build_landing_payload`).
+
+    An all-zero key slot is returned as ``None`` (see :class:`LandingInfo`).
+
+    Raises:
+        ValueError: If the payload is not exactly 23 bytes.
+    """
+    if len(payload) != _PAYLOAD_SIZE:
+        raise ValueError(f"landing payload must be {_PAYLOAD_SIZE} bytes, got {len(payload)}")
+    key = bytes(payload[5:21])
+    return LandingInfo(
+        tag_type=int.from_bytes(payload[0:2], "big"),
+        device_id=bytes(payload[2:5]),
+        encryption_key=None if key == b"\x00" * 16 else key,
+        manufacturer_id=int.from_bytes(payload[21:23], "big"),
+    )
+
+
+def parse_landing_url(url: str) -> LandingInfo:
+    """Decode a ``https://opendisplay.org/l/?...`` deep link (e.g. a scanned QR code).
+
+    Tolerates surrounding whitespace, ``http://``, a missing trailing slash on
+    ``/l`` and re-added ``=`` padding, since links get retyped and re-shared.
+
+    Raises:
+        ValueError: If the string is not an OpenDisplay landing URL or its payload
+            does not decode to the 23-byte identity blob.
+    """
+    parts = urlsplit(url.strip())
+    if (
+        parts.scheme not in ("https", "http")
+        or (parts.hostname or "").lower() not in _LANDING_HOSTS
+        or parts.path not in _LANDING_PATHS
+        or not parts.query
+    ):
+        raise ValueError("not an OpenDisplay landing URL")
+    encoded = parts.query.rstrip("=")
+    try:
+        payload = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+    except (binascii.Error, ValueError) as err:
+        raise ValueError("landing URL payload is not valid base64url") from err
+    return parse_landing_payload(payload)
