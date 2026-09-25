@@ -26,6 +26,24 @@
   ACK streams that never make progress (previously loops without a progress
   guarantee, reachable only with buggy/hostile firmware).
 
+## [7.17.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.16.0...v7.17.0) (2026-09-25)
+
+
+### Features
+
+* add parse_landing_url() to decode device QR deep links ([cf95ba6](https://github.com/OpenDisplay/py-opendisplay/commit/cf95ba6bc5791f3600b06df24b8444f008f1736a))
+
+
+### Bug Fixes
+
+* Fix deep_sleep() opcode after the protocol 2.1 split (0x0052 -&gt; 0x0053) ([b866896](https://github.com/OpenDisplay/py-opendisplay/commit/b8668962de03c5cec14f2cdb295b773e5a9fc519))
+
+
+### Documentation
+
+* an all-zero QR key slot means encryption off or key hidden ([a6a5480](https://github.com/OpenDisplay/py-opendisplay/commit/a6a5480b7a6718c5bef9314936ff671903dafb3c))
+* bring AGENTS.md in line with the WiFi transport and current CLI ([4fa6a6e](https://github.com/OpenDisplay/py-opendisplay/commit/4fa6a6eeec519e87c4606dda5e0005b7a979decd))
+
 ## [7.16.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.15.0...v7.16.0) (2026-08-14)
 
 
