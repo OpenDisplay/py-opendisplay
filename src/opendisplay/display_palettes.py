@@ -51,14 +51,15 @@ def get_gray4_codes(panel_ic_type: int | None) -> tuple[int, int, int, int]:
 # Per-panel BWRY palette-index -> stored-nibble tables, mirroring bb_epaper's
 # 4-color swatch tables (bb_ep.inl). The dither palette orders indices as
 # black=0, white=1, yellow=2, red=3. Most YR panels use u8Colors_4clr_v2, whose
-# native codes match that order. Panels 0x001D/0x001E use u8Colors_4clr, where
+# native codes match that order. Panel 0x001D uses u8Colors_4clr, where
 # native code 2=red and 3=yellow, so yellow/red must be swapped on the wire
-# (the firmware direct-write path streams the nibble raw).
+# (the firmware direct-write path streams the nibble raw). 0x001E is also listed
+# with u8Colors_4clr in bb_epaper, but on hardware (Solum M3 2.7") the identity
+# order is correct (#161).
 _BWRY_CODES_DEFAULT: tuple[int, int, int, int] = (0, 1, 2, 3)  # u8Colors_4clr_v2
 _BWRY_CODES_SWAPPED: tuple[int, int, int, int] = (0, 1, 3, 2)  # u8Colors_4clr
 _BWRY_CODES_BY_PANEL: dict[int, tuple[int, int, int, int]] = {
     0x001D: _BWRY_CODES_SWAPPED,  # EP29YR_128x296
-    0x001E: _BWRY_CODES_SWAPPED,  # EP29YR_168x384
 }
 
 

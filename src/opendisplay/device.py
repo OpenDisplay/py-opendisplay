@@ -379,7 +379,7 @@ def prepare_image(
         # Two pre-split 1-bit planes concatenated; firmware streams the halves to PLANE_0/PLANE_1.
         image_data = b"".join(encode_gray4_bitplanes(dithered, get_gray4_codes(panel_ic_type)))
     elif color_scheme == ColorScheme.BWRY:
-        # Some YR panels (0x001D/0x001E) use a native 4-color code order with
+        # Some YR panels (0x001D) use a native 4-color code order with
         # yellow/red swapped relative to the dither palette; apply the per-panel
         # code table so the firmware's raw-nibble direct write shows the right color.
         image_data = encode_2bpp(dithered, codes=get_bwry_codes(panel_ic_type))
