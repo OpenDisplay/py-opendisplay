@@ -14,7 +14,11 @@ from opendisplay.encoding.images import encode_2bpp
 
 def test_get_bwry_codes_swaps_yellow_red_on_u8colors_4clr_panels() -> None:
     assert get_bwry_codes(0x001D) == (0, 1, 3, 2)
-    assert get_bwry_codes(0x001E) == (0, 1, 3, 2)
+
+
+def test_get_bwry_codes_ep29yr_168x384_is_identity() -> None:
+    # Verified on a Solum M3 2.7" (GDEY029F51H): swapping renders red as yellow (#161).
+    assert get_bwry_codes(0x001E) == (0, 1, 2, 3)
 
 
 def test_get_bwry_codes_default_is_identity() -> None:
