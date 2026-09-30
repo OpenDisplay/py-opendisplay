@@ -26,6 +26,13 @@
   ACK streams that never make progress (previously loops without a progress
   guarantee, reachable only with buggy/hostile firmware).
 
+## [7.17.1](https://github.com/OpenDisplay/py-opendisplay/compare/v7.17.0...v7.17.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* don't swap yellow/red on BWRY panel 0x001E ([23c1bf3](https://github.com/OpenDisplay/py-opendisplay/commit/23c1bf3bafbcdbc8806379b685d1412c6d94dab0)), closes [#161](https://github.com/OpenDisplay/py-opendisplay/issues/161)
+
 ## [7.17.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.16.0...v7.17.0) (2026-09-25)
 
 
