@@ -115,6 +115,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     # Parse TLV packets (OEPL format: [packet_number:1][packet_id:1][fixed_data])
     offset = 0
     packets = {}
+    unparsed_tail = b""
 
     while offset < len(data) - 1:
         if offset + 2 > len(data):
@@ -127,7 +128,13 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         # Determine packet size based on type
         packet_size = _get_packet_size(packet_type)
         if packet_size is None:
-            _LOGGER.warning("Unknown packet type 0x%02x at offset %d, skipping", packet_type, offset - 2)
+            unparsed_tail = data[offset - 2 :]
+            _LOGGER.warning(
+                "Unknown packet type 0x%02x at offset %d; keeping the remaining %d bytes unparsed",
+                packet_type,
+                offset - 2,
+                len(unparsed_tail),
+            )
             break
 
         # Extract packet data
@@ -238,6 +245,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
         data_extended=data_extended,
+        unparsed_tail=unparsed_tail,
         version=version,  # From firmware wrapper
         minor_version=1,  # Not stored in device (only single version byte exists)
         loaded=True,
