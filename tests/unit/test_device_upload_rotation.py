@@ -88,7 +88,7 @@ def _stub_prepare_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         "opendisplay.device.dither_image",
-        lambda image, palette, *, mode, serpentine, exposure, saturation, shadows, highlights, tone, gamut: (
+        lambda image, palette, *, mode, serpentine, exposure, saturation, shadows, highlights, tone, gamut, dbs: (
             image.convert("P")
         ),
     )

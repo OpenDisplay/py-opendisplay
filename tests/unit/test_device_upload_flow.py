@@ -569,6 +569,39 @@ def test_prepare_image_defaults_tone_and_gamut_off() -> None:
     assert sig.parameters["gamut"].default == 0.0
 
 
+# ─── upload_image: CPU work stays off the event loop ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_upload_image_prepares_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fit/dither/encode is CPU-bound (seconds with DBS); it must not block the caller's loop.
+
+    Home Assistant awaits upload_image() on its event loop, so a synchronous
+    _prepare_image() would stall every other integration for the whole dither.
+    """
+    import threading
+
+    from PIL import Image
+
+    class _Stop(Exception):
+        pass
+
+    device = _make_device()
+    loop_thread = threading.current_thread()
+    seen: list[threading.Thread] = []
+
+    def probe(*_args: object, **_kwargs: object) -> tuple[bytes, bytes | None, Image.Image]:
+        seen.append(threading.current_thread())
+        raise _Stop
+
+    monkeypatch.setattr(device, "_prepare_image", probe)
+    with pytest.raises(_Stop):
+        await device.upload_image(Image.new("RGB", (4, 4)))
+
+    assert seen, "_prepare_image was not called"
+    assert seen[0] is not loop_thread, "_prepare_image ran on the event-loop thread"
+
+
 # ─── GRAYSCALE_4: split planes over either transport ─────────────────────────
 
 
@@ -628,3 +661,123 @@ def test_out_of_range_color_scheme_raises_image_encoding_error() -> None:
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config, max_queue_size=1)
     with pytest.raises(ImageEncodingError, match=r"\(0–8\)"):
         device._extract_capabilities_from_config()
+
+
+# ─── DBS refinement ──────────────────────────────────────────────────────────
+
+
+def _display(width: int = 800, height: int = 480, width_mm: int = 160, height_mm: int = 96) -> DisplayConfig:
+    import dataclasses
+
+    base = _make_config(width=width, height=height).displays[0]
+    return dataclasses.replace(base, active_width_mm=width_mm, active_height_mm=height_mm)
+
+
+def test_display_ppi_from_physical_size() -> None:
+    """800×480 on a 160×96 mm active area is 127 ppi (7.3" Spectra 6 class)."""
+    assert _display().ppi == pytest.approx(127.0, abs=0.1)
+
+
+@pytest.mark.parametrize("width_mm, height_mm", [(0, 96), (160, 0), (0, 0)])
+def test_display_ppi_unknown_without_physical_size(width_mm: int, height_mm: int) -> None:
+    assert _display(width_mm=width_mm, height_mm=height_mm).ppi is None
+
+
+def test_resolve_dbs_true_uses_panel_ppi() -> None:
+    from epaper_dithering import DbsParams
+
+    from opendisplay.device import _resolve_dbs
+
+    params = _resolve_dbs(True, _display())
+    assert isinstance(params, DbsParams)
+    assert params.ppi == pytest.approx(127.0, abs=0.1)
+    # Everything except ppi stays at the library defaults.
+    assert params.viewing_distance_cm == DbsParams().viewing_distance_cm
+    assert params.max_passes == DbsParams().max_passes
+
+
+@pytest.mark.parametrize("display", [None, "no-size"])
+def test_resolve_dbs_true_without_physical_size_uses_library_defaults(display: str | None) -> None:
+    from epaper_dithering import DbsParams
+
+    from opendisplay.device import _resolve_dbs
+
+    cfg = _display(width_mm=0, height_mm=0) if display == "no-size" else None
+    assert _resolve_dbs(True, cfg) == DbsParams()
+
+
+def test_resolve_dbs_passes_explicit_params_through() -> None:
+    """Caller-supplied parameters win, even when the panel's ppi is known."""
+    from epaper_dithering import DbsParams
+
+    from opendisplay.device import _resolve_dbs
+
+    explicit = DbsParams(viewing_distance_cm=150.0, ppi=200.0, max_passes=3)
+    assert _resolve_dbs(explicit, _display()) is explicit
+
+
+@pytest.mark.parametrize("off", [None, False])
+def test_resolve_dbs_off(off: bool | None) -> None:
+    from opendisplay.device import _resolve_dbs
+
+    assert _resolve_dbs(off, _display()) is None
+
+
+def test_prepare_image_forwards_resolved_dbs_to_dither_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    from epaper_dithering import DbsParams
+    from PIL import Image
+
+    import opendisplay.device as device_module
+
+    config = _make_config(width=8, height=8)
+    config = GlobalConfig(**{**config.__dict__, "displays": [_display(width=8, height=8, width_mm=2, height_mm=2)]})
+    captured: dict[str, object] = {}
+    real = device_module.dither_image
+
+    def spy(*args: object, **kwargs: object) -> Image.Image:
+        captured.update(kwargs)
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(device_module, "dither_image", spy)
+    device_module.prepare_image(Image.new("RGB", (8, 8)), config=config, dbs=True)
+
+    dbs = captured["dbs"]
+    assert isinstance(dbs, DbsParams)
+    assert dbs.ppi == pytest.approx(101.6, abs=0.1)  # 8 px over 2 mm
+
+
+def test_prepare_image_dbs_defaults_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from PIL import Image
+
+    import opendisplay.device as device_module
+
+    captured: dict[str, object] = {}
+    real = device_module.dither_image
+
+    def spy(*args: object, **kwargs: object) -> Image.Image:
+        captured.update(kwargs)
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(device_module, "dither_image", spy)
+    device_module.prepare_image(Image.new("RGB", (4, 4)), config=_make_config())
+    assert captured["dbs"] is None
+
+
+@pytest.mark.asyncio
+async def test_upload_image_forwards_dbs(monkeypatch: pytest.MonkeyPatch) -> None:
+    from PIL import Image
+
+    class _Stop(Exception):
+        pass
+
+    device = _make_device()
+    captured: dict[str, object] = {}
+
+    def probe(*_args: object, **kwargs: object) -> tuple[bytes, bytes | None, Image.Image]:
+        captured.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(device, "_prepare_image", probe)
+    with pytest.raises(_Stop):
+        await device.upload_image(Image.new("RGB", (4, 4)), dbs=True)
+    assert captured["dbs"] is True

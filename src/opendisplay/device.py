@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, TypeVar, cast
 
-from epaper_dithering import ColorScheme, DitherMode, dither_image
+from epaper_dithering import ColorScheme, DbsParams, DitherMode, dither_image
 from PIL import Image
 
 from .crypto import (
@@ -55,7 +55,7 @@ from .landing import build_landing_url
 from .models.advertisement import AdvertisementData, parse_advertisement
 from .models.buzzer_activate import BuzzerActivateConfig
 from .models.capabilities import DeviceCapabilities
-from .models.config import GlobalConfig
+from .models.config import DisplayConfig, GlobalConfig
 from .models.enums import BoardManufacturer, FitMode, NfcRecordType, RefreshMode, Rotation
 from .models.firmware import FirmwareVersion
 from .models.led_flash import LedFlashConfig
@@ -274,6 +274,20 @@ def _warn_firmware_upload_limitations(color_scheme: ColorScheme, width: int) -> 
         )
 
 
+def _resolve_dbs(dbs: DbsParams | bool | None, display: DisplayConfig | None) -> DbsParams | None:
+    """Turn the caller's ``dbs`` argument into DBS parameters for ``dither_image``.
+
+    ``True`` fills in the panel's real pixel density from its physical size, so
+    the eye model matches the hardware; explicit ``DbsParams`` are used as-is.
+    """
+    if dbs is None or dbs is False:
+        return None
+    if dbs is True:
+        ppi = display.ppi if display is not None else None
+        return DbsParams(ppi=ppi) if ppi is not None else DbsParams()
+    return dbs
+
+
 def prepare_image(
     image: Image.Image,
     config: GlobalConfig | None = None,
@@ -291,6 +305,7 @@ def prepare_image(
     gamut: float | str = 0.0,
     fit: FitMode = FitMode.CONTAIN,
     rotate: Rotation = Rotation.ROTATE_0,
+    dbs: DbsParams | bool | None = None,
 ) -> tuple[bytes, bytes | None, Image.Image]:
     """Prepare image for display without requiring a BLE connection.
 
@@ -317,6 +332,10 @@ def prepare_image(
         gamut: Gamut compression — "auto", "off", or 0.0–1.0 (default: 0.0)
         fit: How to map the image to display dimensions (default: CONTAIN)
         rotate: Source image rotation enum (0/90/180/270)
+        dbs: Direct Binary Search refinement after dithering — ``None``/``False``
+            = off (default), ``True`` = on with the panel's pixel density taken
+            from its physical size, or explicit ``DbsParams``. Slow: seconds on
+            a full panel.
 
     Returns:
         Tuple of (uncompressed_data, compressed_data or None, processed_image)
@@ -358,6 +377,7 @@ def prepare_image(
     _warn_firmware_upload_limitations(color_scheme, capabilities.width)
 
     palette = get_palette_for_display(panel_ic_type, color_scheme, use_measured_palettes)
+    display_cfg = config.displays[0] if config is not None and config.displays else None
     dithered = dither_image(
         image,
         palette,
@@ -369,6 +389,7 @@ def prepare_image(
         highlights=highlights,
         tone=tone,
         gamut=gamut,
+        dbs=_resolve_dbs(dbs, display_cfg),
     )
 
     # Encode to device format
@@ -1767,6 +1788,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         gamut: float | str = 0.0,
         fit: FitMode = FitMode.CONTAIN,
         rotate: Rotation = Rotation.ROTATE_0,
+        dbs: DbsParams | bool | None = None,
     ) -> tuple[bytes, bytes | None, Image.Image]:
         """Prepare image for upload. Internal wrapper for the module-level prepare_image()."""
         panel_ic_type = self._config.displays[0].panel_ic_type if self._config and self._config.displays else None
@@ -1787,6 +1809,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             gamut=gamut,
             fit=fit,
             rotate=rotate,
+            dbs=dbs,
         )
 
     @_serialized
@@ -1807,6 +1830,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         rotate: Rotation = Rotation.ROTATE_0,
         progress_callback: Callable[[int, int], None] | None = None,
         state: PartialState | None = None,
+        dbs: DbsParams | bool | None = None,
     ) -> Image.Image:
         """Upload image to device display.
 
@@ -1831,6 +1855,9 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             gamut: Gamut compression — "auto", "off", or 0.0–1.0 (default: 0.0)
             fit: How to map the image to display dimensions (default: CONTAIN).
             rotate: Source image rotation enum, applied before fit/encoding.
+            dbs: Direct Binary Search refinement — ``None``/``False`` = off
+                (default), ``True`` = on with the panel's pixel density, or
+                explicit ``DbsParams``. Slow; runs off the event loop.
 
         Raises:
             RuntimeError: If device not interrogated/configured
@@ -1865,8 +1892,11 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # compresses lazily on the full-upload fallback.
         prepare_compress = compress and supports_compression and state is None
 
-        # Prepare image (fit, dither, encode, compress)
-        image_data, compressed_data, processed_image = self._prepare_image(
+        # Prepare image (fit, dither, encode, compress). CPU-bound — seconds with
+        # DBS refinement — so run it in a worker thread instead of blocking the
+        # caller's event loop (e.g. Home Assistant's).
+        image_data, compressed_data, processed_image = await asyncio.to_thread(
+            self._prepare_image,
             image,
             dither_mode,
             prepare_compress,
@@ -1879,6 +1909,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             gamut=gamut,
             fit=fit,
             rotate=rotate,
+            dbs=dbs,
         )
 
         if state is not None:

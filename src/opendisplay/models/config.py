@@ -380,6 +380,17 @@ class DisplayConfig:
         return diagonal_mm / 25.4
 
     @property
+    def ppi(self) -> float | None:
+        """Get pixel density in pixels per inch if the physical size is known.
+
+        Measured along the diagonal, so it does not depend on panel orientation.
+        """
+        diagonal_inches = self.screen_diagonal_inches
+        if diagonal_inches is None:
+            return None
+        return math.hypot(self.pixel_width, self.pixel_height) / diagonal_inches
+
+    @property
     def color_scheme_enum(self) -> ColorScheme | int:
         """Get color scheme as enum, or raw int if unknown."""
         try:
