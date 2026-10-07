@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.18.1](https://github.com/OpenDisplay/py-opendisplay/compare/v7.18.0...v7.18.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **deps:** bump epaper-dithering to 6.1.1 for pyo3 security fix ([3098374](https://github.com/OpenDisplay/py-opendisplay/commit/3098374ddba610047fcce8204e932e121fa774cd))
+
 ## [7.18.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.17.1...v7.18.0) (2026-10-07)
 
 
