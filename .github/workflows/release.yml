@@ -39,11 +39,11 @@ jobs:
       # Regenerate it on the release PR branch so the bump and lockfile land
       # together. Idempotent: re-runs each time release-please updates the PR.
       - if: ${{ steps.release.outputs.prs_created == 'true' }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: release-please--branches--${{ github.ref_name }}
       - if: ${{ steps.release.outputs.prs_created == 'true' }}
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@v10.2.0
       - if: ${{ steps.release.outputs.prs_created == 'true' }}
         name: Sync uv.lock on the release PR
         run: |
@@ -64,17 +64,17 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@v10.2.0
 
       - name: Install dependencies
         run: uv sync
