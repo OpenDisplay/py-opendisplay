@@ -26,6 +26,19 @@
   ACK streams that never make progress (previously loops without a progress
   guarantee, reachable only with buggy/hostile firmware).
 
+## [7.18.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.17.1...v7.18.0) (2026-10-07)
+
+
+### Features
+
+* add DBS refinement option to image preparation and upload ([0eab04d](https://github.com/OpenDisplay/py-opendisplay/commit/0eab04db3dfed79956995feefd01698fdceeafdc))
+
+
+### Bug Fixes
+
+* **config:** keep packets the parser does not recognise on write-back ([5be7c9d](https://github.com/OpenDisplay/py-opendisplay/commit/5be7c9d5db2bdca256d1718b16cf67114706bbca))
+* prepare images off the event loop in upload_image ([83a16db](https://github.com/OpenDisplay/py-opendisplay/commit/83a16db9327698d100bcc8fe9db00f8a87f42b04))
+
 ## [7.17.1](https://github.com/OpenDisplay/py-opendisplay/compare/v7.17.0...v7.17.1) (2026-09-30)
 
 
