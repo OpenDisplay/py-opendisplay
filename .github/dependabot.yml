@@ -1,0 +1,31 @@
+# Weekly dependency updates. Minor/patch updates are grouped into one PR per
+# ecosystem; major updates get individual PRs so breaking changes are
+# reviewed on their own. Security updates are opened regardless of schedule.
+#
+# Commit messages use `chore(deps)` so release-please does not cut a release
+# for them; retitle to `fix(deps)` when an update must ship to users (e.g. a
+# raised lower bound in pyproject.toml).
+version: 2
+
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      uv-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]
