@@ -669,6 +669,10 @@ def serialize_config(config: GlobalConfig) -> bytes:
         packet_data += bytes([i, PACKET_TYPE_NFC_CONFIG])
         packet_data += serialize_nfc_config(nfc)
 
+    # Packets the parser could not read go back verbatim, after everything else for
+    # the same reason as NFC above.
+    packet_data += config.unparsed_tail
+
     # Validate size (max 4096 bytes including wrapper and CRC)
     total_size = len(packet_data) + 2  # +2 for CRC
     if total_size > 4096:

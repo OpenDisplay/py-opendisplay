@@ -1296,6 +1296,11 @@ class GlobalConfig:
     flash_configs: list[FlashConfig] = field(default_factory=list)
     data_extended: DataExtended | None = None
 
+    # Raw bytes from the first packet this library does not recognise to the end of
+    # the blob. Packets carry no length, so parsing stops there; keeping the rest
+    # verbatim lets a read-modify-write put it back instead of deleting it.
+    unparsed_tail: bytes = b""
+
     # Metadata
     version: int = 0
     minor_version: int = 0
