@@ -1865,8 +1865,11 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # compresses lazily on the full-upload fallback.
         prepare_compress = compress and supports_compression and state is None
 
-        # Prepare image (fit, dither, encode, compress)
-        image_data, compressed_data, processed_image = self._prepare_image(
+        # Prepare image (fit, dither, encode, compress). CPU-bound — seconds with
+        # DBS refinement — so run it in a worker thread instead of blocking the
+        # caller's event loop (e.g. Home Assistant's).
+        image_data, compressed_data, processed_image = await asyncio.to_thread(
+            self._prepare_image,
             image,
             dither_mode,
             prepare_compress,

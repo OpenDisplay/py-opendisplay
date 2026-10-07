@@ -569,6 +569,39 @@ def test_prepare_image_defaults_tone_and_gamut_off() -> None:
     assert sig.parameters["gamut"].default == 0.0
 
 
+# ─── upload_image: CPU work stays off the event loop ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_upload_image_prepares_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fit/dither/encode is CPU-bound (seconds with DBS); it must not block the caller's loop.
+
+    Home Assistant awaits upload_image() on its event loop, so a synchronous
+    _prepare_image() would stall every other integration for the whole dither.
+    """
+    import threading
+
+    from PIL import Image
+
+    class _Stop(Exception):
+        pass
+
+    device = _make_device()
+    loop_thread = threading.current_thread()
+    seen: list[threading.Thread] = []
+
+    def probe(*_args: object, **_kwargs: object) -> tuple[bytes, bytes | None, Image.Image]:
+        seen.append(threading.current_thread())
+        raise _Stop
+
+    monkeypatch.setattr(device, "_prepare_image", probe)
+    with pytest.raises(_Stop):
+        await device.upload_image(Image.new("RGB", (4, 4)))
+
+    assert seen, "_prepare_image was not called"
+    assert seen[0] is not loop_thread, "_prepare_image ran on the event-loop thread"
+
+
 # ─── GRAYSCALE_4: split planes over either transport ─────────────────────────
 
 
