@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -721,7 +721,7 @@ wheels = [
 
 [[package]]
 name = "py-opendisplay"
-version = "7.18.0"
+version = "7.18.1"
 source = { editable = "." }
 dependencies = [
     { name = "bleak" },
