@@ -390,7 +390,17 @@ def prepare_image(
         ),
     )
 
-    # Encode to device format
+    return _encode_dithered(dithered, color_scheme, panel_ic_type, compress=compress)
+
+
+def _encode_dithered(
+    dithered: Image.Image,
+    color_scheme: ColorScheme,
+    panel_ic_type: int | None,
+    *,
+    compress: bool,
+) -> tuple[bytes, bytes | None, Image.Image]:
+    """Encode an already dithered palette image into the panel's wire format."""
     if color_scheme in (ColorScheme.BWR, ColorScheme.BWY):
         plane1, plane2 = encode_bitplanes(dithered, color_scheme)
         image_data = plane1 + plane2
@@ -439,6 +449,78 @@ def preview_image(
         capabilities = _capabilities_from_config(config)
     effective = (_capabilities_rotation(capabilities.rotation).value + rotate.value) % 360
     return _rotate_source_image(processed.convert("RGB"), Rotation((360 - effective) % 360))
+
+
+def logical_size(config: GlobalConfig, rotate: Rotation = Rotation.ROTATE_0) -> tuple[int, int]:
+    """Size of an image in the orientation ``prepare_image`` expects as input.
+
+    The panel's configured rotation plus *rotate* is applied to the input before
+    fitting, so a quarter turn swaps width and height relative to the panel.
+    """
+    capabilities = _capabilities_from_config(config)
+    effective = Rotation((_capabilities_rotation(capabilities.rotation).value + rotate.value) % 360)
+    if effective in (Rotation.ROTATE_90, Rotation.ROTATE_270):
+        return capabilities.height, capabilities.width
+    return capabilities.width, capabilities.height
+
+
+def prepare_composite(  # pylint: disable=too-many-locals
+    config: GlobalConfig,
+    *,
+    ink: Image.Image,
+    photo: Image.Image | None = None,
+    photo_position: tuple[int, int] = (0, 0),
+    rotate: Rotation = Rotation.ROTATE_0,
+    use_measured_palettes: bool = True,
+    dither_mode: DitherMode = DitherMode.BURKES,
+    dbs: DbsParams | bool | None = None,
+    compress: bool = True,
+) -> tuple[bytes, bytes | None, Image.Image]:
+    """Prepare a frame where only the photo is dithered and text stays crisp.
+
+    ``prepare_image`` dithers the whole frame, which frays text and fine lines.
+    Here only *photo* is dithered (at its final size, pasted at
+    *photo_position*); everything else is the panel's white, and every set pixel
+    of the 1-bit *ink* mask is the panel's black, exactly.
+
+    Args:
+        config: Device config (panel size, colors, rotation).
+        ink: Mode ``"1"`` mask of :func:`logical_size`; set pixels become black.
+        photo: Image to dither, already scaled to the size it should occupy.
+        photo_position: Top-left corner of the photo, in logical coordinates.
+        rotate: Extra rotation, as for ``prepare_image``.
+        use_measured_palettes: Use the panel's measured palette when available.
+        dither_mode: Dithering algorithm for the photo.
+        dbs: DBS refinement for the photo, as for ``prepare_image``.
+        compress: Also return zlib-compressed data.
+
+    Returns:
+        The same tuple as ``prepare_image``, for ``upload_prepared_image``.
+    """
+    capabilities = _capabilities_from_config(config)
+    size = logical_size(config, rotate)
+    if ink.mode != "1" or ink.size != size:
+        raise ValueError(f"ink must be a mode '1' image of {size}, got mode {ink.mode!r} {ink.size}")
+    display = config.displays[0]
+    color_scheme = capabilities.color_scheme
+    _warn_firmware_upload_limitations(color_scheme, capabilities.width)
+    palette = get_palette_for_display(display.panel_ic_type, color_scheme, use_measured_palettes)
+
+    white_index, black_index = palette.index_of("white"), palette.index_of("black")
+    if white_index is None or black_index is None:
+        raise ValueError("palette has no white or black ink")
+    canvas = Image.new("P", size, white_index)
+    canvas.putpalette([channel for rgb in palette.preview_rgb() for channel in rgb])
+    if photo is not None:
+        dithered = dither_image(
+            photo, palette, DitherOptions(mode=dither_mode, dbs=_resolve_dbs(dbs, display))
+        )
+        canvas.paste(dithered, photo_position)
+    canvas.paste(black_index, (0, 0, *size), mask=ink)
+
+    effective = Rotation((_capabilities_rotation(capabilities.rotation).value + rotate.value) % 360)
+    canvas = _rotate_source_image(canvas, effective)
+    return _encode_dithered(canvas, color_scheme, display.panel_ic_type, compress=compress)
 
 
 _T = TypeVar("_T")

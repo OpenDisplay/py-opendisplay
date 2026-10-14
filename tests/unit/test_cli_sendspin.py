@@ -9,7 +9,7 @@ from PIL import Image
 from test_sendspin import _config, _display
 
 from opendisplay import cli
-from opendisplay.models.enums import FitMode
+from opendisplay.now_playing import NowPlaying
 
 
 def test_default_state_dir_is_per_device() -> None:
@@ -28,13 +28,13 @@ def test_sendspin_subcommand_is_registered(monkeypatch: pytest.MonkeyPatch, caps
     assert "--state-dir" in out
 
 
-async def test_artwork_is_prepared_before_connecting(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Refinement takes seconds; the device must not sit connected (and silent) meanwhile."""
+async def test_now_playing_is_prepared_before_connecting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refinement takes CPU time; the device must not sit connected (and silent) meanwhile."""
     events: list[tuple[str, object]] = []
     prepared = (b"raw", b"zip", Image.new("RGB", (4, 4)))
 
-    def _prepare(image: Image.Image, **kwargs: object) -> object:
-        events.append(("prepare", kwargs))
+    def _prepare(now: NowPlaying, config: object, **kwargs: object) -> object:
+        events.append(("prepare", {"now": now, "config": config, **kwargs}))
         return prepared
 
     class _FakeDevice:
@@ -50,18 +50,19 @@ async def test_artwork_is_prepared_before_connecting(monkeypatch: pytest.MonkeyP
         async def upload_prepared_image(self, data: object) -> None:
             events.append(("upload", data))
 
-    monkeypatch.setattr(cli, "prepare_image", _prepare)
+    monkeypatch.setattr(cli, "prepare_now_playing", _prepare)
     monkeypatch.setattr(cli, "OpenDisplayDevice", _FakeDevice)
     config = _config(_display(800, 480))
-    await cli._upload_artwork({"mac_address": "AA:BB:CC:DD:EE:FF"}, config, Image.new("RGB", (4, 4)))
+    now = NowPlaying(title="Song", artist="Band")
+    await cli._upload_now_playing({"mac_address": "AA:BB:CC:DD:EE:FF"}, config, now)
 
     assert [name for name, _ in events] == ["prepare", "connect", "upload"]
     assert events[0][1] == {
+        "now": now,
         "config": config,
         "use_measured_palettes": True,
-        "compress": False,
-        "fit": FitMode.CONTAIN,
         "dbs": True,
+        "compress": False,
     }
     assert events[1][1] == {"mac_address": "AA:BB:CC:DD:EE:FF", "config": config}
     assert events[2][1] is prepared
