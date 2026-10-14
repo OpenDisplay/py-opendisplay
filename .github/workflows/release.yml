@@ -43,7 +43,7 @@ jobs:
         with:
           ref: release-please--branches--${{ github.ref_name }}
       - if: ${{ steps.release.outputs.prs_created == 'true' }}
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.0
       - if: ${{ steps.release.outputs.prs_created == 'true' }}
         name: Sync uv.lock on the release PR
         run: |
@@ -74,7 +74,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.0
 
       - name: Install dependencies
         run: uv sync
