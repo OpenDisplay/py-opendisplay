@@ -1,8 +1,14 @@
-"""Now-playing layout: album cover on the left, track details on the right.
+"""Now-playing layout: the album cover plus title, artist, album and year.
 
-Pure PIL, no optional dependencies. On a landscape panel the cover fills the
-left square and title, artist and album fill the strip beside it. Panels without
-room for a readable strip (portrait, square, nearly square) show the cover alone.
+Pure PIL, no optional dependencies. The layout follows the panel's shape:
+
+* **Side by side**: when the long side is at least 1.4 x the short side and the
+  strip beside the cover is at least 80 px, the cover fills the short-side
+  square and the text fills the strip: to the right in landscape, below it in
+  portrait.
+* **Caption**: otherwise the cover shrinks (to no less than 60% of the short
+  side) to make room for a title line and, if it fits, an artist line below it.
+* **Cover only**: when even a one-line caption would shrink the cover further.
 
 The text uses Pillow's built-in scalable font unless a .ttf/.otf file is passed.
 That font only covers basic Latin, so accented and non-Latin characters render
@@ -21,10 +27,11 @@ from .device import logical_size, prepare_composite
 from .models.config import GlobalConfig
 from .models.enums import Rotation
 
-# The strip beside the cover must be at least this fraction of the panel height
-# to hold readable text (800x480 gives 320 px = 0.67, 296x128 gives 1.31).
-_MIN_TEXT_COLUMN = 0.4
-_MARGIN = 0.05  # of panel height
+_SIDE_RATIO = 1.4  # long side / short side from which text goes beside the cover
+_MIN_STRIP = 80  # px; narrower strips beside the cover cannot hold readable text
+_MIN_CAPTION_COVER = 0.6  # a caption may shrink the cover to this share of the short side
+_MARGIN = 0.05  # of the short side
+_GAP = 0.04  # between text blocks, of the short side
 _TITLE_SIZE = 0.085
 _ARTIST_SIZE = 0.065
 _ALBUM_SIZE = 0.05
@@ -61,24 +68,47 @@ class NowPlaying:
         return self.cover is None and not (self.title or self.artist or self.album_line)
 
 
-def has_text_column(width: int, height: int) -> bool:
-    """Whether a panel of this size gets track text beside the cover."""
-    return width - height >= _MIN_TEXT_COLUMN * height
+@dataclass(frozen=True, slots=True)
+class _Box:
+    x: int
+    y: int
+    width: int
+    height: int
 
 
 @dataclass(frozen=True, slots=True)
 class _Layout:
+    mode: str  # "side", "caption" or "cover"
     cover_edge: int
     cover_position: tuple[int, int]
-    text: tuple[int, int, int] | None  # left, right, margin of the text column
+    box: _Box | None = None  # where the text goes
+    blocks: tuple[_Block, ...] = ()
 
 
-def _layout(width: int, height: int) -> _Layout:
-    if not has_text_column(width, height):
-        edge = min(width, height)
-        return _Layout(edge, ((width - edge) // 2, (height - edge) // 2), None)
-    margin = round(height * _MARGIN)
-    return _Layout(height, (0, 0), (height + margin, width - margin, margin))
+def _layout(now: NowPlaying, width: int, height: int, font: FontPath | None = None) -> _Layout:
+    """Pick the layout for a panel of *width* x *height* as mounted."""
+    short, long = min(width, height), max(width, height)
+    margin = round(short * _MARGIN)
+    cover_only = _Layout("cover", short, ((width - short) // 2, (height - short) // 2))
+
+    strip = long - short - 2 * margin
+    if long >= _SIDE_RATIO * short and strip >= _MIN_STRIP:
+        if width >= height:
+            box = _Box(short + margin, margin, strip, short - 2 * margin)
+        else:
+            box = _Box(margin, short + margin, short - 2 * margin, strip)
+        blocks = _plan_text(now, base=short, column=box.width, available=box.height, limits=_LINE_LIMITS, font=font)
+        return _Layout("side", short, (0, 0), box, tuple(blocks))
+
+    for limits in _CAPTION_LIMITS:
+        blocks = _plan_text(now, base=short, column=width - 2 * margin, available=None, limits=(limits,), font=font)
+        if not blocks:
+            return cover_only  # nothing to write: keep the cover as large as possible
+        edge = min(width, height - _text_height(blocks, short) - 2 * margin)
+        if edge >= _MIN_CAPTION_COVER * short:
+            box = _Box(margin, edge + margin, width - 2 * margin, height - edge - 2 * margin)
+            return _Layout("caption", edge, ((width - edge) // 2, 0), box, tuple(blocks))
+    return cover_only
 
 
 def render_now_playing(now: NowPlaying, width: int, height: int, *, font: FontPath | None = None) -> Image.Image:
@@ -88,12 +118,10 @@ def render_now_playing(now: NowPlaying, width: int, height: int, *, font: FontPa
     crisp instead of dithering it along with the cover.
     """
     canvas = Image.new("RGB", (width, height), _WHITE)
-    layout = _layout(width, height)
+    layout = _layout(now, width, height, font)
     if now.cover is not None:
         canvas.paste(_square(now.cover, layout.cover_edge), layout.cover_position)
-    if layout.text is not None:
-        left, right, margin = layout.text
-        _draw_text_column(canvas, now, left=left, right=right, margin=margin, fill=_BLACK, font=font)
+    _draw_text(canvas, layout, fill=_BLACK)
     return canvas
 
 
@@ -119,11 +147,9 @@ def prepare_now_playing(  # pylint: disable=too-many-arguments
     show as boxes, so pass a font that covers the music library.
     """
     width, height = logical_size(config, rotate)
-    layout = _layout(width, height)
+    layout = _layout(now, width, height, font)
     ink = Image.new("1", (width, height), 0)
-    if layout.text is not None:
-        left, right, margin = layout.text
-        _draw_text_column(ink, now, left=left, right=right, margin=margin, fill=1, font=font)
+    _draw_text(ink, layout, fill=1)
     return prepare_composite(
         config,
         ink=ink,
@@ -174,54 +200,60 @@ _LINE_LIMITS = (
 )
 
 
-def _plan_text(now: NowPlaying, *, height: int, column: int, font: FontPath | None = None) -> list[_Block]:
-    """Choose font sizes and wrapped lines that fit beside the cover."""
-    available = height - 2 * round(height * _MARGIN)
+# Caption line limits: title and artist, then title alone.
+_CAPTION_LIMITS = ((1, 1, 0), (1, 0, 0))
+
+
+def _plan_text(  # pylint: disable=too-many-arguments
+    now: NowPlaying,
+    *,
+    base: int,
+    column: int,
+    available: int | None,
+    limits: tuple[tuple[int, int, int], ...],
+    font: FontPath | None = None,
+) -> list[_Block]:
+    """Choose font sizes and wrapped lines, trying *limits* in order until they fit.
+
+    Font sizes scale with *base* (the panel's short side). With *available* None
+    the first limits are used as they are.
+    """
     texts = (now.title, now.artist, now.album_line)
     blocks: list[_Block] = []
-    for limits in _LINE_LIMITS:
+    for line_limits in limits:
         blocks = []
-        for text, (relative, minimum), max_lines in zip(texts, _SIZES, limits, strict=True):
+        for text, (relative, minimum), max_lines in zip(texts, _SIZES, line_limits, strict=True):
             if not text or not max_lines:
                 continue
-            size = max(minimum, round(height * relative))
+            size = max(minimum, round(base * relative))
             face = _font(size, font)
             blocks.append(_Block(size, face, tuple(_wrap(text, face, column, max_lines))))
-        if _text_height(blocks, height) <= available:
+        if available is None or _text_height(blocks, base) <= available:
             break
     return blocks
 
 
-def _text_height(blocks: list[_Block], height: int) -> int:
+def _text_height(blocks: list[_Block] | tuple[_Block, ...], base: int) -> int:
     """Total height of the stacked blocks including the gaps between them."""
-    gap = round(height * 0.04)
+    gap = round(base * _GAP)
     return sum(len(b.lines) * _line_height(b.font) for b in blocks) + gap * max(0, len(blocks) - 1)
 
 
-def _draw_text_column(  # pylint: disable=too-many-arguments
-    canvas: Image.Image,
-    now: NowPlaying,
-    *,
-    left: int,
-    right: int,
-    margin: int,
-    fill: int | tuple[int, int, int],
-    font: FontPath | None = None,
-) -> None:
-    height = canvas.height
-    blocks = _plan_text(now, height=height, column=right - left, font=font)
-    if not blocks:
+def _draw_text(canvas: Image.Image, layout: _Layout, *, fill: int | tuple[int, int, int]) -> None:
+    """Draw the layout's text blocks, centred vertically in its text box."""
+    if layout.box is None or not layout.blocks:
         return
-    gap = round(height * 0.04)
-    y = max(margin, (height - _text_height(blocks, height)) // 2)
+    base = min(canvas.size)
+    box = layout.box
+    y = box.y + max(0, (box.height - _text_height(layout.blocks, base)) // 2)
     draw = ImageDraw.Draw(canvas)
     if canvas.mode == "1":
         draw.fontmode = "1"  # no anti-aliasing: every pixel is ink or paper
-    for block in blocks:
+    for block in layout.blocks:
         line_height = _line_height(block.font)
         for i, line in enumerate(block.lines):
-            draw.text((left, y + i * line_height), line, font=block.font, fill=fill)
-        y += len(block.lines) * line_height + gap
+            draw.text((box.x, y + i * line_height), line, font=block.font, fill=fill)
+        y += len(block.lines) * line_height + round(base * _GAP)
 
 
 def _font(size: int, path: FontPath | None) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
