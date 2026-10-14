@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PIL import Image
+import pytest
+from PIL import Image, ImageFont
 
 from opendisplay.now_playing import NowPlaying, _plan_text, _text_height, has_text_column, render_now_playing
 
@@ -91,3 +92,25 @@ def test_large_panel_keeps_all_three_blocks() -> None:
     blocks = _plan_text(now, height=480, column=800 - 480 - 48)
     assert [len(b.lines) for b in blocks] == [1, 1, 1]
     assert blocks[0].size > blocks[1].size > blocks[2].size
+
+
+def test_custom_font_is_used_for_every_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    loaded: list[tuple[str, int]] = []
+    original = ImageFont.truetype
+
+    def _truetype(font: object, size: float = 10, **kwargs: object) -> ImageFont.FreeTypeFont:
+        if isinstance(font, str):  # our path; Pillow's own default font comes in as bytes
+            loaded.append((font, int(size)))
+            return ImageFont.load_default(size=size)  # type: ignore[return-value]
+        return original(font, size, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ImageFont, "truetype", _truetype)
+    now = NowPlaying(title="Beyoncé", artist="Sigur Rós", album="Björk")
+    render_now_playing(now, 800, 480, font="/fonts/NotoSans-Regular.ttf")
+    assert {path for path, _ in loaded} == {"/fonts/NotoSans-Regular.ttf"}
+    assert len({size for _, size in loaded}) == 3  # title, artist and album sizes
+
+
+def test_missing_font_file_raises() -> None:
+    with pytest.raises(OSError):
+        render_now_playing(NowPlaying(title="Song"), 800, 480, font="/nonexistent/font.ttf")

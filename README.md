@@ -91,6 +91,8 @@ The command finds Music Assistant over mDNS (or pass `--url ws://HOST:8927/sends
 
 Only the cover is dithered, using the panel's measured palette and DBS refinement; the text is drawn in the panel's own black so it stays sharp. Panels without room beside the cover (portrait or nearly square) show the cover alone.
 
+The text uses Pillow's built-in font by default, which only covers basic Latin: accented and non-Latin characters (é, ö, Кино, 東京) show as boxes. Pass a TTF/OTF font that covers your music library with `--font` (or `font=` to `prepare_now_playing`), e.g. `--font ~/fonts/NotoSans-Regular.ttf` with [Noto Sans](https://fonts.google.com/noto/specimen/Noto+Sans) downloaded there.
+
 From Python, `SendspinNowPlayingBridge` hands each update to a callback, and `prepare_now_playing` turns it into data for `upload_prepared_image`:
 
 ```python

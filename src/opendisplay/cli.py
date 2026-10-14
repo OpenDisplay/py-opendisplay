@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
-import contextlib
-import functools
 import json
 import logging
 import os
-import sys
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, NoReturn, TypeVar
+from typing import Any
 
 from epaper_dithering import DitherMode
 from PIL import Image, UnidentifiedImageError
@@ -25,11 +21,20 @@ from rich.table import Table
 from rich.tree import Tree
 
 from .battery import voltage_to_percent
+from .cli_common import (
+    _add_device_options,
+    _console,
+    _device_kwargs,
+    _error,
+    _handle_ble_error,
+    _parse_hex_key,
+    _run,
+    _spinner,
+)
+from .cli_sendspin import add_sendspin_parser
 from .device import OpenDisplayDevice
 from .discovery import discover_devices_with_adv
 from .exceptions import (
-    AuthenticationFailedError,
-    AuthenticationRequiredError,
     BLEConnectionError,
     BLETimeoutError,
     OpenDisplayError,
@@ -55,15 +60,11 @@ from .models.enums import (
     WifiEncryption,
 )
 from .models.firmware import FirmwareVersion
-from .now_playing import NowPlaying, prepare_now_playing
 from .partial import PartialState
 from .sensors import SensorReading
 
 _LOGGER = logging.getLogger(__name__)
 
-_T = TypeVar("_T")
-
-_console = Console(stderr=True)  # status, spinners, tables, errors → stderr
 _stdout = Console()  # structured data (--json output) → stdout
 
 _DITHER_CHOICES: dict[str, DitherMode] = {m.name.lower().replace("_", "-"): m for m in DitherMode}
@@ -77,43 +78,6 @@ _ROTATE_CHOICES: dict[str, Rotation] = {
 }
 
 
-def _run(coro: Coroutine[Any, Any, _T]) -> _T:
-    """Run an async coroutine synchronously."""
-    return asyncio.run(coro)
-
-
-def _error(msg: str) -> NoReturn:
-    """Print a colored error to stderr and exit with code 1."""
-    _console.print(f"[bold red]Error:[/bold red] {msg}")
-    sys.exit(1)
-
-
-def _handle_ble_error(exc: OpenDisplayError) -> NoReturn:
-    """Translate a device exception into a user-facing error message and exit."""
-    if isinstance(exc, AuthenticationRequiredError):
-        _error("Device requires an encryption key. Pass --key HEX.")
-    if isinstance(exc, AuthenticationFailedError):
-        _error("Authentication failed. Check that --key is correct.")
-    if isinstance(exc, BLETimeoutError):
-        _error(f"BLE timeout: {exc}")
-    if isinstance(exc, BLEConnectionError):
-        _error(f"BLE connection failed: {exc}")
-    _error(f"Device error: {exc}")
-
-
-def _parse_hex_key(hex_str: str | None) -> bytes | None:
-    """Convert hex string to 16-byte AES key, or None if not provided."""
-    if hex_str is None:
-        return None
-    cleaned = hex_str.strip().replace(" ", "").replace(":", "")
-    if len(cleaned) != 32:
-        _error(f"--key must be exactly 32 hex characters (16 bytes), got {len(cleaned)}")
-    try:
-        return bytes.fromhex(cleaned)
-    except ValueError as exc:
-        _error(f"--key contains invalid hex characters: {exc}")
-
-
 def _parse_compression_value(flag: str, value: str) -> float | str:
     """Parse a compression knob value: 'auto'/'off' or a float in [0.0, 1.0]."""
     if value in ("auto", "off"):
@@ -125,62 +89,6 @@ def _parse_compression_value(flag: str, value: str) -> float | str:
     if not 0.0 <= f <= 1.0:
         _error(f"{flag} must be between 0.0 and 1.0, got {f}")
     return f
-
-
-def _device_kwargs(
-    device: str | None,
-    key: bytes | None,
-    timeout: float,
-    host: str | None = None,
-    port: int | None = None,
-    tls: bool = False,
-) -> dict[str, Any]:
-    """Build OpenDisplayDevice constructor kwargs from CLI args.
-
-    With ``--host`` the device is addressed over TCP/LAN (WiFi). Otherwise a
-    ``--device`` MAC address (contains ':') / macOS UUID (36-char, 4 dashes) or a
-    human-readable device name is used over BLE.
-    """
-    kwargs: dict[str, Any] = {"timeout": timeout, "encryption_key": key}
-    if host is not None:
-        kwargs["host"] = host
-        if port is not None:
-            kwargs["port"] = port
-        kwargs["tls"] = tls
-        return kwargs
-    if not device:
-        _error("Provide --device (BLE) or --host (WiFi/LAN)")
-    if ":" in device or (len(device) == 36 and device.count("-") == 4):
-        kwargs["mac_address"] = device
-    else:
-        kwargs["device_name"] = device
-    return kwargs
-
-
-def _add_device_options(parser: argparse.ArgumentParser) -> None:
-    """Add shared device-addressing (--device / --host) + --key/--timeout options."""
-    parser.add_argument("--device", metavar="ADDR", help="Device MAC address or name (BLE)")
-    parser.add_argument("--host", default=None, metavar="IP", help="Device IP/hostname (WiFi/LAN TCP transport)")
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        metavar="PORT",
-        help="TCP port for --host (default: 2446 plaintext / 2447 TLS)",
-    )
-    parser.add_argument(
-        "--tls",
-        action="store_true",
-        help="Use TLS-PSK for the --host connection",
-    )
-    parser.add_argument("--key", default=None, metavar="HEX", help="Encryption key as 32 hex characters")
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=10.0,
-        metavar="SECS",
-        help="Connection timeout in seconds (default: 10.0)",
-    )
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -206,11 +114,6 @@ def _color_scheme_label(name: str) -> str:
         style = _COLOR_SCHEME_STYLES.get(ch)
         parts.append(f"[{style}]{ch}[/{style}]" if style else ch)
     return "".join(parts)
-
-
-def _spinner() -> Progress:
-    """Return a transient spinner Progress (disappears when its context exits)."""
-    return Progress(SpinnerColumn(), TextColumn("{task.description}"), transient=True, console=_console)
 
 
 # ── scan ──────────────────────────────────────────────────────────────────────
@@ -1348,116 +1251,6 @@ async def _write_config(device_kwargs: dict[str, Any], input_path: str) -> None:
     _console.print("Config written [green]successfully[/green].")
 
 
-# ── sendspin ──────────────────────────────────────────────────────────────────
-
-
-def _sendspin_state_dir(device: str) -> Path:
-    """Default directory for a device's Sendspin identity and pairing state."""
-    return Path.home() / ".config" / "opendisplay" / "sendspin" / device.replace(":", "").lower()
-
-
-def _add_sendspin_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    p = subparsers.add_parser(
-        "sendspin",
-        help="Show what Music Assistant is playing via Sendspin (needs py-opendisplay[sendspin])",
-    )
-    _add_device_options(p)
-    p.add_argument(
-        "--url",
-        default=None,
-        metavar="WS_URL",
-        help="Sendspin server, e.g. ws://10.0.0.5:8927/sendspin (default: discover via mDNS)",
-    )
-    p.add_argument(
-        "--state-dir",
-        default=None,
-        metavar="DIR",
-        help="Where the Sendspin identity and pairing state live (default: ~/.config/opendisplay/sendspin/<device>)",
-    )
-    p.add_argument("--name", default=None, help="Player name shown in Music Assistant (default: OpenDisplay <device>)")
-    p.set_defaults(func=_cmd_sendspin)
-
-
-def _cmd_sendspin(args: argparse.Namespace) -> None:
-    key = _parse_hex_key(args.key)
-    device_kwargs = _device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls)
-    label = args.device or args.host
-    state_dir = Path(args.state_dir) if args.state_dir else _sendspin_state_dir(label)
-    with contextlib.suppress(KeyboardInterrupt):
-        _run(_sendspin(device_kwargs, args.url, state_dir, args.name or f"OpenDisplay {label}"))
-
-
-async def _upload_now_playing(device_kwargs: dict[str, Any], config: GlobalConfig, now: NowPlaying) -> None:
-    """Lay out *now* for the panel and upload it with the best quality it offers.
-
-    Only the cover is dithered, with the panel's measured palette when one exists
-    and DBS refinement; the text stays crisp. The frame is prepared before
-    connecting, so the device is never held connected (and silent, since it stops
-    advertising) while the CPU works.
-    """
-    display = config.displays[0]
-    prepared = await asyncio.to_thread(
-        functools.partial(
-            prepare_now_playing,
-            now,
-            config,
-            use_measured_palettes=True,
-            dbs=True,
-            compress=display.supports_zip or display.supports_streaming_decompression,
-        )
-    )
-    async with OpenDisplayDevice(**device_kwargs, config=config) as device:
-        await device.upload_prepared_image(prepared)
-
-
-async def _sendspin(device_kwargs: dict[str, Any], url: str | None, state_dir: Path, name: str) -> None:
-    try:
-        from aiosendspin.noise.trust_store import FileClientPairingStore
-
-        from .sendspin import SendspinNowPlayingBridge, load_or_create_identity
-    except ImportError as exc:
-        _error(str(exc))
-
-    try:
-        with _spinner() as progress:
-            progress.add_task("Reading device config...", total=None)
-            async with OpenDisplayDevice(**device_kwargs) as device:
-                config = device.config
-    except OpenDisplayError as exc:
-        _handle_ble_error(exc)
-    if config is None or not config.displays:
-        _error("Device reported no display configuration.")
-
-    identity = await asyncio.to_thread(load_or_create_identity, state_dir / "identity.key")
-    store = await FileClientPairingStore.open(state_dir / "pairing.json")
-
-    async def on_now_playing(now: NowPlaying) -> None:
-        label = " - ".join(p for p in (now.artist, now.title) if p) or "new artwork"
-        _console.print(f"Now playing: {label}. Uploading...")
-        try:
-            await _upload_now_playing(device_kwargs, config, now)
-        except OpenDisplayError as exc:
-            _console.print(f"[yellow]Upload failed:[/yellow] {exc}")
-            raise
-        _console.print("[green]Shown on the display.[/green]")
-
-    bridge = SendspinNowPlayingBridge(
-        config,
-        name=name,
-        identity=identity,
-        pairing_store=store,
-        on_now_playing=on_now_playing,
-        url=url,
-    )
-    await bridge.start()
-    _console.print(f"Waiting for music as [bold]{name}[/bold]. Group it with a speaker in Music Assistant.")
-    _console.print("Press Ctrl-C to stop.")
-    try:
-        await asyncio.Event().wait()
-    finally:
-        await bridge.stop()
-
-
 # ── entry point ───────────────────────────────────────────────────────────────
 
 
@@ -1477,7 +1270,7 @@ def main() -> None:
     _add_sleep_parser(subparsers)
     _add_export_config_parser(subparsers)
     _add_write_config_parser(subparsers)
-    _add_sendspin_parser(subparsers)
+    add_sendspin_parser(subparsers)
 
     args = parser.parse_args()
     _setup_logging(args.verbose)
