@@ -1,13 +1,17 @@
 """Now-playing layout: album cover on the left, track details on the right.
 
-Pure PIL with Pillow's built-in scalable font, so it needs no font files and no
-optional dependencies. On a landscape panel the cover fills the left square and
-title, artist and album fill the strip beside it. Panels without room for a
-readable strip (portrait, square, nearly square) show the cover alone.
+Pure PIL, no optional dependencies. On a landscape panel the cover fills the
+left square and title, artist and album fill the strip beside it. Panels without
+room for a readable strip (portrait, square, nearly square) show the cover alone.
+
+The text uses Pillow's built-in scalable font unless a .ttf/.otf file is passed.
+That font only covers basic Latin, so accented and non-Latin characters render
+as boxes with it.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from epaper_dithering import DbsParams, DitherMode
@@ -27,6 +31,9 @@ _ALBUM_SIZE = 0.05
 _TITLE_LINES = 3
 _ARTIST_LINES = 2
 _ALBUM_LINES = 2
+FontPath = str | os.PathLike[str]
+"""A .ttf or .otf file for the track text."""
+
 _ELLIPSIS = "…"
 _WHITE = (255, 255, 255)
 _BLACK = (0, 0, 0)
@@ -74,7 +81,7 @@ def _layout(width: int, height: int) -> _Layout:
     return _Layout(height, (0, 0), (height + margin, width - margin, margin))
 
 
-def render_now_playing(now: NowPlaying, width: int, height: int) -> Image.Image:
+def render_now_playing(now: NowPlaying, width: int, height: int, *, font: FontPath | None = None) -> Image.Image:
     """Lay out *now* as an RGB image of the panel's size, e.g. for a preview.
 
     For the panel itself use :func:`prepare_now_playing`, which keeps the text
@@ -86,7 +93,7 @@ def render_now_playing(now: NowPlaying, width: int, height: int) -> Image.Image:
         canvas.paste(_square(now.cover, layout.cover_edge), layout.cover_position)
     if layout.text is not None:
         left, right, margin = layout.text
-        _draw_text_column(canvas, now, left=left, right=right, margin=margin, fill=_BLACK)
+        _draw_text_column(canvas, now, left=left, right=right, margin=margin, fill=_BLACK, font=font)
     return canvas
 
 
@@ -99,19 +106,24 @@ def prepare_now_playing(  # pylint: disable=too-many-arguments
     dither_mode: DitherMode = DitherMode.BURKES,
     dbs: DbsParams | bool | None = True,
     compress: bool = True,
+    font: FontPath | None = None,
 ) -> tuple[bytes, bytes | None, Image.Image]:
     """Prepare *now* for upload with ``upload_prepared_image``.
 
     Only the cover is dithered (with refinement by default); the text is drawn
     without anti-aliasing in the panel's own black, so it stays sharp. CPU-bound:
     run it off the event loop.
+
+    *font* is a .ttf or .otf file for the text. Without it Pillow's built-in font
+    is used, which only covers basic Latin: accented and non-Latin characters
+    show as boxes, so pass a font that covers the music library.
     """
     width, height = logical_size(config, rotate)
     layout = _layout(width, height)
     ink = Image.new("1", (width, height), 0)
     if layout.text is not None:
         left, right, margin = layout.text
-        _draw_text_column(ink, now, left=left, right=right, margin=margin, fill=1)
+        _draw_text_column(ink, now, left=left, right=right, margin=margin, fill=1, font=font)
     return prepare_composite(
         config,
         ink=ink,
@@ -162,7 +174,7 @@ _LINE_LIMITS = (
 )
 
 
-def _plan_text(now: NowPlaying, *, height: int, column: int) -> list[_Block]:
+def _plan_text(now: NowPlaying, *, height: int, column: int, font: FontPath | None = None) -> list[_Block]:
     """Choose font sizes and wrapped lines that fit beside the cover."""
     available = height - 2 * round(height * _MARGIN)
     texts = (now.title, now.artist, now.album_line)
@@ -173,8 +185,8 @@ def _plan_text(now: NowPlaying, *, height: int, column: int) -> list[_Block]:
             if not text or not max_lines:
                 continue
             size = max(minimum, round(height * relative))
-            font = _font(size)
-            blocks.append(_Block(size, font, tuple(_wrap(text, font, column, max_lines))))
+            face = _font(size, font)
+            blocks.append(_Block(size, face, tuple(_wrap(text, face, column, max_lines))))
         if _text_height(blocks, height) <= available:
             break
     return blocks
@@ -187,10 +199,17 @@ def _text_height(blocks: list[_Block], height: int) -> int:
 
 
 def _draw_text_column(  # pylint: disable=too-many-arguments
-    canvas: Image.Image, now: NowPlaying, *, left: int, right: int, margin: int, fill: int | tuple[int, int, int]
+    canvas: Image.Image,
+    now: NowPlaying,
+    *,
+    left: int,
+    right: int,
+    margin: int,
+    fill: int | tuple[int, int, int],
+    font: FontPath | None = None,
 ) -> None:
     height = canvas.height
-    blocks = _plan_text(now, height=height, column=right - left)
+    blocks = _plan_text(now, height=height, column=right - left, font=font)
     if not blocks:
         return
     gap = round(height * 0.04)
@@ -205,7 +224,9 @@ def _draw_text_column(  # pylint: disable=too-many-arguments
         y += len(block.lines) * line_height + gap
 
 
-def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+def _font(size: int, path: FontPath | None) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    if path is not None:
+        return ImageFont.truetype(str(path), size)
     return ImageFont.load_default(size=size)
 
 

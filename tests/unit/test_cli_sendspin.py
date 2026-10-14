@@ -8,12 +8,12 @@ import pytest
 from PIL import Image
 from test_sendspin import _config, _display
 
-from opendisplay import cli
+from opendisplay import cli, cli_sendspin
 from opendisplay.now_playing import NowPlaying
 
 
 def test_default_state_dir_is_per_device() -> None:
-    assert cli._sendspin_state_dir("AA:BB:CC:DD:EE:FF") == (
+    assert cli_sendspin._sendspin_state_dir("AA:BB:CC:DD:EE:FF") == (
         Path.home() / ".config" / "opendisplay" / "sendspin" / "aabbccddeeff"
     )
 
@@ -26,6 +26,7 @@ def test_sendspin_subcommand_is_registered(monkeypatch: pytest.MonkeyPatch, caps
     out = capsys.readouterr().out
     assert "--url" in out
     assert "--state-dir" in out
+    assert "--font" in out
 
 
 async def test_now_playing_is_prepared_before_connecting(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,11 +51,11 @@ async def test_now_playing_is_prepared_before_connecting(monkeypatch: pytest.Mon
         async def upload_prepared_image(self, data: object) -> None:
             events.append(("upload", data))
 
-    monkeypatch.setattr(cli, "prepare_now_playing", _prepare)
-    monkeypatch.setattr(cli, "OpenDisplayDevice", _FakeDevice)
+    monkeypatch.setattr(cli_sendspin, "prepare_now_playing", _prepare)
+    monkeypatch.setattr(cli_sendspin, "OpenDisplayDevice", _FakeDevice)
     config = _config(_display(800, 480))
     now = NowPlaying(title="Song", artist="Band")
-    await cli._upload_now_playing({"mac_address": "AA:BB:CC:DD:EE:FF"}, config, now)
+    await cli_sendspin._upload_now_playing({"mac_address": "AA:BB:CC:DD:EE:FF"}, config, now)
 
     assert [name for name, _ in events] == ["prepare", "connect", "upload"]
     assert events[0][1] == {
@@ -63,6 +64,7 @@ async def test_now_playing_is_prepared_before_connecting(monkeypatch: pytest.Mon
         "use_measured_palettes": True,
         "dbs": True,
         "compress": False,
+        "font": None,
     }
     assert events[1][1] == {"mac_address": "AA:BB:CC:DD:EE:FF", "config": config}
     assert events[2][1] is prepared
