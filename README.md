@@ -72,9 +72,56 @@ opendisplay reboot --device AA:BB:CC:DD:EE:FF
 # Export / write device configuration
 opendisplay export-config --device AA:BB:CC:DD:EE:FF config.json
 opendisplay write-config --device AA:BB:CC:DD:EE:FF config.json
+
+# Show what Music Assistant is playing (needs the sendspin extra, see below)
+opendisplay sendspin --device AA:BB:CC:DD:EE:FF
 ```
 
 Encrypted devices require `--key HEX` (32 hex characters). Pass `-v` / `--verbose` for debug logging.
+
+## Music Assistant (Sendspin)
+
+Show what [Music Assistant](https://www.music-assistant.io/) is playing: the album cover, with title, artist, album and year beside it on landscape panels. The display joins Music Assistant as a [Sendspin](https://www.sendspin-audio.com/) display, so you group it with a speaker there and it follows that speaker.
+
+```bash
+uvx --from "py-opendisplay[cli,sendspin]" opendisplay sendspin --device AA:BB:CC:DD:EE:FF
+```
+
+The command finds Music Assistant over mDNS (or pass `--url ws://HOST:8927/sendspin`) and shows up there as "OpenDisplay <device>" (change it with `--name`). In Music Assistant, group it with a speaker that is playing. Each track change is uploaded once its cover and details have arrived; the last frame stays on the panel when playback stops. The client identity is kept in `~/.config/opendisplay/sendspin/<device>/` (override with `--state-dir`) so the display stays the same player in Music Assistant.
+
+Only the cover is dithered, using the panel's measured palette and DBS refinement; the text is drawn in the panel's own black so it stays sharp. Panels without room beside the cover (portrait or nearly square) show the cover alone.
+
+From Python, `SendspinNowPlayingBridge` hands each update to a callback, and `prepare_now_playing` turns it into data for `upload_prepared_image`:
+
+```python
+import asyncio
+from pathlib import Path
+
+from aiosendspin.noise.trust_store import FileClientPairingStore
+
+from opendisplay import OpenDisplayDevice
+from opendisplay.now_playing import NowPlaying, prepare_now_playing
+from opendisplay.sendspin import SendspinNowPlayingBridge, load_or_create_identity
+
+async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF") as device:
+    config = device.config
+
+async def show(now: NowPlaying) -> None:
+    prepared = await asyncio.to_thread(prepare_now_playing, now, config)
+    async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config) as device:
+        await device.upload_prepared_image(prepared)
+
+bridge = SendspinNowPlayingBridge(
+    config,
+    name="Kitchen display",
+    identity=load_or_create_identity(Path("state/identity.key")),
+    pairing_store=await FileClientPairingStore.open("state/pairing.json"),
+    on_now_playing=show,
+)
+await bridge.start()
+```
+
+The `sendspin` extra follows the Sendspin version Music Assistant ships (currently `aiosendspin` 9.x, which is not wire compatible with 10.x).
 
 ## Image Fitting
 
