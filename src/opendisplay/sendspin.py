@@ -1,10 +1,12 @@
-"""Show Music Assistant album art on an OpenDisplay panel via Sendspin.
+"""Show what Music Assistant is playing on an OpenDisplay panel via Sendspin.
 
-:class:`SendspinArtworkBridge` runs an artwork-only Sendspin client for one
-display. It finds the Sendspin server (Music Assistant) over mDNS or uses an
-explicit URL, asks for square album art sized to the panel's shorter side, and
-hands each new cover to an async callback as a PIL image. What happens with the
-image (uploading, queueing for a sleeping device) is up to the caller.
+:class:`SendspinNowPlayingBridge` runs a Sendspin display client (artwork and
+metadata roles) for one panel. It finds the Sendspin server (Music Assistant)
+over mDNS or uses an explicit URL, asks for square album art sized to the
+panel's shorter side, merges it with title, artist, album and year, and hands
+the result to an async callback as a :class:`~opendisplay.now_playing.NowPlaying`.
+:func:`~opendisplay.now_playing.render_now_playing` lays it out for the panel;
+what happens next (uploading, queueing for a sleeping device) is up to the caller.
 
 Requires the optional ``sendspin`` extra (``pip install py-opendisplay[sendspin]``).
 The extra pins the aiosendspin major that Music Assistant ships, because Sendspin
@@ -27,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from PIL import Image
 
 from .models.config import GlobalConfig
+from .now_playing import NowPlaying
 
 _MISSING_SENDSPIN_MSG = (
     "Sendspin support requires the 'aiosendspin' package. Install it with: pip install py-opendisplay[sendspin]"
@@ -36,7 +39,7 @@ try:
     from aiosendspin.client import SendspinClient
     from aiosendspin.models.artwork import ArtworkChannel, ClientHelloArtworkSupport
     from aiosendspin.models.core import DeviceInfo
-    from aiosendspin.models.types import ArtworkSource, PictureFormat, Roles
+    from aiosendspin.models.types import ArtworkSource, PictureFormat, Roles, UndefinedField
     from aiosendspin.noise.keys import Identity
     from zeroconf import ServiceStateChange
     from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
@@ -56,8 +59,13 @@ _RESOLVE_TIMEOUT_MS = 3000
 BACKOFF_MIN_S = 1.0
 BACKOFF_MAX_S = 60.0
 
-ArtworkHandler = Callable[[Image.Image | None], Awaitable[None]]
-"""Called with each new cover, or ``None`` when the server clears the artwork."""
+NowPlayingHandler = Callable[[NowPlaying], Awaitable[None]]
+"""Called with what is playing once the cover and track details have settled."""
+
+SETTLE_S = 2.0
+"""How long the cover and track details must stay unchanged before an update."""
+
+_TRACKED_FIELDS = ("title", "artist", "album", "year")
 
 
 class SendspinClientLike(Protocol):
@@ -68,6 +76,9 @@ class SendspinClientLike(Protocol):
 
     def add_disconnect_listener(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Register a callback for when the connection closes."""
+
+    def add_metadata_listener(self, callback: Callable[[Any], None]) -> Callable[[], None]:
+        """Register a callback for server/state messages carrying metadata."""
 
     def add_group_update_listener(self, callback: Callable[[Any], None]) -> Callable[[], None]:
         """Register a callback for group/update messages."""
@@ -171,74 +182,143 @@ def _decode(data: bytes) -> Image.Image:
     return image
 
 
-class _ArtworkSink:
-    """Turns raw artwork frames into handler calls.
+class _NowPlayingTracker:  # pylint: disable=too-many-instance-attributes
+    """Merges artwork frames and metadata updates into :class:`NowPlaying` calls.
 
-    Frames are handled one at a time. A frame that arrives while the handler is
-    busy replaces any frame still waiting, so a slow upload never builds a
-    backlog. An image identical to the last one handled is skipped (Music
-    Assistant resends the current cover whenever the display rejoins a group),
-    and a clear does not reset that check. The hash is only recorded once the
-    handler succeeds, so a failed upload is retried when the cover comes again.
+    Music Assistant sends the cover and the track details separately, and
+    progress updates keep coming during a track. Every change to the cover or
+    to title, artist, album or year restarts a short settle timer; only when it
+    expires is one update handed on, so a track change costs a single refresh.
+
+    Updates are handled one at a time and the newest waiting one replaces any
+    older one, so a slow upload never builds a backlog. An update identical to
+    the one last handled is skipped (Music Assistant resends the current state
+    whenever the display rejoins a group). Nothing is sent when everything is
+    cleared, so the last cover stays up. The key of an update is only recorded
+    once the handler succeeds, so a failed upload is retried on the next change.
     """
 
-    def __init__(self, handler: ArtworkHandler, last_hash: str | None = None) -> None:
+    def __init__(self, handler: NowPlayingHandler, *, last_key: str | None = None, settle: float = SETTLE_S) -> None:
         self._handler = handler
-        self.last_hash = last_hash
-        self._pending: bytes | None = None
+        self.last_key = last_key
+        self._settle = settle
+        self._cover: Image.Image | None = None
+        self._cover_hash: str | None = None
+        self._text: dict[str, str | int | None] = dict.fromkeys(_TRACKED_FIELDS)
+        self._artwork_seq = 0
+        self._decodes: set[asyncio.Task[None]] = set()
+        self._timer: asyncio.TimerHandle | None = None
+        self._pending: tuple[str, NowPlaying] | None = None
         self._task: asyncio.Task[None] | None = None
 
-    def feed(self, data: bytes) -> None:
-        """Queue a frame (empty bytes means clear). Must run on the event loop."""
-        self._pending = data
-        if self._task is None or self._task.done():
-            self._task = asyncio.get_running_loop().create_task(self._drain())
-
-    async def join(self) -> None:
-        """Wait until every queued frame has been handled."""
-        while self._task is not None and not self._task.done():
-            await asyncio.shield(self._task)
-
-    async def close(self) -> None:
-        """Drop any waiting frame and stop handling."""
-        self._pending = None
-        task, self._task = self._task, None
-        if task is not None:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-
-    async def _drain(self) -> None:
-        while self._pending is not None:
-            data, self._pending = self._pending, None
-            await self._deliver(data)
-
-    async def _deliver(self, data: bytes) -> None:
+    def artwork(self, data: bytes) -> None:
+        """Take an artwork frame (empty bytes means clear). Must run on the event loop."""
+        self._artwork_seq += 1
         if not data:
-            try:
-                await self._handler(None)
-            except Exception:
-                _LOGGER.exception("Artwork handler failed on clear")
+            self._set_cover(None, None)
             return
         digest = hashlib.sha256(data).hexdigest()
-        if digest == self.last_hash:
-            _LOGGER.debug("Skipping artwork identical to the last one")
+        if digest == self._cover_hash:
             return
+        task = asyncio.get_running_loop().create_task(self._decode(self._artwork_seq, data, digest))
+        self._decodes.add(task)
+        task.add_done_callback(self._decodes.discard)
+
+    def metadata(self, metadata: object) -> None:
+        """Merge a server/state metadata object; ``None`` clears all fields."""
+        if metadata is None:
+            text: dict[str, str | int | None] = dict.fromkeys(_TRACKED_FIELDS)
+        else:
+            text = dict(self._text)
+            for name in _TRACKED_FIELDS:
+                value = getattr(metadata, name)
+                if not isinstance(value, UndefinedField):  # undefined means unchanged
+                    text[name] = value
+        if text != self._text:
+            self._text = text
+            self._changed()
+
+    async def join(self) -> None:
+        """Wait until nothing is decoding, settling or being handled."""
+        while self._decodes or self._timer is not None or (self._task is not None and not self._task.done()):
+            await asyncio.sleep(0.01)
+
+    async def close(self) -> None:
+        """Drop pending work and stop handling."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._pending = None
+        for task in [*self._decodes, self._task]:
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        self._task = None
+
+    async def _decode(self, seq: int, data: bytes, digest: str) -> None:
         try:
             image = await asyncio.to_thread(_decode, data)
         except Exception:
             _LOGGER.warning("Received artwork that could not be decoded (%d bytes)", len(data))
             return
-        try:
-            await self._handler(image)
-        except Exception:
-            _LOGGER.exception("Artwork handler failed")
+        if seq == self._artwork_seq:  # a newer frame arrived while decoding
+            self._set_cover(image, digest)
+
+    def _set_cover(self, image: Image.Image | None, digest: str | None) -> None:
+        if digest == self._cover_hash and (image is None) == (self._cover is None):
             return
-        self.last_hash = digest
+        self._cover, self._cover_hash = image, digest
+        self._changed()
+
+    def _changed(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+        self._timer = asyncio.get_running_loop().call_later(self._settle, self._flush)
+
+    def _flush(self) -> None:
+        self._timer = None
+        title, artist, album, year = (self._text[name] for name in _TRACKED_FIELDS)
+        now = NowPlaying(
+            cover=self._cover,
+            title=str(title) if title else None,
+            artist=str(artist) if artist else None,
+            album=str(album) if album else None,
+            year=year if isinstance(year, int) else None,
+        )
+        _LOGGER.debug(
+            "Now playing settled: cover=%s title=%r artist=%r album=%r year=%r",
+            self._cover_hash[:12] if self._cover_hash else None,
+            *(self._text[n] for n in _TRACKED_FIELDS),
+        )
+        if now.is_empty:
+            _LOGGER.debug("Everything cleared; keeping the last update on the panel")
+            return
+        key = hashlib.sha256(
+            "\0".join([self._cover_hash or "", *(str(self._text[n] or "") for n in _TRACKED_FIELDS)]).encode()
+        ).hexdigest()
+        if key == self.last_key:
+            _LOGGER.debug("Skipping update identical to the one on the panel")
+            return
+        self._pending = (key, now)
+        if self._task is None or self._task.done():
+            self._task = asyncio.get_running_loop().create_task(self._drain())
+
+    async def _drain(self) -> None:
+        while self._pending is not None:
+            (key, now), self._pending = self._pending, None
+            if key == self.last_key:
+                continue
+            try:
+                await self._handler(now)
+            except Exception:
+                _LOGGER.exception("Now-playing handler failed")
+                continue
+            self.last_key = key
 
 
-class SendspinArtworkBridge:  # pylint: disable=too-many-instance-attributes
-    """Keeps an artwork-only Sendspin client connected for one display.
+class SendspinNowPlayingBridge:  # pylint: disable=too-many-instance-attributes
+    """Keeps a Sendspin display client connected for one panel.
 
     ``start()`` returns at once; connecting, reconnecting with backoff and
     rediscovering the server all happen in a background task, and failures are
@@ -249,16 +329,18 @@ class SendspinArtworkBridge:  # pylint: disable=too-many-instance-attributes
         name: Player name shown in Music Assistant.
         identity: Long-term Sendspin identity, see :func:`load_or_create_identity`.
         pairing_store: Where pairing state is persisted.
-        on_artwork: Called with each new cover, or ``None`` on a clear.
+        on_now_playing: Called with the cover and track details once they settle.
         url: Server URL. When omitted the server is discovered over mDNS.
         zeroconf: Shared zeroconf instance for discovery. One is created (and
             closed on ``stop()``) when omitted.
         session: aiohttp session for the WebSocket. Never closed by the bridge.
         unpaired_access: Let a server that has not paired with this client
             connect. Artwork is all this client can receive, so the default is on.
-        last_hash: Hash of the cover already on the panel, to skip resending it.
+        last_key: :attr:`last_key` of the update already on the panel, to skip
+            resending it after a restart.
         client_factory: Builds the Sendspin client; for tests.
         sleep: Backoff sleep; for tests.
+        settle: Settle time before an update; for tests.
     """
 
     def __init__(  # pylint: disable=too-many-arguments
@@ -268,14 +350,15 @@ class SendspinArtworkBridge:  # pylint: disable=too-many-instance-attributes
         name: str,
         identity: Identity,
         pairing_store: ClientPairingStore,
-        on_artwork: ArtworkHandler,
+        on_now_playing: NowPlayingHandler,
         url: str | None = None,
         zeroconf: AsyncZeroconf | None = None,
         session: ClientSession | None = None,
         unpaired_access: bool = True,
-        last_hash: str | None = None,
+        last_key: str | None = None,
         client_factory: Callable[[], SendspinClientLike] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        settle: float = SETTLE_S,
     ) -> None:
         edge = artwork_edge(config)
         self._name = name
@@ -291,7 +374,7 @@ class SendspinArtworkBridge:  # pylint: disable=too-many-instance-attributes
         self._artwork_support = ClientHelloArtworkSupport(
             channels=[ArtworkChannel(ArtworkSource.ALBUM, PictureFormat.PNG, edge, edge)]
         )
-        self._sink = _ArtworkSink(on_artwork, last_hash)
+        self._tracker = _NowPlayingTracker(on_now_playing, last_key=last_key, settle=settle)
         self._client: SendspinClientLike | None = None
         self._task: asyncio.Task[None] | None = None
         self._state_tasks: set[asyncio.Task[None]] = set()
@@ -302,9 +385,9 @@ class SendspinArtworkBridge:  # pylint: disable=too-many-instance-attributes
         return self._identity.peer_id
 
     @property
-    def last_hash(self) -> str | None:
-        """Hash of the last cover handed to ``on_artwork`` successfully."""
-        return self._sink.last_hash
+    def last_key(self) -> str | None:
+        """Key of the last update handed to ``on_now_playing`` successfully."""
+        return self._tracker.last_key
 
     async def start(self) -> None:
         """Apply the unpaired-access setting and start connecting in the background."""
@@ -330,7 +413,7 @@ class SendspinArtworkBridge:  # pylint: disable=too-many-instance-attributes
                 await client.disconnect()
             except Exception:
                 _LOGGER.debug("Error while disconnecting from Sendspin server", exc_info=True)
-        await self._sink.close()
+        await self._tracker.close()
         if self._owns_zeroconf and self._zeroconf is not None:
             await self._zeroconf.async_close()
             self._zeroconf = None
@@ -358,14 +441,16 @@ class SendspinArtworkBridge:  # pylint: disable=too-many-instance-attributes
             delay = min(delay * 2, BACKOFF_MAX_S)
 
     def _report_state(self, client: SendspinClientLike) -> None:
-        """Send client/state after the server (re)activates us.
+        """Send client/state so the server releases artwork to us.
 
         The server holds artwork back until it has the client's initial
         client/state once the artwork role is active. aiosendspin 9.x only sends
         that state when the player or source role is activated, so a display that
-        is grouped after it connected would never get artwork (and one grouped
-        before connecting only gets it after the server's 5 s timeout). A
-        group/update follows every activation, so answer each one with our state.
+        is grouped after it connected would never get artwork, and one grouped
+        before connecting only gets it after the server's 5 s timeout (by then
+        the text has settled on its own and the cover costs a second refresh).
+        So report it right after connecting and again after every group/update,
+        which follows every activation.
         """
 
         async def _send() -> None:
@@ -395,7 +480,8 @@ class SendspinArtworkBridge:  # pylint: disable=too-many-instance-attributes
         client = self._client_factory()
         gone = asyncio.Event()
         client.add_disconnect_listener(gone.set)
-        client.add_artwork_listener(lambda _channel, data: self._sink.feed(data))
+        client.add_artwork_listener(lambda _channel, data: self._tracker.artwork(data))
+        client.add_metadata_listener(lambda payload: self._tracker.metadata(payload.metadata))
         client.add_group_update_listener(lambda _payload: self._report_state(client))
         self._client = client
         try:
@@ -407,6 +493,7 @@ class SendspinArtworkBridge:  # pylint: disable=too-many-instance-attributes
                 await client.disconnect()
             return False
         _LOGGER.info("Connected to Sendspin server %s as %s", url, self.client_id)
+        self._report_state(client)
         await gone.wait()
         self._client = None
         _LOGGER.info("Disconnected from Sendspin server %s", url)

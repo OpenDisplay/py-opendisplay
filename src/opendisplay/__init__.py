@@ -6,7 +6,7 @@ Pure Python package for communicating with OpenDisplay BLE e-paper tags.
 from epaper_dithering import ColorScheme, DitherMode
 
 from .battery import voltage_to_percent
-from .device import OpenDisplayDevice, prepare_image
+from .device import OpenDisplayDevice, logical_size, prepare_composite, prepare_image
 from .discovery import discover_devices, discover_devices_with_adv
 from .discovery_ip import IpDeviceInfo, discover_ip_devices
 from .exceptions import (
@@ -112,6 +112,8 @@ __all__ = [
     "discover_devices_with_adv",
     "discover_ip_devices",
     "IpDeviceInfo",
+    "logical_size",
+    "prepare_composite",
     "prepare_image",
     "PartialState",
     # Transports

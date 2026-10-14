@@ -8,8 +8,10 @@ import io
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from aiosendspin.models.metadata import Progress, SessionUpdateMetadata
 from aiosendspin.noise.keys import Identity
 from aiosendspin.noise.trust_store import InMemoryClientPairingStore
 from epaper_dithering import ColorScheme
@@ -22,9 +24,10 @@ from opendisplay.models.config import (
     PowerOption,
     SystemConfig,
 )
+from opendisplay.now_playing import NowPlaying
 from opendisplay.sendspin import (
-    SendspinArtworkBridge,
-    _ArtworkSink,
+    SendspinNowPlayingBridge,
+    _NowPlayingTracker,
     _pick_address,
     _server_url,
     artwork_edge,
@@ -106,23 +109,30 @@ def _png(color: str, size: int = 4) -> bytes:
 
 
 class _Recorder:
-    """Artwork handler that records what it was given."""
+    """Now-playing handler that records what it was given."""
 
     def __init__(self) -> None:
-        self.calls: list[Image.Image | None] = []
+        self.calls: list[NowPlaying] = []
         self.release = asyncio.Event()
         self.release.set()
         self.fail_next = False
 
-    async def __call__(self, image: Image.Image | None) -> None:
+    async def __call__(self, now: NowPlaying) -> None:
         await self.release.wait()
         if self.fail_next:
             self.fail_next = False
             raise RuntimeError("upload failed")
-        self.calls.append(image)
+        self.calls.append(now)
 
     def colors(self) -> list[tuple[int, ...] | None]:
-        return [None if im is None else im.convert("RGB").getpixel((0, 0)) for im in self.calls]  # type: ignore[misc]
+        return [None if n.cover is None else n.cover.convert("RGB").getpixel((0, 0)) for n in self.calls]  # type: ignore[misc]
+
+    def titles(self) -> list[str | None]:
+        return [n.title for n in self.calls]
+
+
+def _meta(**fields: object) -> SessionUpdateMetadata:
+    return SessionUpdateMetadata(timestamp=0, **fields)  # type: ignore[arg-type]
 
 
 # ── sizing ────────────────────────────────────────────────────────────────────
@@ -186,70 +196,128 @@ def test_pick_address_prefers_ipv4() -> None:
     assert _pick_address(["fd00::5"]) == "fd00::5"
 
 
-# ── artwork sink ──────────────────────────────────────────────────────────────
+# ── now-playing tracker ───────────────────────────────────────────────────────
 
 
-async def test_sink_skips_identical_image() -> None:
+def _tracker(rec: _Recorder, **kwargs: object) -> _NowPlayingTracker:
+    return _NowPlayingTracker(rec, settle=0, **kwargs)  # type: ignore[arg-type]
+
+
+async def test_tracker_merges_cover_and_metadata_into_one_update() -> None:
     rec = _Recorder()
-    sink = _ArtworkSink(rec)
-    sink.feed(_png("red"))
-    await sink.join()
-    sink.feed(_png("red"))
-    await sink.join()
+    tracker = _NowPlayingTracker(rec, settle=0.05)
+    tracker.metadata(_meta(title="Song", artist="Band", album="Record", year=2010))
+    tracker.artwork(_png("red"))
+    await tracker.join()
+    assert len(rec.calls) == 1
+    now = rec.calls[0]
+    assert (now.title, now.artist, now.album, now.year) == ("Song", "Band", "Record", 2010)
     assert rec.colors() == [(255, 0, 0)]
 
 
-async def test_sink_clear_does_not_reset_duplicate_check() -> None:
+async def test_tracker_ignores_progress_only_updates() -> None:
     rec = _Recorder()
-    sink = _ArtworkSink(rec)
-    for frame in (_png("red"), b"", _png("red")):
-        sink.feed(frame)
-        await sink.join()
-    assert rec.colors() == [(255, 0, 0), None]
+    tracker = _tracker(rec)
+    tracker.metadata(_meta(title="Song"))
+    await tracker.join()
+    tracker.metadata(_meta(progress=Progress(track_progress=5000, track_duration=200000, playback_speed=1000)))
+    await tracker.join()
+    assert rec.titles() == ["Song"]
 
 
-async def test_sink_delivers_only_latest_while_busy() -> None:
+async def test_tracker_keeps_fields_missing_from_partial_update() -> None:
+    rec = _Recorder()
+    tracker = _tracker(rec)
+    tracker.metadata(_meta(title="Song", artist="Band"))
+    await tracker.join()
+    tracker.metadata(_meta(title="Next"))
+    await tracker.join()
+    assert [(n.title, n.artist) for n in rec.calls] == [("Song", "Band"), ("Next", "Band")]
+
+
+async def test_tracker_skips_identical_state() -> None:
+    rec = _Recorder()
+    tracker = _tracker(rec)
+    tracker.artwork(_png("red"))
+    await tracker.join()
+    tracker.artwork(_png("red"))
+    await tracker.join()
+    assert rec.colors() == [(255, 0, 0)]
+
+
+async def test_tracker_keeps_last_update_when_everything_clears() -> None:
+    rec = _Recorder()
+    tracker = _NowPlayingTracker(rec, settle=0.05)  # cover and text arrive together, as with the real settle
+    tracker.metadata(_meta(title="Song"))
+    tracker.artwork(_png("red"))
+    await tracker.join()
+    tracker.artwork(b"")
+    tracker.metadata(None)
+    await tracker.join()
+    tracker.metadata(_meta(title="Song"))
+    tracker.artwork(_png("red"))
+    await tracker.join()
+    assert rec.titles() == ["Song"]  # the clear and the identical return cost nothing
+
+
+async def test_tracker_shows_text_when_track_has_no_cover() -> None:
+    rec = _Recorder()
+    tracker = _tracker(rec)
+    tracker.metadata(_meta(title="Radio"))
+    await tracker.join()
+    assert rec.colors() == [None]
+    assert rec.titles() == ["Radio"]
+
+
+async def test_tracker_delivers_only_latest_while_busy() -> None:
     rec = _Recorder()
     rec.release.clear()
-    sink = _ArtworkSink(rec)
-    sink.feed(_png("red"))
-    await asyncio.sleep(0.05)  # red is now being handled and blocks
-    sink.feed(_png("lime"))
-    sink.feed(_png("blue"))
+    tracker = _tracker(rec)
+    tracker.metadata(_meta(title="one"))
+    await asyncio.sleep(0.05)  # "one" is now being handled and blocks
+    tracker.metadata(_meta(title="two"))
+    await asyncio.sleep(0.02)
+    tracker.metadata(_meta(title="three"))
+    await asyncio.sleep(0.02)
     rec.release.set()
-    await sink.join()
-    assert rec.colors() == [(255, 0, 0), (0, 0, 255)]
+    await tracker.join()
+    assert rec.titles() == ["one", "three"]
 
 
-async def test_sink_survives_undecodable_frame() -> None:
+async def test_tracker_survives_undecodable_frame() -> None:
     rec = _Recorder()
-    sink = _ArtworkSink(rec)
-    sink.feed(b"not a png")
-    await sink.join()
-    sink.feed(_png("red"))
-    await sink.join()
+    tracker = _tracker(rec)
+    tracker.artwork(b"not a png")
+    await tracker.join()
+    tracker.artwork(_png("red"))
+    await tracker.join()
     assert rec.colors() == [(255, 0, 0)]
 
 
-async def test_sink_retries_image_after_handler_failure() -> None:
+async def test_tracker_retries_after_handler_failure() -> None:
     rec = _Recorder()
     rec.fail_next = True
-    sink = _ArtworkSink(rec)
-    sink.feed(_png("red"))
-    await sink.join()
-    sink.feed(_png("red"))
-    await sink.join()
-    assert rec.colors() == [(255, 0, 0)]
+    tracker = _tracker(rec)
+    tracker.metadata(_meta(title="Song"))
+    await tracker.join()
+    tracker.metadata(_meta(title="Other"))
+    await tracker.join()
+    tracker.metadata(_meta(title="Song"))
+    await tracker.join()
+    assert rec.titles() == ["Other", "Song"]
 
 
-async def test_sink_seeded_hash_skips_known_image() -> None:
-    import hashlib
+async def test_tracker_seeded_key_skips_state_already_on_panel() -> None:
+    first = _Recorder()
+    tracker = _tracker(first)
+    tracker.metadata(_meta(title="Song"))
+    await tracker.join()
 
-    rec = _Recorder()
-    sink = _ArtworkSink(rec, last_hash=hashlib.sha256(_png("red")).hexdigest())
-    sink.feed(_png("red"))
-    await sink.join()
-    assert rec.calls == []
+    second = _Recorder()
+    restarted = _tracker(second, last_key=tracker.last_key)
+    restarted.metadata(_meta(title="Song"))
+    await restarted.join()
+    assert second.calls == []
 
 
 # ── bridge ────────────────────────────────────────────────────────────────────
@@ -263,6 +331,7 @@ class _FakeClient:
         self._art: list[Callable[[int, bytes], None]] = []
         self._gone: list[Callable[[], None]] = []
         self._group: list[Callable[[object], None]] = []
+        self._meta: list[Callable[[object], None]] = []
         self.available: list[bool] = []
 
     def add_artwork_listener(self, callback: Callable[[int, bytes], None]) -> Callable[[], None]:
@@ -271,6 +340,10 @@ class _FakeClient:
 
     def add_disconnect_listener(self, callback: Callable[[], None]) -> Callable[[], None]:
         self._gone.append(callback)
+        return lambda: None
+
+    def add_metadata_listener(self, callback: Callable[[object], None]) -> Callable[[], None]:
+        self._meta.append(callback)
         return lambda: None
 
     def add_group_update_listener(self, callback: Callable[[object], None]) -> Callable[[], None]:
@@ -292,6 +365,10 @@ class _FakeClient:
     def send_art(self, data: bytes) -> None:
         for cb in self._art:
             cb(0, data)
+
+    def send_metadata(self, metadata: SessionUpdateMetadata) -> None:
+        for cb in self._meta:
+            cb(SimpleNamespace(metadata=metadata))
 
     def group_update(self) -> None:
         for cb in self._group:
@@ -323,17 +400,18 @@ def _bridge(
     sleeps: _Sleeps,
     handler: _Recorder | None = None,
     store: InMemoryClientPairingStore | None = None,
-) -> SendspinArtworkBridge:
+) -> SendspinNowPlayingBridge:
     made = iter(clients)
-    return SendspinArtworkBridge(
+    return SendspinNowPlayingBridge(
         _config(_display(800, 480)),
         name="Kitchen",
         identity=Identity.generate(),
         pairing_store=store or InMemoryClientPairingStore(),
-        on_artwork=handler or _Recorder(),
+        on_now_playing=handler or _Recorder(),
         url=URL,
         client_factory=lambda: next(made),
         sleep=sleeps,
+        settle=0,
     )
 
 
@@ -360,16 +438,18 @@ async def test_bridge_reconnects_after_drop() -> None:
     assert sleeps.delays[0] == 1
 
 
-async def test_bridge_forwards_artwork() -> None:
+async def test_bridge_forwards_artwork_and_metadata() -> None:
     rec = _Recorder()
     client = _FakeClient()
     bridge = _bridge([client], _Sleeps(limit=1), handler=rec)
     await bridge.start()
     await asyncio.sleep(0.05)
+    client.send_metadata(_meta(title="Song", artist="Band"))
     client.send_art(_png("red"))
     await asyncio.sleep(0.1)
     await bridge.stop()
-    assert rec.colors() == [(255, 0, 0)]
+    assert rec.colors()[-1] == (255, 0, 0)
+    assert (rec.calls[-1].title, rec.calls[-1].artist) == ("Song", "Band")
 
 
 async def test_bridge_stop_disconnects_and_is_idempotent() -> None:
@@ -390,17 +470,20 @@ async def test_bridge_enables_unpaired_access() -> None:
     assert (await store.get_pairing_config()).unpaired_access_enabled
 
 
-async def test_bridge_reports_state_after_group_update() -> None:
-    """aiosendspin 9.1.1 sends no client/state when only the artwork role is
-    activated, so the server would hold artwork back forever."""
+async def test_bridge_reports_state_on_connect_and_after_group_update() -> None:
+    """aiosendspin 9.1.1 sends no client/state when only display roles are
+    activated. Without it the server holds artwork back: until its 5 s timeout
+    when already grouped at connect (the text then arrives first and costs a
+    second refresh), and forever when grouped later."""
     client = _FakeClient()
     bridge = _bridge([client], _Sleeps(limit=1))
     await bridge.start()
     await asyncio.sleep(0.05)
+    assert client.available == [True]  # straight after connecting
     client.group_update()
     await asyncio.sleep(0.05)
     await bridge.stop()
-    assert client.available == [True]
+    assert client.available == [True, True]
 
 
 async def test_client_registers_as_display_in_music_assistant() -> None:

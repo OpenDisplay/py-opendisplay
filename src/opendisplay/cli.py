@@ -25,7 +25,7 @@ from rich.table import Table
 from rich.tree import Tree
 
 from .battery import voltage_to_percent
-from .device import OpenDisplayDevice, prepare_image
+from .device import OpenDisplayDevice
 from .discovery import discover_devices_with_adv
 from .exceptions import (
     AuthenticationFailedError,
@@ -55,6 +55,7 @@ from .models.enums import (
     WifiEncryption,
 )
 from .models.firmware import FirmwareVersion
+from .now_playing import NowPlaying, prepare_now_playing
 from .partial import PartialState
 from .sensors import SensorReading
 
@@ -1358,7 +1359,7 @@ def _sendspin_state_dir(device: str) -> Path:
 def _add_sendspin_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     p = subparsers.add_parser(
         "sendspin",
-        help="Show Music Assistant album art via Sendspin (needs py-opendisplay[sendspin])",
+        help="Show what Music Assistant is playing via Sendspin (needs py-opendisplay[sendspin])",
     )
     _add_device_options(p)
     p.add_argument(
@@ -1386,24 +1387,23 @@ def _cmd_sendspin(args: argparse.Namespace) -> None:
         _run(_sendspin(device_kwargs, args.url, state_dir, args.name or f"OpenDisplay {label}"))
 
 
-async def _upload_artwork(device_kwargs: dict[str, Any], config: GlobalConfig, image: Image.Image) -> None:
-    """Upload a cover with the best quality the panel offers.
+async def _upload_now_playing(device_kwargs: dict[str, Any], config: GlobalConfig, now: NowPlaying) -> None:
+    """Lay out *now* for the panel and upload it with the best quality it offers.
 
-    Measured palettes are used whenever one exists for the panel (otherwise the
-    library falls back to the theoretical colors), and DBS refinement is on. The
-    image is prepared before connecting: refinement takes seconds, and a device
-    that is connected but idle wastes battery and stops advertising.
+    Only the cover is dithered, with the panel's measured palette when one exists
+    and DBS refinement; the text stays crisp. The frame is prepared before
+    connecting, so the device is never held connected (and silent, since it stops
+    advertising) while the CPU works.
     """
     display = config.displays[0]
     prepared = await asyncio.to_thread(
         functools.partial(
-            prepare_image,
-            image,
-            config=config,
+            prepare_now_playing,
+            now,
+            config,
             use_measured_palettes=True,
-            compress=display.supports_zip or display.supports_streaming_decompression,
-            fit=FitMode.CONTAIN,
             dbs=True,
+            compress=display.supports_zip or display.supports_streaming_decompression,
         )
     )
     async with OpenDisplayDevice(**device_kwargs, config=config) as device:
@@ -1414,7 +1414,7 @@ async def _sendspin(device_kwargs: dict[str, Any], url: str | None, state_dir: P
     try:
         from aiosendspin.noise.trust_store import FileClientPairingStore
 
-        from .sendspin import SendspinArtworkBridge, load_or_create_identity
+        from .sendspin import SendspinNowPlayingBridge, load_or_create_identity
     except ImportError as exc:
         _error(str(exc))
 
@@ -1431,27 +1431,26 @@ async def _sendspin(device_kwargs: dict[str, Any], url: str | None, state_dir: P
     identity = await asyncio.to_thread(load_or_create_identity, state_dir / "identity.key")
     store = await FileClientPairingStore.open(state_dir / "pairing.json")
 
-    async def on_artwork(image: Image.Image | None) -> None:
-        if image is None:
-            return  # keep the last cover on the panel
-        _console.print("New artwork, uploading...")
+    async def on_now_playing(now: NowPlaying) -> None:
+        label = " - ".join(p for p in (now.artist, now.title) if p) or "new artwork"
+        _console.print(f"Now playing: {label}. Uploading...")
         try:
-            await _upload_artwork(device_kwargs, config, image)
+            await _upload_now_playing(device_kwargs, config, now)
         except OpenDisplayError as exc:
             _console.print(f"[yellow]Upload failed:[/yellow] {exc}")
             raise
-        _console.print("[green]Artwork shown.[/green]")
+        _console.print("[green]Shown on the display.[/green]")
 
-    bridge = SendspinArtworkBridge(
+    bridge = SendspinNowPlayingBridge(
         config,
         name=name,
         identity=identity,
         pairing_store=store,
-        on_artwork=on_artwork,
+        on_now_playing=on_now_playing,
         url=url,
     )
     await bridge.start()
-    _console.print(f"Waiting for artwork as [bold]{name}[/bold]. Group it with a speaker in Music Assistant.")
+    _console.print(f"Waiting for music as [bold]{name}[/bold]. Group it with a speaker in Music Assistant.")
     _console.print("Press Ctrl-C to stop.")
     try:
         await asyncio.Event().wait()
