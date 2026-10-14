@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import functools
 import json
 import logging
 import os
@@ -24,7 +25,7 @@ from rich.table import Table
 from rich.tree import Tree
 
 from .battery import voltage_to_percent
-from .device import OpenDisplayDevice
+from .device import OpenDisplayDevice, prepare_image
 from .discovery import discover_devices_with_adv
 from .exceptions import (
     AuthenticationFailedError,
@@ -1385,6 +1386,30 @@ def _cmd_sendspin(args: argparse.Namespace) -> None:
         _run(_sendspin(device_kwargs, args.url, state_dir, args.name or f"OpenDisplay {label}"))
 
 
+async def _upload_artwork(device_kwargs: dict[str, Any], config: GlobalConfig, image: Image.Image) -> None:
+    """Upload a cover with the best quality the panel offers.
+
+    Measured palettes are used whenever one exists for the panel (otherwise the
+    library falls back to the theoretical colors), and DBS refinement is on. The
+    image is prepared before connecting: refinement takes seconds, and a device
+    that is connected but idle wastes battery and stops advertising.
+    """
+    display = config.displays[0]
+    prepared = await asyncio.to_thread(
+        functools.partial(
+            prepare_image,
+            image,
+            config=config,
+            use_measured_palettes=True,
+            compress=display.supports_zip or display.supports_streaming_decompression,
+            fit=FitMode.CONTAIN,
+            dbs=True,
+        )
+    )
+    async with OpenDisplayDevice(**device_kwargs, config=config) as device:
+        await device.upload_prepared_image(prepared)
+
+
 async def _sendspin(device_kwargs: dict[str, Any], url: str | None, state_dir: Path, name: str) -> None:
     try:
         from aiosendspin.noise.trust_store import FileClientPairingStore
@@ -1411,8 +1436,7 @@ async def _sendspin(device_kwargs: dict[str, Any], url: str | None, state_dir: P
             return  # keep the last cover on the panel
         _console.print("New artwork, uploading...")
         try:
-            async with OpenDisplayDevice(**device_kwargs, config=config) as device:
-                await device.upload_image(image, fit=FitMode.CONTAIN)
+            await _upload_artwork(device_kwargs, config, image)
         except OpenDisplayError as exc:
             _console.print(f"[yellow]Upload failed:[/yellow] {exc}")
             raise
