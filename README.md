@@ -81,7 +81,7 @@ Encrypted devices require `--key HEX` (32 hex characters). Pass `-v` / `--verbos
 
 ## Music Assistant (Sendspin)
 
-Show what [Music Assistant](https://www.music-assistant.io/) is playing: the album cover, with title, artist, album and year beside it on landscape panels. The display joins Music Assistant as a [Sendspin](https://www.sendspin-audio.com/) display, so you group it with a speaker there and it follows that speaker.
+Show what [Music Assistant](https://www.music-assistant.io/) is playing: the album cover with title, artist, album and year. The display joins Music Assistant as a [Sendspin](https://www.sendspin-audio.com/) display, so you group it with a speaker there and it follows that speaker.
 
 ```bash
 uvx --from "py-opendisplay[cli,sendspin]" opendisplay sendspin --device AA:BB:CC:DD:EE:FF
@@ -89,7 +89,7 @@ uvx --from "py-opendisplay[cli,sendspin]" opendisplay sendspin --device AA:BB:CC
 
 The command finds Music Assistant over mDNS (or pass `--url ws://HOST:8927/sendspin`) and shows up there as "OpenDisplay <device>" (change it with `--name`). In Music Assistant, group it with a speaker that is playing. Each track change is uploaded once its cover and details have arrived; the last frame stays on the panel when playback stops. The client identity is kept in `~/.config/opendisplay/sendspin/<device>/` (override with `--state-dir`) so the display stays the same player in Music Assistant.
 
-Only the cover is dithered, using the panel's measured palette and DBS refinement; the text is drawn in the panel's own black so it stays sharp. Panels without room beside the cover (portrait or nearly square) show the cover alone.
+The layout follows the panel's shape. On elongated panels (long side at least 1.4 times the short side) the text goes beside the cover, or below it when the panel is mounted portrait. On 4:3 and square panels the cover shrinks a little to fit a title and artist caption underneath, and panels too small for that show the cover alone. Only the cover is dithered, using the panel's measured palette and DBS refinement; the text is drawn in the panel's own black so it stays sharp.
 
 The text uses Pillow's built-in font by default, which only covers basic Latin: accented and non-Latin characters (é, ö, Кино, 東京) show as boxes. Pass a TTF/OTF font that covers your music library with `--font` (or `font=` to `prepare_now_playing`), e.g. `--font ~/fonts/NotoSans-Regular.ttf` with [Noto Sans](https://fonts.google.com/noto/specimen/Noto+Sans) downloaded there.
 
