@@ -48,6 +48,12 @@ nrf-ota = [
 silabs-ota = [
     "silabs-ble-ota>=0.1.0",
 ]
+# Follows the aiosendspin major that Music Assistant ships (9.x and 10.x are not
+# wire compatible), so bump this together with Music Assistant.
+sendspin = [
+    "aiosendspin>=9.1.1,<10",
+    "zeroconf>=0.147",
+]
 test = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
