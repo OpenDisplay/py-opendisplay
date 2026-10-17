@@ -43,6 +43,7 @@ def _advertises_dfu_service(service_uuids: Sequence[str]) -> bool:
 
 
 if TYPE_CHECKING:
+    from bleak import BleakClient
     from bleak.backends.device import BLEDevice
 
 
@@ -66,11 +67,14 @@ async def perform_nrf_dfu(
         dfu_ble_device: BLE device already in DFU mode.
         on_progress: Optional callback with float percentage 0–100.
         on_log: Optional callback for human-readable status messages.
-        fast: Stream firmware packets unpaced for a much faster transfer. Only
-            safe on a direct connection — over an ESPHome Bluetooth proxy the
-            unpaced write-without-response burst is silently dropped and the DFU
-            stalls. Leave ``False`` (paced) when flashing through a proxy, which
-            is always the case on HA OS. Defaults to ``False``.
+        fast: Stream firmware packets unpaced for a much faster transfer on a
+            direct connection. Ignored through an ESPHome Bluetooth proxy, which
+            always uses nrf-ota's paced proxy path. Defaults to ``False``.
+
+    Through an ESPHome Bluetooth proxy (always the case on HA OS) the transfer
+    is paced by the proxy's per-write acknowledgements and the image is
+    activated on a fresh connection; see ``nrf_ota.esphome_proxy``. Proxies that
+    can't do this safely are refused before anything is erased.
 
     Raises:
         OTAError: DFU transfer failed or DFU service not present.
@@ -80,8 +84,11 @@ async def perform_nrf_dfu(
         from nrf_ota._const import DEFAULT_PRN, TYPE_APPLICATION
         from nrf_ota._zip import _parse_zip_bytes
         from nrf_ota.dfu import LegacyDFU
+        from nrf_ota.esphome_proxy import EsphomeProxyLink, proxy_safe_dfu
     except ImportError as exc:
-        raise OTAError("nrf-ota is required for nRF firmware updates; install it with: pip install nrf-ota") from exc
+        raise OTAError(
+            "nrf-ota is required (>= 0.5.0) for nRF firmware updates; install it with: pip install -U nrf-ota"
+        ) from exc
 
     log = on_log or (lambda _: None)
     zip_info = _parse_zip_bytes(zip_bytes)
@@ -91,14 +98,17 @@ async def perform_nrf_dfu(
     # adapter, which is why this previously failed on HA OS but worked on a dev
     # Mac. use_services_cache=False forces a fresh GATT discovery: the DFU
     # bootloader exposes a different service table than the application.
-    try:
-        client = await establish_connection(
+    async def connect() -> BleakClient:
+        return await establish_connection(
             BleakClientWithServiceCache,
             dfu_ble_device,
             dfu_ble_device.name or "nRF DFU",
             use_services_cache=False,
             max_attempts=4,
         )
+
+    try:
+        client = await connect()
     except Exception as exc:  # noqa: BLE001 - surfaced as OTAError
         raise OTAError(f"Could not connect to nRF DFU bootloader: {exc}") from exc
 
@@ -116,13 +126,13 @@ async def perform_nrf_dfu(
         except Exception:  # noqa: BLE001
             log("Warning: could not read DFU version")
 
-        # Over a Bluetooth proxy the DFU Packet characteristic (write-without-
-        # response) is dropped if it overruns the proxy's buffer, and Legacy DFU
-        # can't retransmit, so a single drop fails the whole 11.7k-packet transfer.
-        # 0.01/0.02s both dropped intermittently; 0.05s gives the proxy far more
-        # drain time per packet (~8-10min) to test whether the drops are
-        # pacing-sensitive buffer overruns. A direct connection has real flow
-        # control, so fast mode sends unpaced.
+        proxy_link = EsphomeProxyLink.from_client(client)
+        if proxy_link is not None:
+            await proxy_safe_dfu(client, proxy_link, zip_info, connect, on_progress=on_progress, on_log=log)
+            log("DFU complete — device is rebooting with new firmware.")
+            return
+
+        # A direct connection has real flow control, so fast mode sends unpaced.
         inter_packet_delay = 0.0 if fast else 0.05
         await dfu.start()
         await dfu.start_dfu(len(zip_info.firmware), TYPE_APPLICATION)

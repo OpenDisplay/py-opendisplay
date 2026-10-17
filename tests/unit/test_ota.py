@@ -302,3 +302,47 @@ async def test_perform_nrf_dfu_connect_failure_raises() -> None:
     ):
         with pytest.raises(OTAError, match="Could not connect to nRF DFU bootloader"):
             await perform_nrf_dfu(b"zip", _make_ble_device())
+
+
+@pytest.mark.asyncio
+async def test_perform_nrf_dfu_uses_the_safe_proxy_path() -> None:
+    """Through an ESPHome proxy, the transfer and activate go through nrf-ota's proxy_safe_dfu."""
+    from opendisplay.ota import perform_nrf_dfu
+
+    client = _make_dfu_client()
+    connect = AsyncMock(return_value=client)
+    link = MagicMock()
+    zip_info = MagicMock(firmware=b"x" * 40, init_packet=b"i")
+    with (
+        patch("bleak_retry_connector.establish_connection", new=connect),
+        patch("nrf_ota.dfu.LegacyDFU", return_value=AsyncMock()),
+        patch("nrf_ota._zip._parse_zip_bytes", return_value=zip_info),
+        patch("nrf_ota.esphome_proxy.EsphomeProxyLink.from_client", return_value=link),
+        patch("nrf_ota.esphome_proxy.proxy_safe_dfu", new=AsyncMock()) as safe_dfu,
+    ):
+        await perform_nrf_dfu(b"zip", _make_ble_device(), fast=True)
+
+    safe_dfu.assert_awaited_once()
+    args = safe_dfu.await_args.args
+    assert args[:3] == (client, link, zip_info)
+    # the reconnect callable opens a fresh connection the same way
+    await args[3]()
+    assert connect.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_perform_nrf_dfu_proxy_failure_is_wrapped() -> None:
+    """A refusal or failure on the proxy path surfaces as OTAError."""
+    from nrf_ota.dfu import DFUError
+
+    from opendisplay.ota import perform_nrf_dfu
+
+    with (
+        patch("bleak_retry_connector.establish_connection", new=AsyncMock(return_value=_make_dfu_client())),
+        patch("nrf_ota.dfu.LegacyDFU", return_value=AsyncMock()),
+        patch("nrf_ota._zip._parse_zip_bytes", return_value=MagicMock(firmware=b"x", init_packet=b"i")),
+        patch("nrf_ota.esphome_proxy.EsphomeProxyLink.from_client", return_value=MagicMock()),
+        patch("nrf_ota.esphome_proxy.proxy_safe_dfu", new=AsyncMock(side_effect=DFUError("can't set connection"))),
+    ):
+        with pytest.raises(OTAError, match="can't set connection"):
+            await perform_nrf_dfu(b"zip", _make_ble_device())
