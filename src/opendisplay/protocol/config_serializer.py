@@ -565,7 +565,6 @@ PACKET_TYPE_DISPLAY_MODE = 0x2E
 PACKET_TYPE_DISPLAY_LUT = 0x2F
 PACKET_TYPE_DISPLAY_CALIBRATION = 0x30
 PACKET_TYPE_DISPLAY_PANEL = 0x31
-PACKET_TYPE_DISPLAY_PALETTE = 0x32
 
 
 def serialize_display_mode(m: "DisplayModeInfo") -> bytes:
@@ -605,23 +604,14 @@ def serialize_display_panel(pn: "DisplayPanelInfo") -> bytes:
     )
 
 
-def serialize_display_palette(pl: "DisplayPaletteInfo") -> bytes:
-    """0x32, 24 B."""
+def serialize_display_calibration(cb: "DisplayCalibrationInfo") -> bytes:
+    """0x30, 116 B: header + codes[16] + lab[96]."""
     packed = bytearray(16)
-    for i, triple in enumerate(pl.codes[:16]):
+    for i, triple in enumerate(cb.codes[:16]):
         v = 0
         for pi, code in enumerate(triple[:3]):
             v |= (code & 3) << (4 - 2 * pi)
         packed[i] = v
-    return (
-        struct.pack("<BBBB", pl.instance_number, pl.mode_index,
-                    min(pl.entry_count, 16), 0x01 if pl.ordered_by_l else 0x00)
-        + bytes(packed) + bytes(4)
-    )
-
-
-def serialize_display_calibration(cb: "DisplayCalibrationInfo") -> bytes:
-    """0x30, 100 B."""
     body = b"".join(
         struct.pack("<hhh", round(L * 100), round(a * 100), round(b * 100))
         for (L, a, b) in cb.lab[:16]
@@ -629,6 +619,7 @@ def serialize_display_calibration(cb: "DisplayCalibrationInfo") -> bytes:
     return (
         struct.pack("<BBBB", cb.instance_number, cb.mode_index,
                     min(cb.entry_count, 16), 1 if cb.measured else 0)
+        + bytes(packed)
         + body.ljust(96, b"\x00")
     )
 
@@ -761,9 +752,6 @@ def serialize_config(config: GlobalConfig) -> bytes:
     for lo in config.display_luts:
         packet_data += bytes([lo.lut_slot, PACKET_TYPE_DISPLAY_LUT])
         packet_data += serialize_display_lut(lo)
-    for pl in config.display_palettes:
-        packet_data += bytes([pl.mode_index, PACKET_TYPE_DISPLAY_PALETTE])
-        packet_data += serialize_display_palette(pl)
     for cb in config.display_calibrations:
         packet_data += bytes([cb.mode_index, PACKET_TYPE_DISPLAY_CALIBRATION])
         packet_data += serialize_display_calibration(cb)

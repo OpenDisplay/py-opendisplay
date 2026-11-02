@@ -36,7 +36,6 @@ PACKET_TYPE_DISPLAY_MODE = 0x2E
 PACKET_TYPE_DISPLAY_LUT = 0x2F
 PACKET_TYPE_DISPLAY_CALIBRATION = 0x30
 PACKET_TYPE_DISPLAY_PANEL = 0x31
-PACKET_TYPE_DISPLAY_PALETTE = 0x32
 
 SEQ_FIELD_BYTES = 128
 LUT_FIELD_BYTES = 535
@@ -216,60 +215,45 @@ class DisplayPanel:
 
 
 @dataclass
-class DisplayPalette:
-    """0x32 -- the ENCODING of a mode's palette.
+class DisplayCalibration:
+    """0x30 -- a mode's palette: the ENCODING and the measured colour together.
 
-    A palette entry is a tuple of 2-bit codes, one per pass: the 16-colour BWRY
-    mode sends three frames and a pixel's colour is set by its code in all
-    three. Nothing else in the config records that mapping, so without this a
-    measured colour cannot be reproduced and a host cannot encode a frame.
+    An entry is a tuple of per-pass 2-bit codes (the 16-colour BWRY mode sends
+    three frames and a pixel's colour is set by its code in all three) plus the
+    CIELAB that combination measured as.
 
-    Separate from DisplayCalibration (0x30), which holds what those entries
-    measured AS. The encoding is a property of the mode and identical across
-    units; the measurements are per-unit.
+    BOTH HALVES IN ONE PACKET so they cannot disagree about entry count or
+    order: a measurement whose codes are unknown cannot be reproduced, and codes
+    with no measurement cannot be chosen between.
     """
 
     instance_number: int
     mode_index: int
-    codes: list[tuple[int, ...]]
-    ordered_by_l: bool = False
-
-    def serialize(self) -> bytes:
-        if len(self.codes) > 16:
-            raise ValueError(f"{len(self.codes)} entries exceeds 16")
-        packed = bytearray(16)
-        for i, triple in enumerate(self.codes[:16]):
-            if len(triple) > 3:
-                raise ValueError(f"entry {i}: {len(triple)} passes, max 3 fit in a byte")
-            v = 0
-            for p, code in enumerate(triple):
-                if not 0 <= code <= 3:
-                    raise ValueError(f"entry {i} pass {p}: code {code} is not 2-bit")
-                v |= (code & 3) << (4 - 2 * p)
-            packed[i] = v
-        return (
-            struct.pack("<BBBB", self.instance_number, self.mode_index,
-                        min(len(self.codes), 16),
-                        0x01 if self.ordered_by_l else 0x00)
-            + bytes(packed)
-            + bytes(4)
-        )
-
-
-@dataclass
-class DisplayCalibration:
-    instance_number: int
-    mode_index: int
     lab: list[tuple[float, float, float]]
+    codes: list[tuple[int, ...]] = field(default_factory=list)
     measured: bool = True
 
     def serialize(self) -> bytes:
+        if self.codes and len(self.codes) != len(self.lab):
+            raise ValueError(
+                f"{len(self.codes)} code entries vs {len(self.lab)} measurements "
+                f"-- they index the same palette and must match"
+            )
+        packed = bytearray(16)
+        for i, triple in enumerate(self.codes[:16]):
+            v = 0
+            for pi, code in enumerate(triple[:3]):
+                if not 0 <= code <= 3:
+                    raise ValueError(f"entry {i} pass {pi}: code {code} is not 2-bit")
+                v |= (code & 3) << (4 - 2 * pi)
+            packed[i] = v
         body = bytearray()
         for L, a, b in self.lab[:16]:
             body += struct.pack("<hhh", round(L * 100), round(a * 100), round(b * 100))
         return (
             struct.pack("<BBBB", self.instance_number, self.mode_index,
                         min(len(self.lab), 16), 1 if self.measured else 0)
+            + bytes(packed)
             + bytes(body).ljust(CALIB_FIELD_BYTES, b"\x00")
         )
 
