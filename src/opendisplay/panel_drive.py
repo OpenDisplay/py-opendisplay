@@ -311,10 +311,15 @@ def packets_from_yaml(panels_yaml: str | Path, panel_id: int,
     modes, luts = _packets_for_panel(panel, waves, instance)
     pan = _panel_packet(panel, len(modes), instance)
 
-    # The instance byte that precedes each packet is what the device indexes by:
-    # mode_index for 0x2E, slot for 0x2F, display instance for 0x31. That is why
-    # od_cfg_entry_t carries `instance` at all -- a lookup is a field compare
-    # rather than a body read.
+    # THE FIRST BYTE OF EACH PACKET IS A DON'T-CARE.
+    #
+    # On the wire a packet is [packet_number][packet_type][body]. Nothing reads
+    # packet_number: the firmware parser takes instance_number from body[0], and
+    # the two writers already disagree about it -- serialize_config() puts the
+    # instance index there, the web toolbox puts a running counter. We put the
+    # discriminator (mode_index / slot) because it is the most informative thing
+    # to see in a hex dump, but a device that depended on it would break on any
+    # toolbox-built config.
     out: list[bytes] = [
         bytes([pan.instance_number, PACKET_TYPE_DISPLAY_PANEL]) + pan.serialize()
     ]
