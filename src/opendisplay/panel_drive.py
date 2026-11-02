@@ -331,7 +331,7 @@ def packets_from_yaml(panels_yaml: str | Path, panel_id: int,
 
 
 def append_drive_packets(base_blob: bytes, drive_packets: list[bytes],
-                         max_size: int = 2096) -> bytes:
+                         max_size: int = 4080) -> bytes:
     """Append drive packets to an existing config blob, LAST and size-checked.
 
     Appending last is not a style choice: shipped firmware abandons the rest of
@@ -342,9 +342,10 @@ def append_drive_packets(base_blob: bytes, drive_packets: list[bytes],
     asked how large a config it accepts (there is no capability field for it),
     so a host that guesses wrong must fail loudly.
 
-    4080 is the device's ceiling, not a round number: NVM3 caps one object at
-    4096 (NVM3_MAX_OBJECT_SIZE_HIGH_LIMIT) and 16 of those go to the record
-    header. Going beyond it needs the config split across several NVM3 objects.
+    4080 is the device's ceiling with a 32768-byte NVM3 region: max-object 4096
+    minus the 16-byte record header. It is NOT implied by NVM3's per-object cap
+    alone -- the same 4080 with the older 24576-byte region stopped NVM3 opening
+    at all. Firmware older than that region change accepts only 2096.
     """
     total = len(base_blob) + sum(len(p) for p in drive_packets)
     if total > max_size:
