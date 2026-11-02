@@ -44,6 +44,12 @@ PACKET_TYPE_PASSIVE_BUZZER = 0x29
 PACKET_TYPE_NFC_CONFIG = 0x2A
 PACKET_TYPE_FLASH_CONFIG = 0x2B
 PACKET_TYPE_DATA_EXTENDED = 0x2C
+# New in minor 1.6. Appended at the END of the id space on purpose: shipped
+# firmware abandons the rest of the blob on an unknown packet id (skip-to-CRC),
+# so anything it cannot parse must come after everything it can.
+PACKET_TYPE_DISPLAY_MODE = 0x2E
+PACKET_TYPE_DISPLAY_LUT = 0x2F
+PACKET_TYPE_DISPLAY_CALIBRATION = 0x30
 
 WIFI_CONFIG_SIZE = 160
 WIFI_CONFIG_LEGACY_SIZE = 65
@@ -277,6 +283,9 @@ def _get_packet_size(packet_type: int) -> int | None:
         PACKET_TYPE_NFC_CONFIG: 32,
         PACKET_TYPE_FLASH_CONFIG: 32,
         PACKET_TYPE_DATA_EXTENDED: DataExtended.SIZE,
+        PACKET_TYPE_DISPLAY_MODE: 157,
+        PACKET_TYPE_DISPLAY_LUT: 541,
+        PACKET_TYPE_DISPLAY_CALIBRATION: 100,
     }
     return sizes.get(packet_type)
 
