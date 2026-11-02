@@ -257,19 +257,34 @@ def _panel_packet(panel: dict[str, Any], mode_count: int,
     )
 
 
-def _packets_for_panel(panel: dict[str, Any], waves: dict[str, bytes],
-                       instance: int = 0) -> tuple[list[DisplayMode], list[DisplayLut]]:
+def _packets_for_panel(
+    panel: dict[str, Any],
+    waves: dict[str, bytes],
+    instance: int = 0,
+    slot_of: dict[str, int] | None = None,
+    luts: list[DisplayLut] | None = None,
+) -> tuple[list[DisplayMode], list[DisplayLut]]:
     """Turn one panels.yaml entry into mode + LUT packets.
 
     Identical waveforms share a slot: the 16-colour mode uses colour+edit+edit,
-    so three passes need only TWO slots. Deduplicating here rather than storing
-    three copies is what makes the config fit -- a waveform is not compressible
-    (the colour wave is 59% idle but the idle frames are interleaved, so RLE
-    inflates it to 245%), so sharing is the only real saving available.
+    so three passes need only TWO slots. A waveform is not compressible (the
+    colour wave is 59% idle but the idle frames are interleaved, so RLE inflates
+    it to 245%), so sharing is the only real saving available.
+
+    PASS `slot_of` AND `luts` IN TO SHARE SLOTS ACROSS DISPLAYS. The device
+    resolves a waveform by slot alone -- find_lut() in od_epd_adapter.cpp matches
+    on the slot and ignores instance_number -- so two panels of the same family
+    can reference one stored copy. That matters more than any other saving
+    available: against the hard 4080-byte object limit, per-display copies cap
+    out at 2 displays (3529 B, and 3 would need 4971 B) while shared slots reach
+    5 (3511 B). Both waveforms are 541 B each, which is why duplicating them is
+    what actually runs out of room.
     """
     seqs = {k: encode_sequence(v) for k, v in (panel.get("init_sequences") or {}).items()}
-    slot_of: dict[str, int] = {}
-    luts: list[DisplayLut] = []
+    if slot_of is None:
+        slot_of = {}
+    if luts is None:
+        luts = []
     modes: list[DisplayMode] = []
 
     for mi, m in enumerate(panel.get("modes") or []):
@@ -299,6 +314,40 @@ def _packets_for_panel(panel: dict[str, Any], waves: dict[str, bytes],
             temp_policy=_POLICY.get(str(tg.get("policy", "advise")), 0),
         ))
     return modes, luts
+
+
+def packets_for_displays(
+    panels_yaml: str | Path,
+    displays: list[tuple[int, int]],
+    waves: dict[str, bytes],
+) -> list[bytes]:
+    """Drive packets for SEVERAL displays, sharing waveform slots between them.
+
+    `displays` is [(panel_id, instance_number), ...].
+
+    Use this instead of calling packets_from_yaml() per display: that emits a
+    private copy of every waveform per display, and two 541-byte copies are what
+    exhausts the 4080-byte config object. Sharing is safe because the device
+    looks a waveform up by slot alone.
+    """
+    import yaml  # noqa: PLC0415
+
+    doc = yaml.safe_load(Path(panels_yaml).read_text())
+    slot_of: dict[str, int] = {}
+    shared_luts: list[DisplayLut] = []
+    out: list[bytes] = []
+
+    for panel_id, instance in displays:
+        panel = next(p for p in doc["panels"] if int(str(p["id"]), 0) == panel_id)
+        modes, _ = _packets_for_panel(panel, waves, instance, slot_of, shared_luts)
+        pan = _panel_packet(panel, len(modes), instance)
+        out.append(bytes([pan.instance_number, PACKET_TYPE_DISPLAY_PANEL])
+                   + pan.serialize())
+        for m in modes:
+            out.append(bytes([m.mode_index, PACKET_TYPE_DISPLAY_MODE]) + m.serialize())
+    for lo in shared_luts:
+        out.append(bytes([lo.lut_slot, PACKET_TYPE_DISPLAY_LUT]) + lo.serialize())
+    return out
 
 
 def packets_from_yaml(panels_yaml: str | Path, panel_id: int,
