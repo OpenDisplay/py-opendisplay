@@ -7,6 +7,10 @@ import struct
 
 from ..exceptions import ConfigParseError
 from ..models.config import (
+    DisplayCalibrationInfo,
+    DisplayLutInfo,
+    DisplayModeInfo,
+    DisplayPanelInfo,
     BinaryInputs,
     DataBus,
     DataExtended,
@@ -50,6 +54,7 @@ PACKET_TYPE_DATA_EXTENDED = 0x2C
 PACKET_TYPE_DISPLAY_MODE = 0x2E
 PACKET_TYPE_DISPLAY_LUT = 0x2F
 PACKET_TYPE_DISPLAY_CALIBRATION = 0x30
+PACKET_TYPE_DISPLAY_PANEL = 0x31
 
 WIFI_CONFIG_SIZE = 160
 WIFI_CONFIG_LEGACY_SIZE = 65
@@ -185,6 +190,10 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     nfc_configs = []
     flash_configs = []
     data_extended = None
+    display_modes = []
+    display_luts = []
+    display_panels = []
+    display_calibrations = []
 
     for (packet_type, packet_number), packet_data in packets.items():
         if packet_type == PACKET_TYPE_SYSTEM:
@@ -215,6 +224,14 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
             nfc_configs.append(NfcConfig.from_bytes(packet_data))
         elif packet_type == PACKET_TYPE_FLASH_CONFIG:
             flash_configs.append(FlashConfig.from_bytes(packet_data))
+        elif packet_type == PACKET_TYPE_DISPLAY_MODE:
+            display_modes.append(_parse_display_mode(packet_data, packet_number))
+        elif packet_type == PACKET_TYPE_DISPLAY_LUT:
+            display_luts.append(_parse_display_lut(packet_data, packet_number))
+        elif packet_type == PACKET_TYPE_DISPLAY_PANEL:
+            display_panels.append(_parse_display_panel(packet_data, packet_number))
+        elif packet_type == PACKET_TYPE_DISPLAY_CALIBRATION:
+            display_calibrations.append(_parse_display_calibration(packet_data, packet_number))
         elif packet_type == PACKET_TYPE_DATA_EXTENDED:
             data_extended = DataExtended.from_bytes(packet_data)
 
@@ -251,6 +268,10 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
         data_extended=data_extended,
+        display_modes=display_modes,
+        display_luts=display_luts,
+        display_panels=display_panels,
+        display_calibrations=display_calibrations,
         unparsed_tail=unparsed_tail,
         version=version,  # From firmware wrapper
         minor_version=1,  # Not stored in device (only single version byte exists)
@@ -286,8 +307,67 @@ def _get_packet_size(packet_type: int) -> int | None:
         PACKET_TYPE_DISPLAY_MODE: 157,
         PACKET_TYPE_DISPLAY_LUT: 541,
         PACKET_TYPE_DISPLAY_CALIBRATION: 100,
+        PACKET_TYPE_DISPLAY_PANEL: 36,
     }
     return sizes.get(packet_type)
+
+
+def _parse_display_mode(data: bytes, instance: int) -> DisplayModeInfo:
+    """0x2E (157 B). Layout mirrors DisplayMode.serialize() in panel_drive.py."""
+    seq_len = int.from_bytes(data[27:29], "little")
+    return DisplayModeInfo(
+        instance_number=data[0],
+        mode_index=data[1],
+        name=data[2:14].rstrip(b"\x00").decode("utf-8", "replace"),
+        passes=data[14],
+        lut_slot=list(data[15:19]),
+        vsn1=list(data[19:23]),
+        temp_min_c=struct.unpack_from("<b", data, 24)[0],
+        temp_max_c=struct.unpack_from("<b", data, 25)[0],
+        temp_policy=data[26],
+        init_seq=bytes(data[29 : 29 + min(seq_len, 128)]),
+        reserved_flags=data[23],
+    )
+
+
+def _parse_display_lut(data: bytes, instance: int) -> DisplayLutInfo:
+    """0x2F (541 B)."""
+    inst, slot, ln, crc = struct.unpack_from("<BBHH", data, 0)
+    return DisplayLutInfo(
+        instance_number=inst, lut_slot=slot, lut_len=ln, crc16=crc,
+        data=bytes(data[6 : 6 + min(ln, 535)]),
+    )
+
+
+def _parse_display_panel(data: bytes, instance: int) -> DisplayPanelInfo:
+    """0x31 (36 B)."""
+    inst, flags, idle, timeout, fixed = struct.unpack_from("<BBBHH", data, 0)
+    sleep_len = data[12]
+    return DisplayPanelInfo(
+        instance_number=inst,
+        busy_usable=bool(flags & 0x01),
+        lut_supported=bool(flags & 0x02),
+        busy_idle_level=idle,
+        busy_timeout_ms=timeout,
+        busy_fixed_delay_ms=fixed,
+        code_map=list(data[7:11]),
+        mode_count=data[11],
+        sleep_seq=bytes(data[13 : 13 + min(sleep_len, 16)]),
+    )
+
+
+def _parse_display_calibration(data: bytes, instance: int) -> DisplayCalibrationInfo:
+    """0x30 (100 B). int16 hundredths of a CIELAB unit."""
+    inst, mode_index, count, flags = struct.unpack_from("<BBBB", data, 0)
+    n = min(count, 16)
+    lab = [
+        tuple(v / 100.0 for v in struct.unpack_from("<hhh", data, 4 + i * 6))
+        for i in range(n)
+    ]
+    return DisplayCalibrationInfo(
+        instance_number=inst, mode_index=mode_index, entry_count=count,
+        measured=bool(flags & 0x01), lab=lab,  # type: ignore[arg-type]
+    )
 
 
 def _parse_system_config(data: bytes) -> SystemConfig:

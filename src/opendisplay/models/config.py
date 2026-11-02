@@ -1307,6 +1307,18 @@ class GlobalConfig:
     flash_configs: list[FlashConfig] = field(default_factory=list)
     data_extended: DataExtended | None = None
 
+    # Panel DRIVE data (0x2E / 0x2F / 0x31 / 0x30).
+    #
+    # Modelled rather than skipped because skipping silently DELETED them: 0x2E
+    # and 0x2F were in the size table, so the walk stepped over them and built
+    # no object, and a read-modify-write then wrote the config back without
+    # them. A device driven entirely from config would lose every mode and
+    # waveform to one interrogate() + write_config().
+    display_modes: list[DisplayModeInfo] = field(default_factory=list)
+    display_luts: list[DisplayLutInfo] = field(default_factory=list)
+    display_panels: list[DisplayPanelInfo] = field(default_factory=list)
+    display_calibrations: list[DisplayCalibrationInfo] = field(default_factory=list)
+
     # Raw bytes from the first packet this library does not recognise to the end of
     # the blob. Packets carry no length, so parsing stops there; keeping the rest
     # verbatim lets a read-modify-write put it back instead of deleting it.
@@ -1316,3 +1328,78 @@ class GlobalConfig:
     version: int = 0
     minor_version: int = 0
     loaded: bool = False
+
+
+@dataclass
+class DisplayModeInfo:
+    """0x2E -- one drive mode of one display.
+
+    `passes` is what makes a mode more than a name: 1 pass is an ordinary
+    refresh, 3 passes drive the panel three times with DIFFERENT pixel data per
+    pass, which is how the 16-colour mode works.
+    """
+
+    instance_number: int
+    mode_index: int
+    name: str
+    passes: int
+    lut_slot: list[int]
+    vsn1: list[int]
+    temp_min_c: int
+    temp_max_c: int
+    temp_policy: int
+    init_seq: bytes
+    # Byte 23. The firmware ignores it (it was analog_from_wave, now implied by
+    # whether the sequence contains a wave-substitution step), but older writers
+    # still set it. Carried verbatim so a read-modify-write cannot alter bytes
+    # whose meaning this library does not own.
+    reserved_flags: int = 0
+
+    @property
+    def colour_count_hint(self) -> int:
+        """Colours this mode can address, inferred from its pass count.
+
+        A hint, not a fact: 2 bits per pixel per pass gives 4 codes for 1 pass
+        and 4**3 = 64 code triples for 3, but how many DISTINCT colours those
+        triples actually produce is a property of the measured palette (0x30
+        display_calibration), not of the pass count.
+        """
+        return 4 if self.passes <= 1 else 16
+
+
+@dataclass
+class DisplayLutInfo:
+    """0x2F -- a stored waveform. Slots are GLOBAL: a mode on any display may
+    reference any slot, which is how several displays share one copy."""
+
+    instance_number: int
+    lut_slot: int
+    lut_len: int
+    crc16: int
+    data: bytes
+
+
+@dataclass
+class DisplayPanelInfo:
+    """0x31 -- per-panel drive properties that 0x20 never carried."""
+
+    instance_number: int
+    busy_usable: bool
+    lut_supported: bool
+    busy_idle_level: int
+    busy_timeout_ms: int
+    busy_fixed_delay_ms: int
+    code_map: list[int]
+    mode_count: int
+    sleep_seq: bytes
+
+
+@dataclass
+class DisplayCalibrationInfo:
+    """0x30 -- measured CIELAB per palette slot, per mode. Device-inert."""
+
+    instance_number: int
+    mode_index: int
+    entry_count: int
+    measured: bool
+    lab: list[tuple[float, float, float]]
