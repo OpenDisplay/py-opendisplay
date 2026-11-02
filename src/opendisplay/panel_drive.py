@@ -331,7 +331,7 @@ def packets_from_yaml(panels_yaml: str | Path, panel_id: int,
 
 
 def append_drive_packets(base_blob: bytes, drive_packets: list[bytes],
-                         max_size: int = 4080) -> bytes:
+                         max_size: int = 2096) -> bytes:
     """Append drive packets to an existing config blob, LAST and size-checked.
 
     Appending last is not a style choice: shipped firmware abandons the rest of
