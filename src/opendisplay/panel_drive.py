@@ -36,6 +36,7 @@ PACKET_TYPE_DISPLAY_MODE = 0x2E
 PACKET_TYPE_DISPLAY_LUT = 0x2F
 PACKET_TYPE_DISPLAY_CALIBRATION = 0x30
 PACKET_TYPE_DISPLAY_PANEL = 0x31
+PACKET_TYPE_DISPLAY_PALETTE = 0x32
 
 SEQ_FIELD_BYTES = 128
 LUT_FIELD_BYTES = 535
@@ -211,6 +212,47 @@ class DisplayPanel:
             + bytes([self.mode_count, len(self.sleep_seq)])
             + self.sleep_seq.ljust(SLEEP_SEQ_FIELD_BYTES, b"\x00")
             + bytes(7)
+        )
+
+
+@dataclass
+class DisplayPalette:
+    """0x32 -- the ENCODING of a mode's palette.
+
+    A palette entry is a tuple of 2-bit codes, one per pass: the 16-colour BWRY
+    mode sends three frames and a pixel's colour is set by its code in all
+    three. Nothing else in the config records that mapping, so without this a
+    measured colour cannot be reproduced and a host cannot encode a frame.
+
+    Separate from DisplayCalibration (0x30), which holds what those entries
+    measured AS. The encoding is a property of the mode and identical across
+    units; the measurements are per-unit.
+    """
+
+    instance_number: int
+    mode_index: int
+    codes: list[tuple[int, ...]]
+    ordered_by_l: bool = False
+
+    def serialize(self) -> bytes:
+        if len(self.codes) > 16:
+            raise ValueError(f"{len(self.codes)} entries exceeds 16")
+        packed = bytearray(16)
+        for i, triple in enumerate(self.codes[:16]):
+            if len(triple) > 3:
+                raise ValueError(f"entry {i}: {len(triple)} passes, max 3 fit in a byte")
+            v = 0
+            for p, code in enumerate(triple):
+                if not 0 <= code <= 3:
+                    raise ValueError(f"entry {i} pass {p}: code {code} is not 2-bit")
+                v |= (code & 3) << (4 - 2 * p)
+            packed[i] = v
+        return (
+            struct.pack("<BBBB", self.instance_number, self.mode_index,
+                        min(len(self.codes), 16),
+                        0x01 if self.ordered_by_l else 0x00)
+            + bytes(packed)
+            + bytes(4)
         )
 
 

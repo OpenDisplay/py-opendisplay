@@ -565,6 +565,7 @@ PACKET_TYPE_DISPLAY_MODE = 0x2E
 PACKET_TYPE_DISPLAY_LUT = 0x2F
 PACKET_TYPE_DISPLAY_CALIBRATION = 0x30
 PACKET_TYPE_DISPLAY_PANEL = 0x31
+PACKET_TYPE_DISPLAY_PALETTE = 0x32
 
 
 def serialize_display_mode(m: "DisplayModeInfo") -> bytes:
@@ -601,6 +602,21 @@ def serialize_display_panel(pn: "DisplayPanelInfo") -> bytes:
         + bytes([pn.mode_count, len(pn.sleep_seq)])
         + pn.sleep_seq.ljust(16, b"\x00")
         + bytes(7)
+    )
+
+
+def serialize_display_palette(pl: "DisplayPaletteInfo") -> bytes:
+    """0x32, 24 B."""
+    packed = bytearray(16)
+    for i, triple in enumerate(pl.codes[:16]):
+        v = 0
+        for pi, code in enumerate(triple[:3]):
+            v |= (code & 3) << (4 - 2 * pi)
+        packed[i] = v
+    return (
+        struct.pack("<BBBB", pl.instance_number, pl.mode_index,
+                    min(pl.entry_count, 16), 0x01 if pl.ordered_by_l else 0x00)
+        + bytes(packed) + bytes(4)
     )
 
 
@@ -745,6 +761,9 @@ def serialize_config(config: GlobalConfig) -> bytes:
     for lo in config.display_luts:
         packet_data += bytes([lo.lut_slot, PACKET_TYPE_DISPLAY_LUT])
         packet_data += serialize_display_lut(lo)
+    for pl in config.display_palettes:
+        packet_data += bytes([pl.mode_index, PACKET_TYPE_DISPLAY_PALETTE])
+        packet_data += serialize_display_palette(pl)
     for cb in config.display_calibrations:
         packet_data += bytes([cb.mode_index, PACKET_TYPE_DISPLAY_CALIBRATION])
         packet_data += serialize_display_calibration(cb)

@@ -10,6 +10,7 @@ from ..models.config import (
     DisplayCalibrationInfo,
     DisplayLutInfo,
     DisplayModeInfo,
+    DisplayPaletteInfo,
     DisplayPanelInfo,
     BinaryInputs,
     DataBus,
@@ -55,6 +56,7 @@ PACKET_TYPE_DISPLAY_MODE = 0x2E
 PACKET_TYPE_DISPLAY_LUT = 0x2F
 PACKET_TYPE_DISPLAY_CALIBRATION = 0x30
 PACKET_TYPE_DISPLAY_PANEL = 0x31
+PACKET_TYPE_DISPLAY_PALETTE = 0x32
 
 WIFI_CONFIG_SIZE = 160
 WIFI_CONFIG_LEGACY_SIZE = 65
@@ -194,6 +196,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     display_luts = []
     display_panels = []
     display_calibrations = []
+    display_palettes = []
 
     for (packet_type, packet_number), packet_data in packets.items():
         if packet_type == PACKET_TYPE_SYSTEM:
@@ -230,6 +233,8 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
             display_luts.append(_parse_display_lut(packet_data, packet_number))
         elif packet_type == PACKET_TYPE_DISPLAY_PANEL:
             display_panels.append(_parse_display_panel(packet_data, packet_number))
+        elif packet_type == PACKET_TYPE_DISPLAY_PALETTE:
+            display_palettes.append(_parse_display_palette(packet_data, packet_number))
         elif packet_type == PACKET_TYPE_DISPLAY_CALIBRATION:
             display_calibrations.append(_parse_display_calibration(packet_data, packet_number))
         elif packet_type == PACKET_TYPE_DATA_EXTENDED:
@@ -272,6 +277,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         display_luts=display_luts,
         display_panels=display_panels,
         display_calibrations=display_calibrations,
+        display_palettes=display_palettes,
         unparsed_tail=unparsed_tail,
         version=version,  # From firmware wrapper
         minor_version=1,  # Not stored in device (only single version byte exists)
@@ -308,6 +314,7 @@ def _get_packet_size(packet_type: int) -> int | None:
         PACKET_TYPE_DISPLAY_LUT: 541,
         PACKET_TYPE_DISPLAY_CALIBRATION: 100,
         PACKET_TYPE_DISPLAY_PANEL: 36,
+        PACKET_TYPE_DISPLAY_PALETTE: 24,
     }
     return sizes.get(packet_type)
 
@@ -353,6 +360,18 @@ def _parse_display_panel(data: bytes, instance: int) -> DisplayPanelInfo:
         code_map=list(data[7:11]),
         mode_count=data[11],
         sleep_seq=bytes(data[13 : 13 + min(sleep_len, 16)]),
+    )
+
+
+def _parse_display_palette(data: bytes, instance: int) -> DisplayPaletteInfo:
+    """0x32 (24 B). One byte per entry: pass0 bits 5-4, pass1 3-2, pass2 1-0."""
+    inst, mode_index, count, flags = struct.unpack_from("<BBBB", data, 0)
+    n = min(count, 16)
+    codes = [((data[4 + i] >> 4) & 3, (data[4 + i] >> 2) & 3, data[4 + i] & 3)
+             for i in range(n)]
+    return DisplayPaletteInfo(
+        instance_number=inst, mode_index=mode_index, entry_count=count,
+        ordered_by_l=bool(flags & 0x01), codes=codes,
     )
 
 

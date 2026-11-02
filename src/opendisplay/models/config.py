@@ -1318,6 +1318,7 @@ class GlobalConfig:
     display_luts: list[DisplayLutInfo] = field(default_factory=list)
     display_panels: list[DisplayPanelInfo] = field(default_factory=list)
     display_calibrations: list[DisplayCalibrationInfo] = field(default_factory=list)
+    display_palettes: list[DisplayPaletteInfo] = field(default_factory=list)
 
     # Raw bytes from the first packet this library does not recognise to the end of
     # the blob. Packets carry no length, so parsing stops there; keeping the rest
@@ -1403,3 +1404,19 @@ class DisplayCalibrationInfo:
     entry_count: int
     measured: bool
     lab: list[tuple[float, float, float]]
+
+
+@dataclass
+class DisplayPaletteInfo:
+    """0x32 -- the ENCODING of a mode's palette: per-pass 2-bit codes per entry.
+
+    Pairs with DisplayCalibrationInfo (0x30) by mode_index. Kept separate on the
+    wire because the encoding is identical across units while the measurements
+    are not, and a mode may carry either without the other.
+    """
+
+    instance_number: int
+    mode_index: int
+    entry_count: int
+    ordered_by_l: bool
+    codes: list[tuple[int, int, int]]
