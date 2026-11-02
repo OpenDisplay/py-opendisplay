@@ -113,12 +113,15 @@ def pack_pass(indices: np.ndarray, palette: MultiPassPalette, pass_no: int,
               code_map: list[int] | None = None) -> bytes:
     """Palette indices -> one pass's 2bpp frame, MSB-first, row-major.
 
-    `code_map` is the panel's logical->hardware code map (0x31 code_map). It is
-    applied HERE rather than at palette-authoring time because the palette codes
-    are logical colours and the mapping is a property of the panel: BWRY wants
-    [0,1,3,2] because the hardware order is black,white,RED,YELLOW while the
-    colour enum has yellow=2, and that mismatch is what produced a yellow/red
-    swap in the lab firmware.
+    DO NOT PASS code_map FOR A MEASURED PALETTE. A palette entry's per-pass
+    values are already PANEL 2-bit codes: show16_raw.py, the renderer they were
+    derived from, writes them straight to the panel with no mapping. code_map
+    (0x31) turns a LOGICAL BWRY colour into a panel code for the 4-colour path;
+    applying it to codes that are already panel codes maps 2->3 and 3->2, which
+    swaps yellow and red in every pass and silently mis-measures the palette.
+
+    The parameter is kept only for a caller whose indices really are logical
+    colours, and defaults to None so the common case cannot get it wrong.
     """
     if not 0 <= pass_no < palette.passes:
         raise ValueError(f"pass {pass_no} out of range for {palette.passes}-pass mode")
@@ -144,5 +147,10 @@ def encode_frames(rgb: np.ndarray, palette: MultiPassPalette,
     The device expects these concatenated in a single CMD_DRIVE_WRITE_START
     session and advances pass at each frame boundary.
     """
+    if code_map is not None:
+        raise ValueError(
+            "encode_frames does not take a code_map: a measured palette's codes "
+            "are already panel codes, and mapping them again swaps yellow and red"
+        )
     idx = quantise(rgb, palette, dither=dither)
-    return [pack_pass(idx, palette, p, code_map) for p in range(palette.passes)]
+    return [pack_pass(idx, palette, p) for p in range(palette.passes)]
