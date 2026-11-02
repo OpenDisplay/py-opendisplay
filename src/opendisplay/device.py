@@ -7,6 +7,7 @@ import asyncio
 import functools
 import hmac
 import logging
+from dataclasses import replace
 import math
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -3042,7 +3043,25 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             return _capabilities_from_config(self._config)
         except ValueError as exc:
             display = self._config.displays[0]
+            # bwry16 (10) PACKS EXACTLY LIKE bwry (3): 2bpp, one plane. The extra
+            # colours come from driving the panel once per pass, which is the
+            # drive mode's business, not the pixel format's. Falling back keeps a
+            # device usable while the installed epaper-dithering build still
+            # predates the value -- that package mirrors the firmware enum and
+            # has to be rebuilt before it knows 10, but nothing about geometry or
+            # frame size depends on it.
+            if display.color_scheme == 10:
+                _LOGGER.warning(
+                    "color_scheme 10 (bwry16) unknown to the installed "
+                    "epaper-dithering; treating it as bwry (3) for geometry. "
+                    "Multi-pass uploads still need the device's measured palette."
+                )
+                patched = replace(display, color_scheme=3)
+                return _capabilities_from_config(
+                    replace(self._config, displays=[patched, *self._config.displays[1:]])
+                )
             raise ImageEncodingError(
                 f"Device uses unsupported color scheme value {display.color_scheme}. "
-                "Reconfigure the device to a supported color scheme (0–8)."
+                "Reconfigure the device to a supported color scheme (0-8, or 10 "
+                "with an epaper-dithering build that knows bwry16)."
             ) from exc
