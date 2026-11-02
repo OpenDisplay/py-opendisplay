@@ -10,11 +10,14 @@ already silently changed init traffic on four shipped panels.
 With drive data in the config there is one copy, and a host can read it back off
 the device instead of mirroring it.
 
-Three packets, all appended at the end of the id space (minor 1.6):
-    0x2E display_mode         per display per mode: init sequence, LUT slots,
-                              pass count, advisory temperature window
+Four packets, all appended at the end of the id space (minor 1.6):
+    0x2E display_mode         per display per mode: the full pass recipe, LUT
+                              slots, pass count, advisory temperature window
     0x2F display_lut          a 535-byte waveform
     0x30 display_calibration  measured CIELAB per palette slot, per mode
+    0x31 display_panel        BUSY trust and sense, colour code map, sleep
+                              sequence -- facts that were never on the wire at
+                              all, so a driver still needed a built-in table
 
 ORDERING MATTERS. Shipped firmware abandons the remainder of the config blob
 when it meets an unknown packet id (skip-to-CRC). These must therefore be
@@ -32,15 +35,20 @@ from typing import Any
 PACKET_TYPE_DISPLAY_MODE = 0x2E
 PACKET_TYPE_DISPLAY_LUT = 0x2F
 PACKET_TYPE_DISPLAY_CALIBRATION = 0x30
+PACKET_TYPE_DISPLAY_PANEL = 0x31
 
 SEQ_FIELD_BYTES = 128
 LUT_FIELD_BYTES = 535
 CALIB_FIELD_BYTES = 96
+SLEEP_SEQ_FIELD_BYTES = 16
 
 # Sequence escapes -- must match src/od_epd.c exactly.
 _ESC = 0x00
 _ESC_BUSY = 0x01
 _ESC_WAVE = 0x02
+_ESC_IMAGE = 0x03
+_ESC_LUT = 0x04
+_ESC_DELAY = 0x05
 _END = 0x00
 _WAVE_TOKENS: dict[str, int] = {f"@w{i}": i for i in range(7)}
 _WAVE_TOKENS["@vcom"] = 0xFF
@@ -55,14 +63,37 @@ def encode_sequence(steps: list[str]) -> bytes:
         [len][cmd][data...]            len counts cmd+data, always >= 1
         0x00 0x01                      wait for BUSY
         0x00 0x02 n (is_wave,val)*n    step with wave-header substitution
+        0x00 0x03                      stream the image here (walk pauses)
+        0x00 0x04                      stream the waveform here
+        0x00 0x05 lo hi                wait N ms
         0x00 0x00                      end
     A zero length is otherwise impossible, which is why it is free as an escape.
+
+    ONE SEQUENCE IS A WHOLE PASS: registers, waveform, image, power-on, refresh.
+    @lut's position is what used to be the `lut_placement` enum -- the 7.5"
+    GDEM075F52 silently discards a waveform uploaded before power-on, so the
+    position is load-bearing and now lives where it takes effect.
     """
     out = bytearray()
     for raw in steps:
         s = raw.strip()
         if s == "@busy":
             out += bytes([_ESC, _ESC_BUSY])
+            continue
+        if s == "@image":
+            out += bytes([_ESC, _ESC_IMAGE])
+            continue
+        if s == "@lut":
+            out += bytes([_ESC, _ESC_LUT])
+            continue
+        if s.startswith("@delay"):
+            parts = s.split()
+            if len(parts) != 2:
+                raise ValueError(f"@delay needs exactly one argument: {s!r}")
+            ms = int(parts[1], 10)
+            if not 0 <= ms <= 0xFFFF:
+                raise ValueError(f"@delay {ms} out of range (0..65535 ms)")
+            out += bytes([_ESC, _ESC_DELAY, ms & 0xFF, (ms >> 8) & 0xFF])
             continue
         toks = s.split()
         parsed = [
@@ -140,6 +171,50 @@ class DisplayLut:
 
 
 @dataclass
+class DisplayPanel:
+    """0x31 -- the per-panel drive facts that 0x20 never carried.
+
+    None of these were on the wire before: 0x20 has busy_pin but says nothing
+    about whether that pin can be believed. The 4.2" GDEM042F52 reads busy
+    immediately after power-up with nothing sent and never releases after a
+    refresh, so a driver that polls it stalls forever. Until this packet, that
+    fact could only live in a compiled-in per-panel table.
+    """
+
+    instance_number: int
+    busy_usable: bool
+    busy_idle_level: int
+    busy_timeout_ms: int
+    busy_fixed_delay_ms: int
+    code_map: list[int]
+    mode_count: int
+    lut_supported: bool = False
+    sleep_seq: bytes = b""
+
+    def serialize(self) -> bytes:
+        if len(self.sleep_seq) > SLEEP_SEQ_FIELD_BYTES:
+            raise ValueError(
+                f"sleep sequence {len(self.sleep_seq)} B exceeds "
+                f"{SLEEP_SEQ_FIELD_BYTES} B"
+            )
+        flags = (0x01 if self.busy_usable else 0) | (0x02 if self.lut_supported else 0)
+        return (
+            struct.pack(
+                "<BBBHH",
+                self.instance_number,
+                flags,
+                self.busy_idle_level,
+                min(self.busy_timeout_ms, 0xFFFF),
+                min(self.busy_fixed_delay_ms, 0xFFFF),
+            )
+            + bytes((list(self.code_map) + [0] * 4)[:4])
+            + bytes([self.mode_count, len(self.sleep_seq)])
+            + self.sleep_seq.ljust(SLEEP_SEQ_FIELD_BYTES, b"\x00")
+            + bytes(7)
+        )
+
+
+@dataclass
 class DisplayCalibration:
     instance_number: int
     mode_index: int
@@ -155,6 +230,31 @@ class DisplayCalibration:
                         min(len(self.lab), 16), 1 if self.measured else 0)
             + bytes(body).ljust(CALIB_FIELD_BYTES, b"\x00")
         )
+
+
+def _panel_packet(panel: dict[str, Any], mode_count: int,
+                  instance: int = 0) -> DisplayPanel:
+    busy = panel.get("busy") or {}
+    lut = panel.get("lut") or {}
+    colour = panel.get("colour") or {}
+    usable = bool(busy.get("usable", True))
+    if "idle_level" not in busy:
+        raise ValueError(
+            f"{panel.get('name')}: busy.idle_level is required. It is not "
+            f"guessable -- getting it wrong either reports idle forever or "
+            f"hangs every poll. bb_ep.inl's chip_type is the source."
+        )
+    return DisplayPanel(
+        instance_number=instance,
+        busy_usable=usable,
+        busy_idle_level=int(busy["idle_level"]),
+        busy_timeout_ms=int(busy.get("timeout_ms", 30000)),
+        busy_fixed_delay_ms=int(busy.get("fixed_delay_ms", 0)),
+        code_map=list(colour.get("code_map") or [0, 1, 2, 3]),
+        mode_count=mode_count,
+        lut_supported=bool(lut.get("supported")),
+        sleep_seq=encode_sequence(panel.get("sleep_sequence") or []) if panel.get("sleep_sequence") else b"",
+    )
 
 
 def _packets_for_panel(panel: dict[str, Any], waves: dict[str, bytes],
@@ -209,7 +309,15 @@ def packets_from_yaml(panels_yaml: str | Path, panel_id: int,
     doc = yaml.safe_load(Path(panels_yaml).read_text())
     panel = next(p for p in doc["panels"] if int(str(p["id"]), 0) == panel_id)
     modes, luts = _packets_for_panel(panel, waves, instance)
-    out: list[bytes] = []
+    pan = _panel_packet(panel, len(modes), instance)
+
+    # The instance byte that precedes each packet is what the device indexes by:
+    # mode_index for 0x2E, slot for 0x2F, display instance for 0x31. That is why
+    # od_cfg_entry_t carries `instance` at all -- a lookup is a field compare
+    # rather than a body read.
+    out: list[bytes] = [
+        bytes([pan.instance_number, PACKET_TYPE_DISPLAY_PANEL]) + pan.serialize()
+    ]
     for m in modes:
         out.append(bytes([m.mode_index, PACKET_TYPE_DISPLAY_MODE]) + m.serialize())
     for lo in luts:
@@ -218,7 +326,7 @@ def packets_from_yaml(panels_yaml: str | Path, panel_id: int,
 
 
 def append_drive_packets(base_blob: bytes, drive_packets: list[bytes],
-                         max_size: int = 2048) -> bytes:
+                         max_size: int = 4080) -> bytes:
     """Append drive packets to an existing config blob, LAST and size-checked.
 
     Appending last is not a style choice: shipped firmware abandons the rest of
@@ -228,6 +336,10 @@ def append_drive_packets(base_blob: bytes, drive_packets: list[bytes],
     Refuses rather than truncates when it will not fit -- the device cannot be
     asked how large a config it accepts (there is no capability field for it),
     so a host that guesses wrong must fail loudly.
+
+    4080 is the device's ceiling, not a round number: NVM3 caps one object at
+    4096 (NVM3_MAX_OBJECT_SIZE_HIGH_LIMIT) and 16 of those go to the record
+    header. Going beyond it needs the config split across several NVM3 objects.
     """
     total = len(base_blob) + sum(len(p) for p in drive_packets)
     if total > max_size:
