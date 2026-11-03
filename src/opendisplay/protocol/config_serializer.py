@@ -10,7 +10,11 @@ if TYPE_CHECKING:
         BinaryInputs,
         DataBus,
         DataExtended,
+        DisplayCalibrationInfo,
         DisplayConfig,
+        DisplayLutInfo,
+        DisplayModeInfo,
+        DisplayPanelInfo,
         FlashConfig,
         GlobalConfig,
         LedConfig,
@@ -561,67 +565,92 @@ def serialize_data_extended(config: DataExtended) -> bytes:
     return config.to_bytes()
 
 
-PACKET_TYPE_DISPLAY_MODE = 0x2E
-PACKET_TYPE_DISPLAY_LUT = 0x2F
-PACKET_TYPE_DISPLAY_CALIBRATION = 0x30
-PACKET_TYPE_DISPLAY_PANEL = 0x31
+PACKET_TYPE_DISPLAY_MODE = 0xAE
+PACKET_TYPE_DISPLAY_LUT = 0xAF
+PACKET_TYPE_DISPLAY_CALIBRATION = 0xB0
+PACKET_TYPE_DISPLAY_PANEL = 0xB1
+
+
+def _ex_packet(number: int, packet_type: int, body: bytes) -> bytes:
+    """Frame a LENGTH-PREFIXED packet: [number][id][length:2 LE][body]."""
+    return bytes([number, packet_type]) + struct.pack("<H", len(body)) + body
 
 
 def serialize_display_mode(m: "DisplayModeInfo") -> bytes:
-    """0x2E, 157 B. Must round-trip _parse_display_mode byte for byte."""
+    """0xAE body: 37-byte head + seq at its real length. Round-trips _parse_display_mode."""
     return (
         struct.pack("<BB", m.instance_number, m.mode_index)
         + m.name.encode()[:12].ljust(12, b"\x00")
-        + bytes([m.passes])
-        + bytes((list(m.lut_slot) + [0xFF] * 4)[:4])
-        + bytes((list(m.vsn1) + [0] * 4)[:4])
-        + bytes([m.reserved_flags])
+        + bytes([m.color_scheme, m.passes])
         + struct.pack("<bb", m.temp_min_c, m.temp_max_c)
         + bytes([m.temp_policy])
+        + bytes((list(m.lut_slot) + [0xFF] * 8)[:8])
+        + bytes((list(m.vsn1) + [0] * 8)[:8])
         + struct.pack("<H", len(m.init_seq))
-        + m.init_seq.ljust(128, b"\x00")
+        + m.init_seq
     )
 
 
 def serialize_display_lut(lo: "DisplayLutInfo") -> bytes:
-    """0x2F, 541 B."""
-    return (
-        struct.pack("<BBHH", lo.instance_number, lo.lut_slot, lo.lut_len, lo.crc16)
-        + lo.data.ljust(535, b"\x00")
-    )
+    """0xAF body: 4-byte head + the waveform at its real size (no stored length)."""
+    return struct.pack("<BBH", lo.instance_number, lo.lut_slot, lo.crc16) + lo.data
 
 
 def serialize_display_panel(pn: "DisplayPanelInfo") -> bytes:
-    """0x31, 36 B."""
+    """0xB1 body: 13-byte head + sleep_seq at its real length."""
     flags = (0x01 if pn.busy_usable else 0) | (0x02 if pn.lut_supported else 0)
     return (
-        struct.pack("<BBBHH", pn.instance_number, flags, pn.busy_idle_level,
-                    pn.busy_timeout_ms, pn.busy_fixed_delay_ms)
+        struct.pack("<BBBHH", pn.instance_number, flags, pn.busy_idle_level, pn.busy_timeout_ms, pn.busy_fixed_delay_ms)
         + bytes((list(pn.code_map) + [0] * 4)[:4])
         + bytes([pn.mode_count, len(pn.sleep_seq)])
-        + pn.sleep_seq.ljust(16, b"\x00")
-        + bytes(7)
+        + pn.sleep_seq
     )
 
 
 def serialize_display_calibration(cb: "DisplayCalibrationInfo") -> bytes:
-    """0x30, 116 B: header + codes[16] + lab[96]."""
-    packed = bytearray(16)
-    for i, triple in enumerate(cb.codes[:16]):
-        v = 0
-        for pi, code in enumerate(triple[:3]):
-            v |= (code & 3) << (4 - 2 * pi)
-        packed[i] = v
-    body = b"".join(
-        struct.pack("<hhh", round(L * 100), round(a * 100), round(b * 100))
-        for (L, a, b) in cb.lab[:16]
-    )
-    return (
-        struct.pack("<BBBB", cb.instance_number, cb.mode_index,
-                    min(cb.entry_count, 16), 1 if cb.measured else 0)
-        + bytes(packed)
-        + body.ljust(96, b"\x00")
-    )
+    """0xB0 body: 4-byte head + entry_count x 8-byte entries.
+
+    codes:u16 LE packs the 2-bit panel code of pass p into bits [2p+1:2p]
+    (LSB-first), per opendisplay_structs.h 2.2 -- NOT the Rev 1 one-byte
+    MSB-first packing.
+    """
+    n = min(len(cb.lab), 32)
+    out = bytearray(struct.pack("<BBBB", cb.instance_number, cb.mode_index, 1 if cb.measured else 0, n))
+    for i in range(n):
+        cw = 0
+        if i < len(cb.codes):
+            for pi, code in enumerate(cb.codes[i][:8]):
+                cw |= (code & 3) << (2 * pi)
+        L, a, b = cb.lab[i]
+        out += struct.pack("<Hhhh", cw, round(L * 100), round(a * 100), round(b * 100))
+    return bytes(out)
+
+
+def _serialize_drive_packets(config: GlobalConfig) -> bytes:
+    """The 0xAE-0xB1 drive packets + unknown 0x80+ packets, framed and ordered."""
+    out = b""
+    # Panel DRIVE data, emitted after every packet older firmware understands.
+    # They live in the LENGTH-PREFIXED range (0xAE-0xB1): a legacy reader stops
+    # at the first 0x80+ id and keeps everything before it, and a reader that
+    # knows the length rule skips what it does not understand. Still emitted
+    # LAST so legacy readers lose nothing.
+    #
+    # Re-emitting them is what stops a read-modify-write from DELETING the drive
+    # data. They used to be skipped by size and never modelled, so the device's
+    # modes and waveforms disappeared on the way back out.
+    for m in config.display_panels:
+        out += _ex_packet(m.instance_number, PACKET_TYPE_DISPLAY_PANEL, serialize_display_panel(m))
+    for md in config.display_modes:
+        out += _ex_packet(md.mode_index, PACKET_TYPE_DISPLAY_MODE, serialize_display_mode(md))
+    for lo in config.display_luts:
+        out += _ex_packet(lo.lut_slot, PACKET_TYPE_DISPLAY_LUT, serialize_display_lut(lo))
+    for cb in config.display_calibrations:
+        out += _ex_packet(cb.mode_index, PACKET_TYPE_DISPLAY_CALIBRATION, serialize_display_calibration(cb))
+    # Unknown length-prefixed packets ride along verbatim: they are skippable
+    # by construction, so preserving them costs nothing and loses nothing.
+    for num, ptype, body in config.unknown_ex_packets:
+        out += _ex_packet(num, ptype, body)
+    return out
 
 
 def serialize_config(config: GlobalConfig) -> bytes:
@@ -735,26 +764,12 @@ def serialize_config(config: GlobalConfig) -> bytes:
         packet_data += bytes([i, PACKET_TYPE_NFC_CONFIG])
         packet_data += serialize_nfc_config(nfc)
 
-    # Panel DRIVE data, emitted after every packet older firmware understands.
-    # Same reason as NFC above: a firmware that does not know 0x2E/0x2F/0x31/0x30
-    # abandons the rest of the blob at the first unknown id, so these must sit
-    # behind everything it does know.
-    #
-    # Re-emitting them is what stops a read-modify-write from DELETING the drive
-    # data. They used to be skipped by size and never modelled, so the device's
-    # modes and waveforms disappeared on the way back out.
-    for m in config.display_panels:
-        packet_data += bytes([m.instance_number, PACKET_TYPE_DISPLAY_PANEL])
-        packet_data += serialize_display_panel(m)
-    for md in config.display_modes:
-        packet_data += bytes([md.mode_index, PACKET_TYPE_DISPLAY_MODE])
-        packet_data += serialize_display_mode(md)
-    for lo in config.display_luts:
-        packet_data += bytes([lo.lut_slot, PACKET_TYPE_DISPLAY_LUT])
-        packet_data += serialize_display_lut(lo)
-    for cb in config.display_calibrations:
-        packet_data += bytes([cb.mode_index, PACKET_TYPE_DISPLAY_CALIBRATION])
-        packet_data += serialize_display_calibration(cb)
+    # 0x2D findmy_config rides along verbatim (the last legacy-range packet;
+    # dropping it would de-provision the device's proximity networks).
+    if config.findmy_raw:
+        packet_data += bytes([0, 0x2D]) + config.findmy_raw
+
+    packet_data += _serialize_drive_packets(config)
 
     # Packets the parser could not read go back verbatim, after everything else for
     # the same reason as NFC above.

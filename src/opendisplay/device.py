@@ -7,11 +7,11 @@ import asyncio
 import functools
 import hmac
 import logging
-from dataclasses import replace
 import math
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
+from dataclasses import replace
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from epaper_dithering import ColorScheme, DbsParams, DitherMode, dither_image
@@ -3057,9 +3057,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                     "Multi-pass uploads still need the device's measured palette."
                 )
                 patched = replace(display, color_scheme=3)
-                return _capabilities_from_config(
-                    replace(self._config, displays=[patched, *self._config.displays[1:]])
-                )
+                return _capabilities_from_config(replace(self._config, displays=[patched, *self._config.displays[1:]]))
             raise ImageEncodingError(
                 f"Device uses unsupported color scheme value {display.color_scheme}. "
                 "Reconfigure the device to a supported color scheme (0-8, or 10 "

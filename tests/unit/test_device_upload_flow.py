@@ -651,7 +651,7 @@ def test_grayscale8_config_raises_image_encoding_error() -> None:
     """color_scheme 9 (GRAYSCALE_8) is library-local, never a device wire value."""
     config = _make_config(color_scheme=9)
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config, max_queue_size=1)
-    with pytest.raises(ImageEncodingError, match=r"\(0–8\)"):
+    with pytest.raises(ImageEncodingError, match=r"0-8"):
         device._extract_capabilities_from_config()
 
 
@@ -659,7 +659,7 @@ def test_out_of_range_color_scheme_raises_image_encoding_error() -> None:
     """An out-of-range color_scheme surfaces as ImageEncodingError, not a bare ValueError."""
     config = _make_config(color_scheme=99)
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config, max_queue_size=1)
-    with pytest.raises(ImageEncodingError, match=r"\(0–8\)"):
+    with pytest.raises(ImageEncodingError, match=r"0-8"):
         device._extract_capabilities_from_config()
 
 

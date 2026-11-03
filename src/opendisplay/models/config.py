@@ -1307,21 +1307,35 @@ class GlobalConfig:
     flash_configs: list[FlashConfig] = field(default_factory=list)
     data_extended: DataExtended | None = None
 
-    # Panel DRIVE data (0x2E / 0x2F / 0x31 / 0x30).
+    # Panel DRIVE data (0xAE / 0xAF / 0xB1 / 0xB0 -- length-prefixed range).
     #
-    # Modelled rather than skipped because skipping silently DELETED them: 0x2E
-    # and 0x2F were in the size table, so the walk stepped over them and built
-    # no object, and a read-modify-write then wrote the config back without
-    # them. A device driven entirely from config would lose every mode and
-    # waveform to one interrogate() + write_config().
+    # Modelled rather than skipped because skipping silently DELETED them: the
+    # Rev 1 fixed packets were in the size table, so the walk stepped over them
+    # and built no object, and a read-modify-write then wrote the config back
+    # without them. A device driven entirely from config would lose every mode
+    # and waveform to one interrogate() + write_config().
     display_modes: list[DisplayModeInfo] = field(default_factory=list)
     display_luts: list[DisplayLutInfo] = field(default_factory=list)
     display_panels: list[DisplayPanelInfo] = field(default_factory=list)
     display_calibrations: list[DisplayCalibrationInfo] = field(default_factory=list)
 
-    # Raw bytes from the first packet this library does not recognise to the end of
-    # the blob. Packets carry no length, so parsing stops there; keeping the rest
-    # verbatim lets a read-modify-write put it back instead of deleting it.
+    # 0x2D findmy_config, carried VERBATIM (128 B). Modelled as opaque bytes on
+    # purpose: provisioning keys are not this library's business to interpret,
+    # but dropping the packet on a read-modify-write would de-provision the
+    # device -- which is exactly what happened while 0x2D was unknown here (it
+    # also hid everything serialized after it).
+    findmy_raw: bytes = b""
+
+    # Packets from the LENGTH-PREFIXED range (0x80+) this library does not
+    # recognise: (packet_number, packet_type, body). Skippable by design --
+    # the wire carries their length -- and re-emitted verbatim on serialize.
+    unknown_ex_packets: list[tuple[int, int, bytes]] = field(default_factory=list)
+
+    # Raw bytes from the first LEGACY (sub-0x80) packet this library does not
+    # recognise to the end of the blob. Legacy packets carry no length, so
+    # parsing stops there; keeping the rest verbatim lets a read-modify-write
+    # put it back instead of deleting it. (The legacy range is frozen at 0x2D,
+    # so this should no longer occur against current firmware.)
     unparsed_tail: bytes = b""
 
     # Metadata
@@ -1332,7 +1346,7 @@ class GlobalConfig:
 
 @dataclass
 class DisplayModeInfo:
-    """0x2E -- one drive mode of one display.
+    """0xAE -- one drive mode of one display (37-byte head + seq tail).
 
     `passes` is what makes a mode more than a name: 1 pass is an ordinary
     refresh, 3 passes drive the panel three times with DIFFERENT pixel data per
@@ -1349,11 +1363,11 @@ class DisplayModeInfo:
     temp_max_c: int
     temp_policy: int
     init_seq: bytes
-    # Byte 23. The firmware ignores it (it was analog_from_wave, now implied by
-    # whether the sequence contains a wave-substitution step), but older writers
-    # still set it. Carried verbatim so a read-modify-write cannot alter bytes
-    # whose meaning this library does not own.
-    reserved_flags: int = 0
+    # What this mode RENDERS (ColorScheme; e.g. 10 = BWRY16 for the multi-pass
+    # 16-colour mode). 0xFF = inherit the panel's own scheme from 0x20. This is
+    # the one legitimate home for mode-level schemes -- writing them into 0x20
+    # is the bug that made every 4-colour consumer mis-render.
+    color_scheme: int = 0xFF
 
     @property
     def colour_count_hint(self) -> int:
@@ -1369,8 +1383,11 @@ class DisplayModeInfo:
 
 @dataclass
 class DisplayLutInfo:
-    """0x2F -- a stored waveform. Slots are GLOBAL: a mode on any display may
-    reference any slot, which is how several displays share one copy."""
+    """0xAF -- a stored waveform AT ITS REAL SIZE (4-byte head + data). Slots
+    are GLOBAL: a mode on any display may reference any slot, which is how
+    several displays share one copy. There is no stored length field any more:
+    the waveform length IS the packet body length minus 4, so `lut_len` is
+    derived on parse and ignored on serialize."""
 
     instance_number: int
     lut_slot: int
@@ -1381,7 +1398,8 @@ class DisplayLutInfo:
 
 @dataclass
 class DisplayPanelInfo:
-    """0x31 -- per-panel drive properties that 0x20 never carried."""
+    """0xB1 -- per-panel drive properties that 0x20 never carried (13-byte
+    head + sleep_seq tail)."""
 
     instance_number: int
     busy_usable: bool
@@ -1396,7 +1414,9 @@ class DisplayPanelInfo:
 
 @dataclass
 class DisplayCalibrationInfo:
-    """0x30 -- measured CIELAB per palette slot, per mode. Device-inert."""
+    """0xB0 -- measured CIELAB per palette slot, per mode. Device-inert.
+    Entries are 8 bytes on the wire: codes:u16 LE (2-bit panel code of pass p
+    in bits [2p+1:2p], so 8 passes fit) + CIELAB x100 as 3 x int16."""
 
     instance_number: int
     mode_index: int
@@ -1404,6 +1424,6 @@ class DisplayCalibrationInfo:
     measured: bool
     lab: list[tuple[float, float, float]]
     # Per-pass 2-bit codes producing each entry, paired with `lab` in the same
-    # packet so the two cannot disagree about count or order.
-    codes: list[tuple[int, int, int]] = field(default_factory=list)
-
+    # packet so the two cannot disagree about count or order. Tuple length =
+    # the mode's pass count (up to 8).
+    codes: list[tuple[int, ...]] = field(default_factory=list)

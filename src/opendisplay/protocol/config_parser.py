@@ -7,14 +7,14 @@ import struct
 
 from ..exceptions import ConfigParseError
 from ..models.config import (
-    DisplayCalibrationInfo,
-    DisplayLutInfo,
-    DisplayModeInfo,
-    DisplayPanelInfo,
     BinaryInputs,
     DataBus,
     DataExtended,
+    DisplayCalibrationInfo,
     DisplayConfig,
+    DisplayLutInfo,
+    DisplayModeInfo,
+    DisplayPanelInfo,
     FlashConfig,
     GlobalConfig,
     LedConfig,
@@ -48,13 +48,21 @@ PACKET_TYPE_PASSIVE_BUZZER = 0x29
 PACKET_TYPE_NFC_CONFIG = 0x2A
 PACKET_TYPE_FLASH_CONFIG = 0x2B
 PACKET_TYPE_DATA_EXTENDED = 0x2C
-# New in minor 1.6. Appended at the END of the id space on purpose: shipped
-# firmware abandons the rest of the blob on an unknown packet id (skip-to-CRC),
-# so anything it cannot parse must come after everything it can.
-PACKET_TYPE_DISPLAY_MODE = 0x2E
-PACKET_TYPE_DISPLAY_LUT = 0x2F
-PACKET_TYPE_DISPLAY_CALIBRATION = 0x30
-PACKET_TYPE_DISPLAY_PANEL = 0x31
+# 0x2D findmy_config: the LAST legacy-range id (the range is frozen at it).
+# Carried as opaque bytes -- see GlobalConfig.findmy_raw.
+PACKET_TYPE_FINDMY = 0x2D
+# Panel drive data lives in the LENGTH-PREFIXED id range (structs 2.2): on the
+# wire each packet is [number][id][length:2 LE][body], so this parser can SKIP
+# any 0x80+ id it does not know instead of abandoning the tail.
+PACKET_TYPE_DISPLAY_MODE = 0xAE
+PACKET_TYPE_DISPLAY_LUT = 0xAF
+PACKET_TYPE_DISPLAY_CALIBRATION = 0xB0
+PACKET_TYPE_DISPLAY_PANEL = 0xB1
+# Ids 0x2E-0x31 were burned by pre-release lab builds carrying FIXED-SIZE
+# drafts of the drive packets. Stepped over by size and NOT modelled: dropping
+# them on a read-modify-write is deliberate cleanup -- current firmware ignores
+# them too, and re-emitting them would only waste config space.
+_BURNED_SIZES = {0x2E: 157, 0x2F: 541, 0x30: 116, 0x31: 36}
 
 WIFI_CONFIG_SIZE = 160
 WIFI_CONFIG_LEGACY_SIZE = 65
@@ -101,6 +109,101 @@ def parse_config_response(raw_data: bytes) -> GlobalConfig:
     return parse_tlv_config(packet_data, version=config_version)
 
 
+def _split_packets(
+    data: bytes,
+) -> tuple[dict[tuple[int, int], bytes], list[tuple[int, int, bytes]], bytes]:
+    """Walk the TLV body into per-packet byte slices.
+
+    Legacy ids (< 0x80) are fixed-size: an unknown one stops the walk and the
+    remainder lands in unparsed_tail. Ids 0x80+ carry [length:2 LE] and are
+    skippable by design: unknown ones are collected (number, type, body) for
+    verbatim re-emission. The burned Rev 1 drive ids (0x2E-0x31) are stepped
+    over by their known sizes and deliberately dropped.
+
+    Returns:
+        (packets keyed by (type, number), unknown 0x80+ packets, unparsed tail)
+    """
+    offset = 0
+    packets: dict[tuple[int, int], bytes] = {}
+    unparsed_tail = b""
+    unknown_ex_packets: list[tuple[int, int, bytes]] = []
+
+    while offset < len(data) - 1:
+        packet_number = data[offset]
+        packet_type = data[offset + 1]
+        offset += 2
+
+        # LENGTH-PREFIXED range: skippable by design, known or not.
+        if packet_type >= 0x80:
+            if offset + 2 > len(data):
+                raise ConfigParseError(f"Packet 0x{packet_type:02x}: truncated length header")
+            ex_len = int.from_bytes(data[offset : offset + 2], "little")
+            offset += 2
+            if offset + ex_len > len(data):
+                raise ConfigParseError(f"Packet 0x{packet_type:02x}: body {ex_len} bytes runs past the blob end")
+            body = data[offset : offset + ex_len]
+            offset += ex_len
+            if packet_type in (
+                PACKET_TYPE_DISPLAY_MODE,
+                PACKET_TYPE_DISPLAY_LUT,
+                PACKET_TYPE_DISPLAY_CALIBRATION,
+                PACKET_TYPE_DISPLAY_PANEL,
+            ):
+                packets[(packet_type, packet_number)] = body
+            else:
+                unknown_ex_packets.append((packet_number, packet_type, bytes(body)))
+                _LOGGER.debug(
+                    "Skipped unknown length-prefixed packet 0x%02x (%d bytes); will re-emit verbatim",
+                    packet_type,
+                    ex_len,
+                )
+            continue
+
+        # Burned pre-release drive packet ids: step over, do not model.
+        if packet_type in _BURNED_SIZES:
+            burned = _BURNED_SIZES[packet_type]
+            if offset + burned > len(data):
+                raise ConfigParseError(f"Burned packet 0x{packet_type:02x} truncated: need {burned} bytes")
+            offset += burned
+            _LOGGER.info(
+                "Dropping burned pre-release drive packet 0x%02x (%d bytes); rebuild the drive data as 0xAE-0xB1",
+                packet_type,
+                burned,
+            )
+            continue
+
+        # Legacy range: size implied by the type.
+        packet_size = _get_packet_size(packet_type)
+        if packet_size is None:
+            unparsed_tail = data[offset - 2 :]
+            _LOGGER.warning(
+                "Unknown packet type 0x%02x at offset %d; keeping the remaining %d bytes unparsed",
+                packet_type,
+                offset - 2,
+                len(unparsed_tail),
+            )
+            break
+
+        if offset + packet_size > len(data):
+            remaining = len(data) - offset
+            # Legacy firmware can return a short 0x26 payload (SSID/password/encryption only).
+            if packet_type == PACKET_TYPE_WIFI_CONFIG and remaining == WIFI_CONFIG_LEGACY_SIZE:
+                _LOGGER.debug(
+                    "Detected legacy wifi_config packet size (%d bytes)",
+                    WIFI_CONFIG_LEGACY_SIZE,
+                )
+                packet_size = WIFI_CONFIG_LEGACY_SIZE
+            else:
+                raise ConfigParseError(
+                    f"Packet type 0x{packet_type:02x} truncated: need {packet_size} bytes, have {remaining}"
+                )
+
+        packets[(packet_type, packet_number)] = data[offset : offset + packet_size]
+        offset += packet_size
+
+    return packets, unknown_ex_packets, unparsed_tail
+
+
 def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     """Parse complete TLV configuration from device response.
 
@@ -123,55 +226,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
 
     _LOGGER.debug("Parsing TLV config, %d bytes", len(data))
 
-    # Parse TLV packets (OEPL format: [packet_number:1][packet_id:1][fixed_data])
-    offset = 0
-    packets = {}
-    unparsed_tail = b""
-
-    while offset < len(data) - 1:
-        if offset + 2 > len(data):
-            break  # Not enough data for packet header
-
-        packet_number = data[offset]
-        packet_type = data[offset + 1]
-        offset += 2
-
-        # Determine packet size based on type
-        packet_size = _get_packet_size(packet_type)
-        if packet_size is None:
-            unparsed_tail = data[offset - 2 :]
-            _LOGGER.warning(
-                "Unknown packet type 0x%02x at offset %d; keeping the remaining %d bytes unparsed",
-                packet_type,
-                offset - 2,
-                len(unparsed_tail),
-            )
-            break
-
-        # Extract packet data
-        if offset + packet_size > len(data):
-            remaining = len(data) - offset
-
-            # Legacy firmware can return a short 0x26 payload (SSID/password/encryption only).
-            if packet_type == PACKET_TYPE_WIFI_CONFIG and remaining == WIFI_CONFIG_LEGACY_SIZE:
-                _LOGGER.debug(
-                    "Detected legacy wifi_config packet size (%d bytes)",
-                    WIFI_CONFIG_LEGACY_SIZE,
-                )
-                packet_size = WIFI_CONFIG_LEGACY_SIZE
-            else:
-                raise ConfigParseError(
-                    f"Packet type 0x{packet_type:02x} truncated: need {packet_size} bytes, have {remaining}"
-                )
-
-        packet_data = data[offset : offset + packet_size]
-        offset += packet_size
-
-        # Store packet
-        key = (packet_type, packet_number)
-        packets[key] = packet_data
-
-        _LOGGER.debug("Parsed packet: type=0x%02x, num=%d, size=%d", packet_type, packet_number, packet_size)
+    packets, unknown_ex_packets, unparsed_tail = _split_packets(data)
 
     # Parse packets in a single pass
     # Note: Firmware uses global sequential numbering across all packet types
@@ -190,12 +245,13 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     nfc_configs = []
     flash_configs = []
     data_extended = None
+    findmy_raw = b""
     display_modes = []
     display_luts = []
     display_panels = []
     display_calibrations = []
 
-    for (packet_type, packet_number), packet_data in packets.items():
+    for (packet_type, _), packet_data in packets.items():
         if packet_type == PACKET_TYPE_SYSTEM:
             system = _parse_system_config(packet_data)
         elif packet_type == PACKET_TYPE_MANUFACTURER:
@@ -225,15 +281,17 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         elif packet_type == PACKET_TYPE_FLASH_CONFIG:
             flash_configs.append(FlashConfig.from_bytes(packet_data))
         elif packet_type == PACKET_TYPE_DISPLAY_MODE:
-            display_modes.append(_parse_display_mode(packet_data, packet_number))
+            display_modes.append(_parse_display_mode(packet_data))
         elif packet_type == PACKET_TYPE_DISPLAY_LUT:
-            display_luts.append(_parse_display_lut(packet_data, packet_number))
+            display_luts.append(_parse_display_lut(packet_data))
         elif packet_type == PACKET_TYPE_DISPLAY_PANEL:
-            display_panels.append(_parse_display_panel(packet_data, packet_number))
+            display_panels.append(_parse_display_panel(packet_data))
         elif packet_type == PACKET_TYPE_DISPLAY_CALIBRATION:
-            display_calibrations.append(_parse_display_calibration(packet_data, packet_number))
+            display_calibrations.append(_parse_display_calibration(packet_data))
         elif packet_type == PACKET_TYPE_DATA_EXTENDED:
             data_extended = DataExtended.from_bytes(packet_data)
+        elif packet_type == PACKET_TYPE_FINDMY:
+            findmy_raw = bytes(packet_data)
 
     missing_required = [
         name
@@ -268,6 +326,8 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
         data_extended=data_extended,
+        findmy_raw=findmy_raw,
+        unknown_ex_packets=unknown_ex_packets,
         display_modes=display_modes,
         display_luts=display_luts,
         display_panels=display_panels,
@@ -304,43 +364,52 @@ def _get_packet_size(packet_type: int) -> int | None:
         PACKET_TYPE_NFC_CONFIG: 32,
         PACKET_TYPE_FLASH_CONFIG: 32,
         PACKET_TYPE_DATA_EXTENDED: DataExtended.SIZE,
-        PACKET_TYPE_DISPLAY_MODE: 157,
-        PACKET_TYPE_DISPLAY_LUT: 541,
-        PACKET_TYPE_DISPLAY_CALIBRATION: 116,
-        PACKET_TYPE_DISPLAY_PANEL: 36,
+        PACKET_TYPE_FINDMY: 128,
     }
     return sizes.get(packet_type)
 
 
-def _parse_display_mode(data: bytes, instance: int) -> DisplayModeInfo:
-    """0x2E (157 B). Layout mirrors DisplayMode.serialize() in panel_drive.py."""
-    seq_len = int.from_bytes(data[27:29], "little")
+def _parse_display_mode(data: bytes) -> DisplayModeInfo:
+    """0xAE: 37-byte head + seq[seq_len] tail. Mirrors DisplayMode.serialize()."""
+    if len(data) < 37:
+        raise ConfigParseError(f"display_mode body too short: {len(data)} bytes")
+    seq_len = int.from_bytes(data[35:37], "little")
+    if 37 + seq_len > len(data):
+        raise ConfigParseError("display_mode seq_len runs past the packet body")
     return DisplayModeInfo(
         instance_number=data[0],
         mode_index=data[1],
         name=data[2:14].rstrip(b"\x00").decode("utf-8", "replace"),
-        passes=data[14],
-        lut_slot=list(data[15:19]),
-        vsn1=list(data[19:23]),
-        temp_min_c=struct.unpack_from("<b", data, 24)[0],
-        temp_max_c=struct.unpack_from("<b", data, 25)[0],
-        temp_policy=data[26],
-        init_seq=bytes(data[29 : 29 + min(seq_len, 128)]),
-        reserved_flags=data[23],
+        color_scheme=data[14],
+        passes=data[15],
+        temp_min_c=struct.unpack_from("<b", data, 16)[0],
+        temp_max_c=struct.unpack_from("<b", data, 17)[0],
+        temp_policy=data[18],
+        lut_slot=list(data[19:27]),
+        vsn1=list(data[27:35]),
+        init_seq=bytes(data[37 : 37 + seq_len]),
     )
 
 
-def _parse_display_lut(data: bytes, instance: int) -> DisplayLutInfo:
-    """0x2F (541 B)."""
-    inst, slot, ln, crc = struct.unpack_from("<BBHH", data, 0)
+def _parse_display_lut(data: bytes) -> DisplayLutInfo:
+    """0xAF: 4-byte head + the waveform at its real size (length = body - 4)."""
+    if len(data) < 5:
+        raise ConfigParseError(f"display_lut body too short: {len(data)} bytes")
+    inst, slot, crc = struct.unpack_from("<BBH", data, 0)
+    wave = bytes(data[4:])
     return DisplayLutInfo(
-        instance_number=inst, lut_slot=slot, lut_len=ln, crc16=crc,
-        data=bytes(data[6 : 6 + min(ln, 535)]),
+        instance_number=inst,
+        lut_slot=slot,
+        lut_len=len(wave),
+        crc16=crc,
+        data=wave,
     )
 
 
-def _parse_display_panel(data: bytes, instance: int) -> DisplayPanelInfo:
-    """0x31 (36 B)."""
+def _parse_display_panel(data: bytes) -> DisplayPanelInfo:
+    """0xB1: 13-byte head + sleep_seq[sleep_seq_len] tail."""
+    if len(data) < 13:
+        raise ConfigParseError(f"display_panel body too short: {len(data)} bytes")
     inst, flags, idle, timeout, fixed = struct.unpack_from("<BBBHH", data, 0)
     sleep_len = data[12]
     return DisplayPanelInfo(
@@ -356,19 +425,32 @@ def _parse_display_panel(data: bytes, instance: int) -> DisplayPanelInfo:
     )
 
 
-def _parse_display_calibration(data: bytes, instance: int) -> DisplayCalibrationInfo:
-    """0x30 (116 B): header + codes[16] + lab[96], int16 CIELAB hundredths."""
-    inst, mode_index, count, flags = struct.unpack_from("<BBBB", data, 0)
-    n = min(count, 16)
-    codes = [((data[4 + i] >> 4) & 3, (data[4 + i] >> 2) & 3, data[4 + i] & 3)
-             for i in range(n)]
-    lab = [
-        tuple(v / 100.0 for v in struct.unpack_from("<hhh", data, 20 + i * 6))
-        for i in range(n)
-    ]
+def _parse_display_calibration(data: bytes) -> DisplayCalibrationInfo:
+    """0xB0: 4-byte head + entry_count x 8-byte entries.
+
+    An entry is codes:u16 LE (2-bit panel code of pass p in bits [2p+1:2p],
+    LSB-first -- NOT the Rev 1 one-byte MSB-first packing) + CIELAB x100 as
+    3 x int16 LE. The tuple length is capped at 8 passes; trailing zero code
+    bits are not distinguishable from "pass uses code 0", so the consumer
+    slices tuples by the mode's pass count.
+    """
+    if len(data) < 4:
+        raise ConfigParseError(f"display_calibration body too short: {len(data)} bytes")
+    inst, mode_index, flags, count = struct.unpack_from("<BBBB", data, 0)
+    n = min(count, (len(data) - 4) // 8)
+    codes = []
+    lab = []
+    for i in range(n):
+        cw, l_, a_, b_ = struct.unpack_from("<Hhhh", data, 4 + i * 8)
+        codes.append(tuple((cw >> (2 * p)) & 3 for p in range(8)))
+        lab.append((l_ / 100.0, a_ / 100.0, b_ / 100.0))
     return DisplayCalibrationInfo(
-        instance_number=inst, mode_index=mode_index, entry_count=count,
-        measured=bool(flags & 0x01), lab=lab, codes=codes,  # type: ignore[arg-type]
+        instance_number=inst,
+        mode_index=mode_index,
+        entry_count=count,
+        measured=bool(flags & 0x01),
+        lab=lab,
+        codes=codes,
     )
 
 
