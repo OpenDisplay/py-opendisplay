@@ -9,10 +9,12 @@ from ..exceptions import (
     AuthenticationFailedError,
     AuthenticationRequiredError,
     AuthenticationSessionExistsError,
+    CommandRejectedError,
     InvalidResponseError,
     NfcWriteError,
 )
 from ..models.firmware import FirmwareVersion
+from ..models.imgstore import FLASH_MAX_SLOTS, ActionInfo, FlashInfo, FlashSlot
 from .commands import RESPONSE_HIGH_BIT_FLAG, CommandCode
 
 # Status bytes returned in AUTHENTICATE responses
@@ -599,3 +601,111 @@ def validate_nfc_response(data: bytes, expected_status: int) -> None:
         )
 
     raise InvalidResponseError(f"Unexpected NFC_ENDPOINT response: {data[:4].hex()}")
+
+
+# ─── Image store + action table (0x0047-0x004D, protocol 2.4) ─────────────────
+
+_FLASH_LIST_RECORD = 6
+
+
+def _expect_ack_frame(data: bytes, cmd: CommandCode) -> bytes:
+    """Check ``[status][cmd_lo]`` framing and return the bytes after it.
+
+    These opcodes use bare NACKs, so a refusal raises CommandRejectedError
+    carrying whatever followed the frame (e.g. the echoed slot index).
+    """
+    name = cmd.name
+    if len(data) < 2:
+        raise InvalidResponseError(f"{name} response too short: {len(data)} bytes")
+    if data[1] != cmd & 0xFF:
+        raise InvalidResponseError(f"{name} echo mismatch: expected 0x{cmd & 0xFF:02x}, got 0x{data[1]:02x}")
+    status = data[0]
+    if status == 0x00:
+        return bytes(data[2:])
+    if status == 0xFF:
+        raise CommandRejectedError(f"{name} rejected by device", int(cmd), bytes(data[2:]))
+    if status == 0xFE:
+        raise AuthenticationRequiredError(f"{name} requires an authenticated session")
+    if status == 0x01:
+        # Firmware_Unified BG22 at eb512a2 inverted the status bytes on these
+        # opcodes (0x01 ACK / 0x00 NACK). Never guessed around: under that
+        # scheme a 0x00 is a NACK, so tolerating 0x01 would invite reading a
+        # refusal as success.
+        raise InvalidResponseError(
+            f"{name} answered with status 0x01: firmware uses the pre-2.4 inverted "
+            "status bytes (0x01 ACK / 0x00 NACK); update the device firmware"
+        )
+    raise InvalidResponseError(f"{name} unknown status byte 0x{status:02x}")
+
+
+def parse_flash_info(data: bytes) -> FlashInfo:
+    """Parse CMD_FLASH_INFO: ``[00][47][mounted][slot_count][stride:4 LE][capacity:4 LE]``."""
+    body = _expect_ack_frame(data, CommandCode.FLASH_INFO)
+    if len(body) < 10:
+        raise InvalidResponseError(f"FLASH_INFO payload must be 10 bytes, got {len(body)}")
+    mounted, slot_count, stride, capacity = struct.unpack_from("<BBII", body, 0)
+    return FlashInfo(mounted=mounted == 1, slot_count=slot_count, slot_stride=stride, capacity=capacity)
+
+
+def parse_flash_list(data: bytes) -> list[FlashSlot]:
+    """Parse CMD_FLASH_LIST: ``[00][48][count]`` + count x ``[index][state][digest:4 LE]``.
+
+    ``count`` can be smaller than FLASH_INFO's slot_count: the device truncates
+    the list if a flash read fails mid-walk.
+    """
+    body = _expect_ack_frame(data, CommandCode.FLASH_LIST)
+    if not body:
+        raise InvalidResponseError("FLASH_LIST payload missing its count byte")
+    count = body[0]
+    if count > FLASH_MAX_SLOTS or len(body) != 1 + count * _FLASH_LIST_RECORD:
+        raise InvalidResponseError(f"FLASH_LIST count {count} does not match {len(body) - 1} record bytes")
+    slots = []
+    for i in range(count):
+        index, state, digest = struct.unpack_from("<BBI", body, 1 + i * _FLASH_LIST_RECORD)
+        slots.append(FlashSlot(index=index, state=state, digest=digest))
+    return slots
+
+
+def parse_flash_slot_ack(data: bytes, cmd: CommandCode, slot: int) -> None:
+    """Validate the ``[00][cmd][slot]`` ACK of FLASH_ERASE / _PRELOAD / _DISPLAY.
+
+    Raises:
+        CommandRejectedError: The device NACKed (index out of range, slot not
+            valid, store not mounted, transfer in progress, ...).
+        InvalidResponseError: Malformed frame, or an ACK for a different slot.
+    """
+    if cmd not in (CommandCode.FLASH_ERASE, CommandCode.FLASH_PRELOAD, CommandCode.FLASH_DISPLAY):
+        raise ValueError(f"{cmd!r} is not a slot command")
+    body = _expect_ack_frame(data, cmd)
+    if len(body) < 1:
+        raise InvalidResponseError(f"{cmd.name} ACK missing the slot echo")
+    if body[0] != slot:
+        raise InvalidResponseError(f"{cmd.name} ACK echoes slot {body[0]}, sent {slot}")
+
+
+def parse_action_info(data: bytes) -> ActionInfo:
+    """Parse CMD_ACTION_INFO: 7 data bytes, the last a signed temperature."""
+    body = _expect_ack_frame(data, CommandCode.ACTION_INFO)
+    if len(body) < 7:
+        raise InvalidResponseError(f"ACTION_INFO payload must be 7 bytes, got {len(body)}")
+    entries, active, inactive, rejected, last_trigger, fire_count, temp = struct.unpack_from("<BBBBBBb", body, 0)
+    return ActionInfo(
+        entries=entries,
+        active=active,
+        inactive=inactive,
+        rejected=rejected,
+        last_trigger=last_trigger,
+        fire_count=fire_count,
+        last_temp_c=temp,
+    )
+
+
+def parse_action_fire(data: bytes, host_id: int) -> None:
+    """Validate CMD_ACTION_FIRE's ``[00][4D][host_id]`` ACK.
+
+    The ACK means the event was RECORDED, not that an entry matched or ran;
+    check ACTION_INFO's fire_count for that.
+    """
+    body = _expect_ack_frame(data, CommandCode.ACTION_FIRE)
+    if len(body) < 1 or body[0] != host_id:
+        raise InvalidResponseError(f"ACTION_FIRE ACK does not echo host_id {host_id}: {data.hex()}")

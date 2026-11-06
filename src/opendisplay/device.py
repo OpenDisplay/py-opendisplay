@@ -59,6 +59,7 @@ from .models.capabilities import DeviceCapabilities
 from .models.config import DisplayConfig, GlobalConfig
 from .models.enums import BoardManufacturer, FitMode, NfcRecordType, RefreshMode, Rotation
 from .models.firmware import FirmwareVersion
+from .models.imgstore import ActionInfo, FlashInfo, FlashSlot
 from .models.led_flash import LedFlashConfig
 from .partial import (
     PARTIAL_FLAG_COMPRESSED,
@@ -124,6 +125,16 @@ from .protocol import (
     unpack_ack_ranges,
     validate_ack_response,
 )
+from .protocol.commands import (
+    FLASH_ERASE_ALL,
+    build_action_fire_command,
+    build_action_info_command,
+    build_flash_display_command,
+    build_flash_erase_command,
+    build_flash_info_command,
+    build_flash_list_command,
+    build_flash_preload_command,
+)
 from .protocol.responses import (
     NFC_STATUS_CHUNK_ACK,
     NFC_STATUS_WRITE_OK,
@@ -139,8 +150,13 @@ from .protocol.responses import (
     describe_command_code,
     is_compressed_failure_frame,
     matches_command_echo,
+    parse_action_fire,
+    parse_action_info,
     parse_authenticate_challenge,
     parse_authenticate_success,
+    parse_flash_info,
+    parse_flash_list,
+    parse_flash_slot_ack,
     parse_read_msd,
     strip_command_echo,
     unpack_command_code,
@@ -492,6 +508,10 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
     TIMEOUT_UNCOMPRESSED_END_ACK = 90.0  # Uncompressed END: some firmware variants refresh before replying (~60s max)
     TIMEOUT_COMPRESSED_END_ACK = 90.0  # Compressed END: decompression + full SPI write to IC (~60s on Spectra/ACeP)
     TIMEOUT_REFRESH = 90.0  # Display refresh (firmware spec: up to 60s)
+    # Image store (0x0049): erase blocks inside the handler, one 4 KiB sector at a
+    # time; ERASE_ALL on a full part runs to seconds.
+    TIMEOUT_FLASH_ERASE = 10.0
+    TIMEOUT_FLASH_ERASE_ALL = 90.0
 
     # PIPE_WRITE per-path progress timeouts (Part 1 §1.4): a compressed chunk lands
     # fast; an uncompressed chunk can block bbepWriteData on SPI for the Spectra/ACeP
@@ -837,8 +857,16 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             )
             await self.authenticate(self._encryption_key)
 
-    async def _read(self, timeout: float) -> bytes:
+    async def _read(self, timeout: float, *, data_byte_ff: bool = False) -> bytes:
         """Read a response, decrypting it if an active session exists.
+
+        Args:
+            timeout: Seconds to wait.
+            data_byte_ff: The expected reply may legitimately be the 3-byte
+                ``[00][cmd][FF]`` (FLASH_ERASE_ALL's ACK). Without a session that
+                is the reply, not the gate's refusal frame, so skip the refusal
+                heuristic. With a session the real reply is encrypted, and a
+                plaintext ``[00][cmd][FF]`` is still the refusal.
 
         Raises:
             AuthenticationRequiredError: If device returns 0xFE (encryption required, no active session)
@@ -865,7 +893,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # otherwise matches the expected command code and passes validation.
         # Distinct from the 2-byte {0xFF, 0xFF} compressed-failure frame and
         # 4-byte NACK frames, which have different lengths.
-        if len(raw) == 3 and raw[2] == 0xFF:
+        if len(raw) == 3 and raw[2] == 0xFF and not (data_byte_ff and self._session_key is None):
             raise IntegrityCheckError(
                 f"Device rejected command 0x{unpack_command_code(raw):04x}: "
                 "decryption/integrity check failed (command not executed) — likely a dropped or corrupted packet"
@@ -1250,6 +1278,96 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         if not self.config or not self.config.sensors:
             return []
         return read_sensor_values(self.config, await self.read_msd())
+
+    # ─── Image store + action table (protocol 2.4) ───────────────────────────
+    # Target-specific: only devices built with the image store route these
+    # opcodes. Elsewhere they are unknown, which on Firmware_Unified means NO
+    # reply -- so a missing store surfaces as a timeout, not a NACK.
+
+    @_serialized
+    async def read_flash_info(self) -> FlashInfo:
+        """Read the image-store geometry (CMD_FLASH_INFO 0x0047).
+
+        Always ACKs on a device that has the opcode; ``mounted`` is False when
+        no flash is fitted or it did not probe.
+        """
+        await self._write(build_flash_info_command())
+        return parse_flash_info(await self._read(self.TIMEOUT_ACK))
+
+    @_serialized
+    async def list_flash_slots(self) -> list[FlashSlot]:
+        """List every slot's state and CRC-32 digest (CMD_FLASH_LIST 0x0048).
+
+        Raises:
+            CommandRejectedError: The store is not mounted.
+        """
+        await self._write(build_flash_list_command())
+        return parse_flash_list(await self._read(self.TIMEOUT_ACK))
+
+    @_serialized
+    async def erase_flash_slot(self, slot: int | None = None) -> None:
+        """Erase one slot, or every slot when ``slot`` is None (CMD_FLASH_ERASE 0x0049).
+
+        Raises:
+            CommandRejectedError: Not mounted, index out of range, a preload
+                upload in progress, or an erase failure (an erase-all that fails
+                part-way leaves the earlier slots erased).
+        """
+        await self._write(build_flash_erase_command(slot))
+        if slot is None:
+            response = await self._read(self.TIMEOUT_FLASH_ERASE_ALL, data_byte_ff=True)
+            parse_flash_slot_ack(response, CommandCode.FLASH_ERASE, FLASH_ERASE_ALL)
+        else:
+            parse_flash_slot_ack(await self._read(self.TIMEOUT_FLASH_ERASE), CommandCode.FLASH_ERASE, slot)
+
+    @_serialized
+    async def preload_flash_slot(self, slot: int) -> None:
+        """Arm ``slot`` to receive the NEXT full-frame direct-write upload (0x004A).
+
+        The following 0x0070 upload is stored instead of displayed; its END
+        refresh notification then reports whether the slot committed. Only
+        0x0070 consumes the arm -- a CMD_DRIVE_WRITE_START upload is displayed
+        normally and leaves it pending. Any transfer abort (or disconnect)
+        clears it.
+
+        Raises:
+            CommandRejectedError: Store not mounted or slot out of range.
+        """
+        await self._write(build_flash_preload_command(slot))
+        parse_flash_slot_ack(await self._read(self.TIMEOUT_ACK), CommandCode.FLASH_PRELOAD, slot)
+
+    @_serialized
+    async def display_flash_slot(self, slot: int) -> None:
+        """Queue a stored slot for display (CMD_FLASH_DISPLAY 0x004B).
+
+        Returns once the device ACCEPTED the request; the refresh runs
+        afterwards and its outcome is not reported.
+
+        Raises:
+            CommandRejectedError: Slot not VALID, stored for a different panel
+                geometry, no display configured, or a transfer in progress.
+        """
+        await self._write(build_flash_display_command(slot))
+        parse_flash_slot_ack(await self._read(self.TIMEOUT_ACK), CommandCode.FLASH_DISPLAY, slot)
+
+    @_serialized
+    async def read_action_info(self) -> ActionInfo:
+        """Read the action table's load and fire statistics (CMD_ACTION_INFO 0x004C).
+
+        Describes the FIRST 0xB2 table on the device only.
+        """
+        await self._write(build_action_info_command())
+        return parse_action_info(await self._read(self.TIMEOUT_ACK))
+
+    @_serialized
+    async def fire_action(self, host_id: int = 0) -> None:
+        """Fire the HOST trigger (CMD_ACTION_FIRE 0x004D).
+
+        The ACK means the event was recorded, not that an entry matched or ran:
+        compare :meth:`read_action_info` ``fire_count`` before and after.
+        """
+        await self._write(build_action_fire_command(host_id))
+        parse_action_fire(await self._read(self.TIMEOUT_ACK), host_id)
 
     @_serialized
     async def reboot(self) -> None:

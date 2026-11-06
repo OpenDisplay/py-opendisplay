@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 from ..models.buzzer_activate import BuzzerActivateConfig
+from ..models.imgstore import FLASH_MAX_SLOTS
 from ..models.led_flash import LedFlashConfig
 
 
@@ -53,6 +54,21 @@ class CommandCode(IntEnum):
     # NFC write endpoint (firmware NFC_ENDPOINT)
     NFC_ENDPOINT = 0x0083  # Read/write the NFC tag NDEF record (sub-opcode selects the operation)
 
+    # Image store + action table (protocol 2.4; Firmware_Unified BG22 with OD_CAP_IMGSTORE)
+    FLASH_INFO = 0x0047  # Store geometry: mounted / slot_count / slot_stride / capacity
+    FLASH_LIST = 0x0048  # Per-slot [index][state][crc32]
+    FLASH_ERASE = 0x0049  # Erase one slot, or all with FLASH_ERASE_ALL
+    FLASH_PRELOAD = 0x004A  # Divert the NEXT 0x0070 upload into a slot instead of the panel
+    FLASH_DISPLAY = 0x004B  # Queue a stored slot for display (ACK precedes the refresh)
+    ACTION_INFO = 0x004C  # 0xB2 action-table load / fire statistics
+    ACTION_FIRE = 0x004D  # Fire the HOST trigger
+
+
+# CMD_FLASH_ERASE index meaning "every slot".
+FLASH_ERASE_ALL = 0xFF
+# CMD_ACTION_FIRE host ids 0xFE/0xFF would ACK as [00][4D][FE|FF], which is
+# byte-identical to the session gate's auth-required / refusal frames.
+ACTION_FIRE_MAX_HOST_ID = 0xFD
 
 # Protocol constants
 SERVICE_UUID = "00002446-0000-1000-8000-00805F9B34FB"
@@ -144,6 +160,60 @@ def build_read_msd_command() -> bytes:
         Command bytes: 0x0044 (2 bytes, big-endian)
     """
     return CommandCode.READ_MSD.to_bytes(2, byteorder="big")
+
+
+def _build_slot_command(cmd: CommandCode, slot: int, what: str) -> bytes:
+    if not 0 <= slot < FLASH_MAX_SLOTS:
+        raise ValueError(f"{what} slot must be 0..{FLASH_MAX_SLOTS - 1}, got {slot}")
+    return cmd.to_bytes(2, byteorder="big") + bytes([slot])
+
+
+def build_flash_info_command() -> bytes:
+    """Build CMD_FLASH_INFO (0x0047): no payload."""
+    return CommandCode.FLASH_INFO.to_bytes(2, byteorder="big")
+
+
+def build_flash_list_command() -> bytes:
+    """Build CMD_FLASH_LIST (0x0048): no payload."""
+    return CommandCode.FLASH_LIST.to_bytes(2, byteorder="big")
+
+
+def build_flash_erase_command(slot: int | None = None) -> bytes:
+    """Build CMD_FLASH_ERASE (0x0049).
+
+    Args:
+        slot: Slot to erase, or None for every slot (FLASH_ERASE_ALL).
+    """
+    if slot is None:
+        return CommandCode.FLASH_ERASE.to_bytes(2, byteorder="big") + bytes([FLASH_ERASE_ALL])
+    return _build_slot_command(CommandCode.FLASH_ERASE, slot, "erase")
+
+
+def build_flash_preload_command(slot: int) -> bytes:
+    """Build CMD_FLASH_PRELOAD (0x004A): the next 0x0070 upload goes to ``slot``."""
+    return _build_slot_command(CommandCode.FLASH_PRELOAD, slot, "preload")
+
+
+def build_flash_display_command(slot: int) -> bytes:
+    """Build CMD_FLASH_DISPLAY (0x004B): queue ``slot`` for display."""
+    return _build_slot_command(CommandCode.FLASH_DISPLAY, slot, "display")
+
+
+def build_action_info_command() -> bytes:
+    """Build CMD_ACTION_INFO (0x004C): no payload."""
+    return CommandCode.ACTION_INFO.to_bytes(2, byteorder="big")
+
+
+def build_action_fire_command(host_id: int = 0) -> bytes:
+    """Build CMD_ACTION_FIRE (0x004D) for the HOST trigger.
+
+    Args:
+        host_id: Matched against HOST entries' trigger_arg (entries with 0 match
+            any id). Limited to 0..0xFD -- see ACTION_FIRE_MAX_HOST_ID.
+    """
+    if not 0 <= host_id <= ACTION_FIRE_MAX_HOST_ID:
+        raise ValueError(f"host_id must be 0..{ACTION_FIRE_MAX_HOST_ID}, got {host_id}")
+    return CommandCode.ACTION_FIRE.to_bytes(2, byteorder="big") + bytes([host_id])
 
 
 def build_reboot_command() -> bytes:

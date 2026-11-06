@@ -15,6 +15,7 @@ from .exceptions import (
     AuthenticationRequiredError,
     BLEConnectionError,
     BLETimeoutError,
+    CommandRejectedError,
     ConfigParseError,
     ImageEncodingError,
     IntegrityCheckError,
@@ -38,6 +39,7 @@ from .landing import (
     parse_landing_payload,
     parse_landing_url,
 )
+from .models.action_table import ActionEffect, ActionEntry, ActionStep, ActionTable, ActionTrigger
 from .models.advertisement import (
     AdvertisementData,
     AdvertisementTracker,
@@ -96,6 +98,7 @@ from .models.enums import (
     get_manufacturer_name,
 )
 from .models.firmware import firmware_ota_asset, firmware_release_repo
+from .models.imgstore import ActionInfo, FlashInfo, FlashSlot, FlashSlotState, image_digest
 from .models.led_flash import LedFlashConfig, LedFlashStep
 from .ota import find_nrf_dfu_device, perform_nrf_dfu, perform_silabs_ota
 from .partial import PartialState
@@ -108,6 +111,18 @@ __version__ = "0.1.0"
 __all__ = [
     # Main API
     "OpenDisplayDevice",
+    # Image store + action table (protocol 2.4)
+    "ActionEffect",
+    "ActionEntry",
+    "ActionInfo",
+    "ActionStep",
+    "ActionTable",
+    "ActionTrigger",
+    "CommandRejectedError",
+    "FlashInfo",
+    "FlashSlot",
+    "FlashSlotState",
+    "image_digest",
     "discover_devices",
     "discover_devices_with_adv",
     "discover_ip_devices",

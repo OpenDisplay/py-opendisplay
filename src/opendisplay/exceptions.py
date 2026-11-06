@@ -61,6 +61,23 @@ class RefreshTimeoutError(ProtocolError):
     pass
 
 
+class CommandRejectedError(ProtocolError):
+    """The device answered a command with a bare NACK ``[0xFF][cmd_lo]...``.
+
+    Used by commands whose NACK carries no error code (the image-store and
+    action opcodes 0x0047-0x004D): the device states only THAT it refused.
+
+    Attributes:
+        command: The 16-bit command code that was refused.
+        data: Bytes after the 2-byte NACK frame (e.g. the echoed slot index).
+    """
+
+    def __init__(self, message: str, command: int, data: bytes = b"") -> None:
+        super().__init__(message)
+        self.command = command
+        self.data = data
+
+
 class ConfigParseError(ProtocolError):
     """Failed to parse device configuration."""
 
