@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import struct
 from typing import TYPE_CHECKING
+
+from ..models.action_table import PACKET_TYPE_ACTION_TABLE
 
 if TYPE_CHECKING:
     from ..models.config import (
@@ -28,6 +31,8 @@ if TYPE_CHECKING:
         TouchController,
         WifiConfig,
     )
+
+_LOGGER = logging.getLogger(__name__)
 
 # Packet type IDs (same as config_parser.py)
 PACKET_TYPE_SYSTEM = 0x01
@@ -646,11 +651,40 @@ def _serialize_drive_packets(config: GlobalConfig) -> bytes:
         out += _ex_packet(lo.lut_slot, PACKET_TYPE_DISPLAY_LUT, serialize_display_lut(lo))
     for cb in config.display_calibrations:
         out += _ex_packet(cb.mode_index, PACKET_TYPE_DISPLAY_CALIBRATION, serialize_display_calibration(cb))
+    out += _serialize_action_table(config)
     # Unknown length-prefixed packets ride along verbatim: they are skippable
     # by construction, so preserving them costs nothing and loses nothing.
+    # 0xB2 is the exception -- see _serialize_action_table.
     for num, ptype, body in config.unknown_ex_packets:
-        out += _ex_packet(num, ptype, body)
+        if ptype != PACKET_TYPE_ACTION_TABLE:
+            out += _ex_packet(num, ptype, body)
     return out
+
+
+def _serialize_action_table(config: GlobalConfig) -> bytes:
+    """Exactly one framed 0xB2, or nothing.
+
+    The device resolves 0xB2 by first match, so emitting a second copy keeps
+    the OLD table running and silently grows the config on every write.
+
+    The parser never leaves a 0xB2 in ``unknown_ex_packets`` (it lifts the
+    first into ``action_table``), so a raw 0xB2 found there was put there by
+    the caller AFTER parsing -- e.g. code that predates ``action_table`` and
+    appends a new table by hand. That is the newest intent, so the LAST raw
+    0xB2 wins over ``action_table``; otherwise ``action_table`` is written.
+    Every other copy is dropped.
+    """
+    strays = [(num, body) for num, ptype, body in config.unknown_ex_packets if ptype == PACKET_TYPE_ACTION_TABLE]
+    if strays:
+        dropped = len(strays) - 1 + (config.action_table is not None)
+        if dropped:
+            _LOGGER.warning("Writing the last raw 0xB2 action table; dropping %d other copy(ies)", dropped)
+        num, body = strays[-1]
+        return _ex_packet(num, PACKET_TYPE_ACTION_TABLE, body)
+    if config.action_table is None:
+        return b""
+    table = config.action_table
+    return _ex_packet(table.packet_number, PACKET_TYPE_ACTION_TABLE, table.to_bytes())
 
 
 def serialize_config(config: GlobalConfig) -> bytes:

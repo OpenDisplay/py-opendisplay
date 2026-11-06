@@ -6,6 +6,7 @@ import logging
 import struct
 
 from ..exceptions import ConfigParseError
+from ..models.action_table import PACKET_TYPE_ACTION_TABLE, ActionTable
 from ..models.config import (
     BinaryInputs,
     DataBus,
@@ -328,6 +329,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         data_extended=data_extended,
         findmy_raw=findmy_raw,
         unknown_ex_packets=unknown_ex_packets,
+        action_table=_pop_action_table(unknown_ex_packets),
         display_modes=display_modes,
         display_luts=display_luts,
         display_panels=display_panels,
@@ -337,6 +339,29 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         minor_version=1,  # Not stored in device (only single version byte exists)
         loaded=True,
     )
+
+
+def _pop_action_table(ex_packets: list[tuple[int, int, bytes]]) -> ActionTable | None:
+    """Remove every 0xB2 from ``ex_packets`` (in place) and model the first.
+
+    The device resolves 0xB2 by FIRST match, so the first copy is the table it
+    runs. Later copies are shadowed and are dropped here, which is what makes a
+    read-modify-write heal a config that already carries duplicates instead of
+    preserving (and adding to) them.
+    """
+    tables = [(num, body) for num, ptype, body in ex_packets if ptype == PACKET_TYPE_ACTION_TABLE]
+    if not tables:
+        return None
+    if len(tables) > 1:
+        _LOGGER.warning(
+            "Config carries %d action tables (0xB2); the device runs only the first, "
+            "the other %d are dropped on the next write",
+            len(tables),
+            len(tables) - 1,
+        )
+    ex_packets[:] = [p for p in ex_packets if p[1] != PACKET_TYPE_ACTION_TABLE]
+    num, body = tables[0]
+    return ActionTable.from_bytes(body, packet_number=num)
 
 
 def _get_packet_size(packet_type: int) -> int | None:

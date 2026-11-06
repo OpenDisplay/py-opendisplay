@@ -13,6 +13,7 @@ from typing import ClassVar
 
 from epaper_dithering import ColorScheme
 
+from .action_table import ActionTable
 from .advertisement import SHT40_DEFAULT_MSD_START
 from .enums import (
     ActiveLevel,
@@ -1318,6 +1319,13 @@ class GlobalConfig:
     display_luts: list[DisplayLutInfo] = field(default_factory=list)
     display_panels: list[DisplayPanelInfo] = field(default_factory=list)
     display_calibrations: list[DisplayCalibrationInfo] = field(default_factory=list)
+
+    # 0xB2 action table: at most ONE per config. The device resolves it by
+    # first match, so a second copy is legal, silent and useless -- it keeps
+    # running the first. Assigning here REPLACES the table: serialize emits
+    # exactly one 0xB2 (a raw 0xB2 appended to unknown_ex_packets after
+    # parsing takes precedence, as the newer write; see config_serializer).
+    action_table: ActionTable | None = None
 
     # 0x2D findmy_config, carried VERBATIM (128 B). Modelled as opaque bytes on
     # purpose: provisioning keys are not this library's business to interpret,
