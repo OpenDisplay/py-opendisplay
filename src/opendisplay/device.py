@@ -462,7 +462,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         async with OpenDisplayDevice(mac, capabilities=caps) as device:
             await device.upload_image(image)
 
-        # Use theoretical ColorScheme instead of measured palettes
+        # Use the scheme's idealised palette instead of a measured one
         async with OpenDisplayDevice(mac, use_measured_palettes=False) as device:
             await device.upload_image(image)
     """
