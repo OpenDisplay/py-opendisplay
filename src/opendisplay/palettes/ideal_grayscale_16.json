@@ -1,0 +1,151 @@
+{
+  "format": "epaper-palette",
+  "version": 1,
+  "measured": false,
+  "entries": [
+    {
+      "appearance": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "name": "black",
+      "nominal": "#000000"
+    },
+    {
+      "appearance": [
+        5.063329493432597,
+        0.0,
+        0.0
+      ],
+      "name": "gray1",
+      "nominal": "#111111"
+    },
+    {
+      "appearance": [
+        13.227910984271848,
+        2.7755575615628914e-14,
+        -1.1102230246251565e-14
+      ],
+      "name": "gray2",
+      "nominal": "#222222"
+    },
+    {
+      "appearance": [
+        21.24673129498138,
+        2.7755575615628914e-14,
+        0.0
+      ],
+      "name": "gray3",
+      "nominal": "#333333"
+    },
+    {
+      "appearance": [
+        28.8519023984,
+        -2.7755575615628914e-14,
+        0.0
+      ],
+      "name": "gray4",
+      "nominal": "#444444"
+    },
+    {
+      "appearance": [
+        36.14585083971985,
+        0.0,
+        1.1102230246251565e-14
+      ],
+      "name": "gray5",
+      "nominal": "#555555"
+    },
+    {
+      "appearance": [
+        43.19228956298485,
+        0.0,
+        -2.220446049250313e-14
+      ],
+      "name": "gray6",
+      "nominal": "#666666"
+    },
+    {
+      "appearance": [
+        50.034438792538225,
+        0.0,
+        0.0
+      ],
+      "name": "gray7",
+      "nominal": "#777777"
+    },
+    {
+      "appearance": [
+        56.70341075675441,
+        0.0,
+        -2.220446049250313e-14
+      ],
+      "name": "gray8",
+      "nominal": "#888888"
+    },
+    {
+      "appearance": [
+        63.22259455235917,
+        0.0,
+        0.0
+      ],
+      "name": "gray9",
+      "nominal": "#999999"
+    },
+    {
+      "appearance": [
+        69.61016583003699,
+        0.0,
+        0.0
+      ],
+      "name": "gray10",
+      "nominal": "#aaaaaa"
+    },
+    {
+      "appearance": [
+        75.88062353321001,
+        0.0,
+        0.0
+      ],
+      "name": "gray11",
+      "nominal": "#bbbbbb"
+    },
+    {
+      "appearance": [
+        82.04578167434553,
+        -5.551115123125783e-14,
+        0.0
+      ],
+      "name": "gray12",
+      "nominal": "#cccccc"
+    },
+    {
+      "appearance": [
+        88.11543698710967,
+        -5.551115123125783e-14,
+        0.0
+      ],
+      "name": "gray13",
+      "nominal": "#dddddd"
+    },
+    {
+      "appearance": [
+        94.09783422885042,
+        0.0,
+        0.0
+      ],
+      "name": "gray14",
+      "nominal": "#eeeeee"
+    },
+    {
+      "appearance": [
+        100.0,
+        0.0,
+        0.0
+      ],
+      "name": "white",
+      "nominal": "#ffffff"
+    }
+  ]
+}

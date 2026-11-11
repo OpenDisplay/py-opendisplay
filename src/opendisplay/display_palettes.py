@@ -1,12 +1,14 @@
 """Palettes and panel capability data for e-paper displays.
 
-epaper-dithering 7 ships no palettes, so py-opendisplay owns them: an idealised palette per
-colour scheme, plus measured palettes for panels that have been measured.
+epaper-dithering 7 ships no palettes, so py-opendisplay owns them, as ``epaper-palette`` files
+in ``opendisplay/palettes/``: an idealised palette per colour scheme, plus measured palettes
+for panels that have been measured. Entry order is the palette-index order the encoders expect.
 """
 
 from __future__ import annotations
 
 from functools import cache
+from importlib.resources import files
 
 from epaper_dithering import Palette
 
@@ -72,71 +74,36 @@ def get_bwry_codes(panel_ic_type: int | None) -> tuple[int, int, int, int]:
     return _BWRY_CODES_BY_PANEL.get(panel_ic_type, _BWRY_CODES_DEFAULT)
 
 
-_RGB = tuple[int, int, int]
-
-_BLACK, _WHITE = ("black", "#000000"), ("white", "#ffffff")
-_YELLOW, _RED = ("yellow", "#ffff00"), ("red", "#ff0000")
-_BLUE, _GREEN, _ORANGE = ("blue", "#0000ff"), ("green", "#00ff00"), ("orange", "#ff8000")
-_SPECTRA6 = (_BLACK, _WHITE, _YELLOW, _RED, _BLUE, _GREEN)
-
-# Ink names and nominal colours per scheme, in the palette-index order the encoders expect
-# (the order of epaper-dithering 6.x's built-in schemes).
-_SCHEME_INKS: dict[ColorScheme, tuple[tuple[str, str], ...]] = {
-    ColorScheme.MONO: (_BLACK, _WHITE),
-    ColorScheme.BWR: (_BLACK, _WHITE, _RED),
-    ColorScheme.BWY: (_BLACK, _WHITE, _YELLOW),
-    ColorScheme.BWRY: (_BLACK, _WHITE, _YELLOW, _RED),
-    ColorScheme.BWGBRY: _SPECTRA6,
-    ColorScheme.BWGBRY_SPLIT: _SPECTRA6,
-    ColorScheme.SEVEN_COLOR: (*_SPECTRA6, _ORANGE),
-    ColorScheme.GRAYSCALE_4: (_BLACK, ("gray1", "#555555"), ("gray2", "#aaaaaa"), _WHITE),
-    ColorScheme.GRAYSCALE_16: (
-        _BLACK,
-        *((f"gray{i}", "#" + f"{i * 0x11:02x}" * 3) for i in range(1, 15)),
-        _WHITE,
-    ),
+# Idealised palette per colour scheme.
+IDEAL_PALETTE_FILES: dict[ColorScheme, str] = {
+    ColorScheme.MONO: "ideal_mono.json",
+    ColorScheme.BWR: "ideal_bwr.json",
+    ColorScheme.BWY: "ideal_bwy.json",
+    ColorScheme.BWRY: "ideal_bwry.json",
+    ColorScheme.BWGBRY: "ideal_bwgbry.json",
+    ColorScheme.BWGBRY_SPLIT: "ideal_bwgbry.json",  # same inks; only the plane packing differs
+    ColorScheme.SEVEN_COLOR: "ideal_seven_color.json",
+    ColorScheme.GRAYSCALE_4: "ideal_grayscale_4.json",
+    ColorScheme.GRAYSCALE_16: "ideal_grayscale_16.json",
 }
 
-# Measured sRGB per ink, in the scheme's ink order, carried over from epaper-dithering 6.x.
-_SPECTRA6_V2: tuple[str, tuple[_RGB, ...]] = (
-    "Waveshare 7.3in Spectra 6, measured 2026-03-15 (6.x SPECTRA_7_3_6COLOR_V2)",
-    ((31, 24, 41), (168, 180, 182), (180, 173, 0), (113, 24, 19), (36, 70, 139), (50, 84, 60)),
-)
-_MEASURED: dict[tuple[int, ColorScheme], tuple[str, tuple[_RGB, ...]]] = {
-    # Spectra 7.3" 6-colour (ep73_spectra_800x480).
-    (35, ColorScheme.BWGBRY): _SPECTRA6_V2,
+# Measured palettes by (panel_ic_type, colour scheme).
+MEASURED_PALETTE_FILES: dict[tuple[int, ColorScheme], str] = {
+    # Spectra 6 7.3" (ep73_spectra_800x480).
+    (35, ColorScheme.BWGBRY): "spectra6_7in3_v2.json",
     # Spectra 6 13.3" dual-controller (T133A01, Seeed reTerminal E1004). Keyed on
     # BWGBRY_SPLIT because firmware requires scheme 8 for split panels; same inks as the
     # 7.3", so it borrows that measurement until the T133A01 is measured.
-    (66, ColorScheme.BWGBRY_SPLIT): _SPECTRA6_V2,
+    (66, ColorScheme.BWGBRY_SPLIT): "spectra6_7in3_v2.json",
     # 3.97" BWRY (ep397yr_800x480).
-    (55, ColorScheme.BWRY): (
-        "EP397YR 3.97in BWRY (6.x BWRY_3_97)",
-        ((10, 7, 14), (173, 178, 174), (172, 128, 0), (85, 24, 14)),
-    ),
+    (55, ColorScheme.BWRY): "ep397yr_bwry.json",
 }
 
 
-def _hex_rgb(value: str) -> _RGB:
-    return int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16)
-
-
 @cache
-def _ideal_palette(scheme: ColorScheme) -> Palette:
-    return Palette.from_srgb([(_hex_rgb(nominal), name, nominal) for name, nominal in _SCHEME_INKS[scheme]])
-
-
-@cache
-def _measured_palette(panel_ic_type: int, scheme: ColorScheme) -> Palette | None:
-    measured = _MEASURED.get((panel_ic_type, scheme))
-    if measured is None:
-        return None
-    source, colors = measured
-    inks = _SCHEME_INKS[scheme]
-    return Palette.from_srgb(
-        [(rgb, name, nominal) for rgb, (name, nominal) in zip(colors, inks, strict=True)],
-        measured=True,
-    ).with_source(source)
+def load_palette_file(name: str) -> Palette:
+    """Load one of the palette files shipped in ``opendisplay/palettes/``."""
+    return Palette.from_json(files("opendisplay").joinpath("palettes", name).read_text(encoding="utf-8"))
 
 
 def get_palette_for_display(
@@ -155,7 +122,7 @@ def get_palette_for_display(
     """
     scheme = ColorScheme.from_value(int(color_scheme))
     if use_measured and panel_ic_type is not None:
-        measured = _measured_palette(panel_ic_type, scheme)
+        measured = MEASURED_PALETTE_FILES.get((panel_ic_type, scheme))
         if measured is not None:
-            return measured
-    return _ideal_palette(scheme)
+            return load_palette_file(measured)
+    return load_palette_file(IDEAL_PALETTE_FILES[scheme])

@@ -1,0 +1,34 @@
+{
+  "format": "epaper-palette",
+  "version": 1,
+  "measured": false,
+  "entries": [
+    {
+      "appearance": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "name": "black",
+      "nominal": "#000000"
+    },
+    {
+      "appearance": [
+        100.0,
+        0.0,
+        0.0
+      ],
+      "name": "white",
+      "nominal": "#ffffff"
+    },
+    {
+      "appearance": [
+        97.13926345299765,
+        -21.553731960736343,
+        94.47796855141397
+      ],
+      "name": "yellow",
+      "nominal": "#ffff00"
+    }
+  ]
+}
