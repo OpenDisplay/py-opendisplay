@@ -336,7 +336,12 @@ def prepare_image(
 
     Raises:
         RuntimeError: If config has no display information
+        ValueError: If ``dither_mode`` is not a ``DitherMode`` (6.x integer modes are
+            rejected), or ``tone``/``gamut`` is outside 0.0–1.0
+        TypeError: If ``tone`` or ``gamut`` is not a number (e.g. the 6.x ``"auto"``)
     """
+    if not isinstance(dither_mode, str):  # DitherMode is a StrEnum; 6.x callers passed ints
+        raise ValueError(f"unknown dither mode {dither_mode!r}; pass a DitherMode")
     if capabilities is None:
         if config is None:
             raise RuntimeError("Config has no display information")
@@ -372,8 +377,6 @@ def prepare_image(
 
     palette = get_palette_for_display(panel_ic_type, color_scheme, use_measured_palettes)
     display_cfg = config.displays[0] if config is not None and config.displays else None
-    if not isinstance(dither_mode, str):  # DitherMode is a StrEnum; 6.x callers passed ints
-        raise ValueError(f"unknown dither mode {dither_mode!r}; pass a DitherMode")
     dithered = dither_image(
         image,
         palette,

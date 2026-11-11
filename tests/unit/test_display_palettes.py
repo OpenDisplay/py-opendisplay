@@ -97,8 +97,8 @@ def test_pure_inks_stay_solid_on_measured_bwry() -> None:
     assert width == 16
 
 
-def _caps() -> DeviceCapabilities:
-    return DeviceCapabilities(width=8, height=8, color_scheme=ColorScheme.BWRY)
+def _caps(scheme: ColorScheme = ColorScheme.BWRY) -> DeviceCapabilities:
+    return DeviceCapabilities(width=8, height=8, color_scheme=scheme)
 
 
 def test_int_dither_mode_rejected() -> None:
@@ -106,7 +106,19 @@ def test_int_dither_mode_rejected() -> None:
         prepare_image(Image.new("RGB", (8, 8)), capabilities=_caps(), dither_mode=1)  # type: ignore[arg-type]
 
 
+def test_int_dither_mode_rejected_before_any_work(caplog: pytest.LogCaptureFixture) -> None:
+    # BWR with a non-byte-aligned width would log firmware warnings if processing started.
+    with pytest.raises(ValueError, match="dither mode"):
+        prepare_image(
+            Image.new("RGB", (7, 8)),
+            capabilities=DeviceCapabilities(width=7, height=8, color_scheme=ColorScheme.BWR),
+            dither_mode=1,  # type: ignore[arg-type]
+        )
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize("name", ["tone", "gamut"])
 @pytest.mark.parametrize("value", ["auto", "off", True])
-def test_string_strength_rejected(value: object) -> None:
-    with pytest.raises(TypeError, match="tone must be a number from 0.0 to 1.0"):
-        prepare_image(Image.new("RGB", (8, 8)), capabilities=_caps(), tone=value)  # type: ignore[arg-type]
+def test_string_strength_rejected(name: str, value: object) -> None:
+    with pytest.raises(TypeError, match=f"{name} must be a number from 0.0 to 1.0"):
+        prepare_image(Image.new("RGB", (8, 8)), capabilities=_caps(), **{name: value})  # type: ignore[arg-type]
