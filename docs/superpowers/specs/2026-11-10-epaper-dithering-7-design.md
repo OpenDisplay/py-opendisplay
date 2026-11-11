@@ -63,6 +63,15 @@ step, as today.
   the panels get measured later).
 - A test pins each scheme's index order and ink names.
 
+### Known output changes from epaper-dithering 7 itself
+
+epaper-dithering 7 normalises measured palettes to the panel's white, so panels with a measured
+palette render brighter than on 6.x even where the palette data is unchanged. On a random-colour
+test image with no dithering, 49.7% of panel 55's pixel indices differ from 6.x (white chosen far
+less often). This is the library's documented behaviour, not a py-opendisplay change, but the
+release notes must say so: measured-palette panels (35, 55, 66) look different, and `tone` restores
+some of the 6.x shadow lift. Solid-ink content (dashboards) is byte-identical.
+
 ### Dithering
 
 `dither_image(image, palette, DitherOptions(...))`. `dither_mode`, `dbs` and the other knobs pass

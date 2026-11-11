@@ -151,4 +151,5 @@ Drop `MONO_4_26`, `SOLUM_BWR`, the v1 Spectra constant, the bridge from Task 1 a
 ## Before merge
 
 - Replace the `[tool.uv.sources]` path entry with `"epaper-dithering==7.x.y"` once 7 is on PyPI; `uv lock`; rerun the suite.
+- Run the Task 3 hardware comparison on a measured-palette panel (55 or 35), and put the measured-palette note from the spec's "Known output changes" in the PR body / release notes.
 - `feat/sendspin-artwork` (`now_playing.py`, `cli_sendspin.py`) imports `DbsParams`/`DitherMode` and calls `dither_image`; rebase it after this lands.
