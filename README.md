@@ -182,6 +182,8 @@ py-opendisplay automatically selects the best color palette for your display bas
 **Idealised palettes** use the pure colours of the display's colour scheme (black, white, red, ...).
 Every other display uses these.
 
+To add a measured palette for your panel, see [docs/palettes.md](docs/palettes.md).
+
 In both, the pure inks are named, so a colour that asks for an ink (such as `#000000` text) comes
 out as that ink, solid.
 
