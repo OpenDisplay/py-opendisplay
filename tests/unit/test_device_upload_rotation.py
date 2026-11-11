@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from epaper_dithering import ColorScheme, DitherMode
+from epaper_dithering import DitherMode
 from PIL import Image
 
 from opendisplay import prepare_image
@@ -15,7 +15,7 @@ from opendisplay.models.config import (
     PowerOption,
     SystemConfig,
 )
-from opendisplay.models.enums import FitMode, Rotation
+from opendisplay.models.enums import ColorScheme, FitMode, Rotation
 
 
 def _config(width: int = 2, height: int = 2) -> GlobalConfig:

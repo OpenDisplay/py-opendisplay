@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from epaper_dithering import ColorScheme
+from .enums import ColorScheme
 
 
 @dataclass

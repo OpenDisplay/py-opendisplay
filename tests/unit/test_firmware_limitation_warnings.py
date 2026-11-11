@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 
 import pytest
-from epaper_dithering import ColorScheme
 
 from opendisplay.device import _warn_firmware_upload_limitations
+from opendisplay.models.enums import ColorScheme
 
 
 def _messages(caplog: pytest.LogCaptureFixture) -> list[str]:

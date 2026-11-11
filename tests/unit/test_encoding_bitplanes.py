@@ -2,10 +2,10 @@
 
 import numpy as np
 import pytest
-from epaper_dithering import ColorScheme
 from PIL import Image
 
 from opendisplay.encoding.bitplanes import encode_bitplanes
+from opendisplay.models.enums import ColorScheme
 
 
 class TestBitplaneEncoding:

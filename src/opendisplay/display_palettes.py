@@ -7,8 +7,10 @@ from epaper_dithering import (
     SPECTRA_7_3_6COLOR,
     SPECTRA_7_3_6COLOR_V2,
     ColorPalette,
-    ColorScheme,
 )
+from epaper_dithering import ColorScheme as _EdColorScheme
+
+from .models.enums import ColorScheme
 
 # Panel IDs that support 4-gray mode (from firmware mapEpd)
 PANELS_4GRAY: frozenset[int] = frozenset(
@@ -98,7 +100,7 @@ def get_palette_for_display(
     panel_ic_type: int | None,
     color_scheme: ColorScheme | int,
     use_measured: bool = True,
-) -> ColorScheme | ColorPalette:
+) -> _EdColorScheme | ColorPalette:
     """Get best available palette for display.
 
     Returns a measured ColorPalette if one exists for the given panel and color
@@ -112,7 +114,7 @@ def get_palette_for_display(
     Returns:
         ColorPalette if measured data exists and use_measured=True, otherwise ColorScheme enum
     """
-    scheme = color_scheme if isinstance(color_scheme, ColorScheme) else ColorScheme.from_value(color_scheme)
+    scheme = ColorScheme.from_value(int(color_scheme))
 
     if use_measured and panel_ic_type is not None:
         key = (panel_ic_type, scheme)
@@ -120,4 +122,5 @@ def get_palette_for_display(
         if measured is not None:
             return measured
 
-    return scheme
+    # Bridge to epaper-dithering 6's own enum; removed with the move to 7.
+    return _EdColorScheme.from_value(int(scheme))

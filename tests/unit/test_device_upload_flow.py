@@ -14,7 +14,6 @@ ACK constants derived from display_service.cpp (sendResponse echoes plain
 from __future__ import annotations
 
 import pytest
-from epaper_dithering import ColorScheme
 
 from opendisplay import OpenDisplayDevice
 from opendisplay.exceptions import (
@@ -30,7 +29,7 @@ from opendisplay.models.config import (
     PowerOption,
     SystemConfig,
 )
-from opendisplay.models.enums import FitMode, RefreshMode
+from opendisplay.models.enums import ColorScheme, FitMode, RefreshMode
 from opendisplay.protocol.commands import ENCRYPTED_CHUNK_SIZE
 
 # Firmware ACK bytes (2-byte plaintext command echoes, sent unencrypted)

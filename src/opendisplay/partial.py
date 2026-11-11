@@ -17,12 +17,11 @@ import struct
 from dataclasses import dataclass
 
 import numpy as np
-from epaper_dithering import ColorScheme
 from PIL import Image
 
 from .encoding import encode_image
 from .models.config import DisplayConfig, GlobalConfig
-from .models.enums import PartialUpdateSupport
+from .models.enums import ColorScheme, PartialUpdateSupport
 
 # ---------------------------------------------------------------------------
 # Wire constants mirrored from the firmware partial-rendering protocol.

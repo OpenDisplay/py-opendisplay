@@ -11,8 +11,6 @@ import struct
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from epaper_dithering import ColorScheme
-
 from .advertisement import SHT40_DEFAULT_MSD_START
 from .enums import (
     ActiveLevel,
@@ -20,6 +18,7 @@ from .enums import (
     BoardManufacturer,
     BusType,
     CapacityEstimator,
+    ColorScheme,
     DIYBoardType,
     FlashIcType,
     ICType,

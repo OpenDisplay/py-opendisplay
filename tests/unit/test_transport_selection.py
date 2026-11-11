@@ -8,11 +8,11 @@ over TCP the app-layer AUTHENTICATE (0x0050) must never run.
 from __future__ import annotations
 
 import pytest
-from epaper_dithering import ColorScheme
 
 import opendisplay.device as device_mod
 from opendisplay import OpenDisplayDevice
 from opendisplay.models.capabilities import DeviceCapabilities
+from opendisplay.models.enums import ColorScheme
 from opendisplay.transport.ip import TcpTransport
 
 

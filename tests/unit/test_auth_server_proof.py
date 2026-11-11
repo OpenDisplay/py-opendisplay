@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from epaper_dithering import ColorScheme
 
 from opendisplay import OpenDisplayDevice
 from opendisplay.crypto import _DEVICE_ID, compute_server_proof, derive_session_key
 from opendisplay.exceptions import AuthenticationFailedError
 from opendisplay.models.capabilities import DeviceCapabilities
+from opendisplay.models.enums import ColorScheme
 
 _KEY = bytes(range(16))
 _SERVER_NONCE = bytes(range(100, 116))

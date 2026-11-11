@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, TypeVar, cast
 
-from epaper_dithering import ColorScheme, DbsParams, DitherMode, dither_image
+from epaper_dithering import DbsParams, DitherMode, dither_image
 from PIL import Image
 
 from .crypto import (
@@ -56,7 +56,7 @@ from .models.advertisement import AdvertisementData, parse_advertisement
 from .models.buzzer_activate import BuzzerActivateConfig
 from .models.capabilities import DeviceCapabilities
 from .models.config import DisplayConfig, GlobalConfig
-from .models.enums import BoardManufacturer, FitMode, NfcRecordType, RefreshMode, Rotation
+from .models.enums import BoardManufacturer, ColorScheme, FitMode, NfcRecordType, RefreshMode, Rotation
 from .models.firmware import FirmwareVersion
 from .models.led_flash import LedFlashConfig
 from .partial import (
@@ -217,12 +217,6 @@ def _capabilities_from_config(config: GlobalConfig) -> DeviceCapabilities:
     display = config.displays[0]
     rotation = display.rotation_enum
     color_scheme = ColorScheme.from_value(display.color_scheme)
-    if color_scheme == ColorScheme.GRAYSCALE_8:
-        # GRAYSCALE_8 is library-local value 9 (epaper-dithering uses it for
-        # non-OpenDisplay 8-gray panels); it is never a valid firmware wire
-        # value. from_value(9) succeeds in 6.0.0, so guard here rather than
-        # letting a bogus config fail deep inside encode_image.
-        raise ValueError(f"color_scheme {display.color_scheme} (GRAYSCALE_8) is not a valid device wire value")
     return DeviceCapabilities(
         width=display.pixel_width,
         height=display.pixel_height,

@@ -6,7 +6,6 @@ import asyncio
 import struct
 
 import pytest
-from epaper_dithering import ColorScheme
 from PIL import Image
 from test_pipe_write import (
     END_ACK,
@@ -26,7 +25,7 @@ from opendisplay.encoding.compression import zlib_window_bits
 from opendisplay.exceptions import BLETimeoutError, RefreshTimeoutError
 from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.config import DisplayConfig, GlobalConfig, ManufacturerData, PowerOption, SystemConfig
-from opendisplay.models.enums import PartialUpdateSupport, RefreshMode
+from opendisplay.models.enums import ColorScheme, PartialUpdateSupport, RefreshMode
 from opendisplay.partial import ERR_ETAG_MISMATCH, PARTIAL_FLAG_COMPRESSED, PartialState
 
 

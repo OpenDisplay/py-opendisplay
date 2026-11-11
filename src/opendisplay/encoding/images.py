@@ -5,10 +5,9 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-from epaper_dithering import ColorScheme
 from PIL import Image, ImageOps
 
-from ..models.enums import FitMode
+from ..models.enums import ColorScheme, FitMode
 
 _LOGGER = logging.getLogger(__name__)
 
