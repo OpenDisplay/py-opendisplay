@@ -199,23 +199,20 @@ async with OpenDisplayDevice(
 
 By default, `use_measured_palettes=True` and the library will automatically use measured palettes when available, falling back to theoretical palettes for unknown displays.
 
-### Tone Compression
+### Tone and Gamut
 
-E-paper displays can't reproduce the full luminance range of digital images. Tone compression remaps image luminance to the display's actual range before dithering, producing smoother results. It is off by default (`0.0`) and only applies when using measured palettes.
+Two opt-in strengths from `0.0` (off, the default) to `1.0`:
+
+- `tone` lifts the black point to bring out shadow detail, at the cost of the panel's deepest black.
+- `gamut` pulls colours the panel can't show towards ones it can before dithering.
 
 ```python
 async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF") as device:
-    # Default: tone/gamut compression off
+    # Default: both off
     await device.upload_image(image)
 
-    # Auto tone and gamut compression for photos
-    await device.upload_image(image, tone="auto", gamut="auto")
-
-    # Fixed linear compression
-    await device.upload_image(image, tone=1.0)
-
-    # Disable tone compression
-    await device.upload_image(image, tone="off")
+    # Full black-point lift and gamut compression for a photo
+    await device.upload_image(image, tone=1.0, gamut=1.0)
 ```
 
 ## Refresh Modes

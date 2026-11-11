@@ -1,14 +1,14 @@
-"""Automatic measured palette selection and panel capability data for e-paper displays."""
+"""Palettes and panel capability data for e-paper displays.
 
-from epaper_dithering import (
-    BWRY_3_97,
-    MONO_4_26,
-    SOLUM_BWR,
-    SPECTRA_7_3_6COLOR,
-    SPECTRA_7_3_6COLOR_V2,
-    ColorPalette,
-)
-from epaper_dithering import ColorScheme as _EdColorScheme
+epaper-dithering 7 ships no palettes, so py-opendisplay owns them: an idealised palette per
+colour scheme, plus measured palettes for panels that have been measured.
+"""
+
+from __future__ import annotations
+
+from functools import cache
+
+from epaper_dithering import Palette
 
 from .models.enums import ColorScheme
 
@@ -72,55 +72,90 @@ def get_bwry_codes(panel_ic_type: int | None) -> tuple[int, int, int, int]:
     return _BWRY_CODES_BY_PANEL.get(panel_ic_type, _BWRY_CODES_DEFAULT)
 
 
-# Map: (panel_ic_type, color_scheme) -> measured ColorPalette
-# panel_ic_type identifies the e-paper panel model
-# color_scheme identifies the color mode (MONO, BWR, BWGBRY, etc.)
-DISPLAY_PALETTE_MAP: dict[tuple[int, ColorScheme], ColorPalette] = {
-    # Spectra 7.3" 6-color (ep73_spectra_800x480)
-    (35, ColorScheme.BWGBRY): SPECTRA_7_3_6COLOR,
-    # 4.26" Monochrome (ep426_800x480)
-    (39, ColorScheme.MONO): MONO_4_26,
-    # Solum 2.6" BWR (ep26r_152x296)
-    (33, ColorScheme.BWR): SOLUM_BWR,
-    # 3.97" BWRY (ep397yr_800x480)
-    (55, ColorScheme.BWRY): BWRY_3_97,
-    # Spectra 6 13.3" dual-controller (T133A01, Seeed reTerminal E1004). Keyed on
-    # BWGBRY_SPLIT because firmware requires scheme 8 for split panels; same ink
-    # set as the 7.3" (packing differs, not the inks), so it borrows that
-    # measurement until the T133A01 is calibrated.
-    (66, ColorScheme.BWGBRY_SPLIT): SPECTRA_7_3_6COLOR_V2,
-    # Add more as color calibration becomes available:
-    # (?, ColorScheme.BWRY): BWRY_4_2,  # 4.2" BWRY
-    # (?, ColorScheme.BWR): HANSHOW_BWR,
-    # (?, ColorScheme.BWY): HANSHOW_BWY,
+_RGB = tuple[int, int, int]
+
+_BLACK, _WHITE = ("black", "#000000"), ("white", "#ffffff")
+_YELLOW, _RED = ("yellow", "#ffff00"), ("red", "#ff0000")
+_BLUE, _GREEN, _ORANGE = ("blue", "#0000ff"), ("green", "#00ff00"), ("orange", "#ff8000")
+_SPECTRA6 = (_BLACK, _WHITE, _YELLOW, _RED, _BLUE, _GREEN)
+
+# Ink names and nominal colours per scheme, in the palette-index order the encoders expect
+# (the order of epaper-dithering 6.x's built-in schemes).
+_SCHEME_INKS: dict[ColorScheme, tuple[tuple[str, str], ...]] = {
+    ColorScheme.MONO: (_BLACK, _WHITE),
+    ColorScheme.BWR: (_BLACK, _WHITE, _RED),
+    ColorScheme.BWY: (_BLACK, _WHITE, _YELLOW),
+    ColorScheme.BWRY: (_BLACK, _WHITE, _YELLOW, _RED),
+    ColorScheme.BWGBRY: _SPECTRA6,
+    ColorScheme.BWGBRY_SPLIT: _SPECTRA6,
+    ColorScheme.SEVEN_COLOR: (*_SPECTRA6, _ORANGE),
+    ColorScheme.GRAYSCALE_4: (_BLACK, ("gray1", "#555555"), ("gray2", "#aaaaaa"), _WHITE),
+    ColorScheme.GRAYSCALE_16: (
+        _BLACK,
+        *((f"gray{i}", "#" + f"{i * 0x11:02x}" * 3) for i in range(1, 15)),
+        _WHITE,
+    ),
 }
+
+# Measured sRGB per ink, in the scheme's ink order, carried over from epaper-dithering 6.x.
+_SPECTRA6_V2: tuple[str, tuple[_RGB, ...]] = (
+    "Waveshare 7.3in Spectra 6, measured 2026-03-15 (6.x SPECTRA_7_3_6COLOR_V2)",
+    ((31, 24, 41), (168, 180, 182), (180, 173, 0), (113, 24, 19), (36, 70, 139), (50, 84, 60)),
+)
+_MEASURED: dict[tuple[int, ColorScheme], tuple[str, tuple[_RGB, ...]]] = {
+    # Spectra 7.3" 6-colour (ep73_spectra_800x480).
+    (35, ColorScheme.BWGBRY): _SPECTRA6_V2,
+    # Spectra 6 13.3" dual-controller (T133A01, Seeed reTerminal E1004). Keyed on
+    # BWGBRY_SPLIT because firmware requires scheme 8 for split panels; same inks as the
+    # 7.3", so it borrows that measurement until the T133A01 is measured.
+    (66, ColorScheme.BWGBRY_SPLIT): _SPECTRA6_V2,
+    # 3.97" BWRY (ep397yr_800x480).
+    (55, ColorScheme.BWRY): (
+        "EP397YR 3.97in BWRY (6.x BWRY_3_97)",
+        ((10, 7, 14), (173, 178, 174), (172, 128, 0), (85, 24, 14)),
+    ),
+}
+
+
+def _hex_rgb(value: str) -> _RGB:
+    return int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16)
+
+
+@cache
+def _ideal_palette(scheme: ColorScheme) -> Palette:
+    return Palette.from_srgb([(_hex_rgb(nominal), name, nominal) for name, nominal in _SCHEME_INKS[scheme]])
+
+
+@cache
+def _measured_palette(panel_ic_type: int, scheme: ColorScheme) -> Palette | None:
+    measured = _MEASURED.get((panel_ic_type, scheme))
+    if measured is None:
+        return None
+    source, colors = measured
+    inks = _SCHEME_INKS[scheme]
+    return Palette.from_srgb(
+        [(rgb, name, nominal) for rgb, (name, nominal) in zip(colors, inks, strict=True)],
+        measured=True,
+    ).with_source(source)
 
 
 def get_palette_for_display(
     panel_ic_type: int | None,
     color_scheme: ColorScheme | int,
     use_measured: bool = True,
-) -> _EdColorScheme | ColorPalette:
-    """Get best available palette for display.
+) -> Palette:
+    """Return the palette to dither to for a display.
 
-    Returns a measured ColorPalette if one exists for the given panel and color
-    scheme combination. Otherwise falls back to the theoretical ColorScheme.
+    A measured palette for the panel and scheme when one exists (and ``use_measured``),
+    otherwise the scheme's idealised palette. Either way, the scheme's pure inks are named,
+    so colours that request them come out solid.
 
-    Args:
-        panel_ic_type: E-paper panel model ID (from DisplayConfig), or None if not available
-        color_scheme: Color scheme enum or integer value
-        use_measured: If True, use measured palette when available; if False, always use ColorScheme
-
-    Returns:
-        ColorPalette if measured data exists and use_measured=True, otherwise ColorScheme enum
+    Raises:
+        ValueError: ``color_scheme`` is not a known wire value.
     """
     scheme = ColorScheme.from_value(int(color_scheme))
-
     if use_measured and panel_ic_type is not None:
-        key = (panel_ic_type, scheme)
-        measured = DISPLAY_PALETTE_MAP.get(key)
+        measured = _measured_palette(panel_ic_type, scheme)
         if measured is not None:
             return measured
-
-    # Bridge to epaper-dithering 6's own enum; removed with the move to 7.
-    return _EdColorScheme.from_value(int(scheme))
+    return _ideal_palette(scheme)

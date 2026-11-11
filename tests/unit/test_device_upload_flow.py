@@ -14,6 +14,7 @@ ACK constants derived from display_service.cpp (sendResponse echoes plain
 from __future__ import annotations
 
 import pytest
+from epaper_dithering import DitherOptions, Palette
 
 from opendisplay import OpenDisplayDevice
 from opendisplay.exceptions import (
@@ -733,9 +734,9 @@ def test_prepare_image_forwards_resolved_dbs_to_dither_image(monkeypatch: pytest
     captured: dict[str, object] = {}
     real = device_module.dither_image
 
-    def spy(*args: object, **kwargs: object) -> Image.Image:
-        captured.update(kwargs)
-        return real(*args, **kwargs)  # type: ignore[arg-type]
+    def spy(image: Image.Image, palette: Palette, options: DitherOptions) -> Image.Image:
+        captured["dbs"] = options.dbs
+        return real(image, palette, options)
 
     monkeypatch.setattr(device_module, "dither_image", spy)
     device_module.prepare_image(Image.new("RGB", (8, 8)), config=config, dbs=True)
@@ -753,9 +754,9 @@ def test_prepare_image_dbs_defaults_off(monkeypatch: pytest.MonkeyPatch) -> None
     captured: dict[str, object] = {}
     real = device_module.dither_image
 
-    def spy(*args: object, **kwargs: object) -> Image.Image:
-        captured.update(kwargs)
-        return real(*args, **kwargs)  # type: ignore[arg-type]
+    def spy(image: Image.Image, palette: Palette, options: DitherOptions) -> Image.Image:
+        captured["dbs"] = options.dbs
+        return real(image, palette, options)
 
     monkeypatch.setattr(device_module, "dither_image", spy)
     device_module.prepare_image(Image.new("RGB", (4, 4)), config=_make_config())

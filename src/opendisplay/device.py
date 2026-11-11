@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, TypeVar, cast
 
-from epaper_dithering import DbsParams, DitherMode, dither_image
+from epaper_dithering import DbsParams, DitherMode, DitherOptions, dither_image
 from PIL import Image
 
 from .crypto import (
@@ -295,8 +295,8 @@ def prepare_image(
     saturation: float = 1.0,
     shadows: float = 0.0,
     highlights: float = 0.0,
-    tone: float | str = 0.0,
-    gamut: float | str = 0.0,
+    tone: float = 0.0,
+    gamut: float = 0.0,
     fit: FitMode = FitMode.CONTAIN,
     rotate: Rotation = Rotation.ROTATE_0,
     dbs: DbsParams | bool | None = None,
@@ -322,8 +322,8 @@ def prepare_image(
         saturation: Saturation multiplier, >1.0 boosts (default: 1.0)
         shadows: Shadow lift in [0.0, 1.0] (default: 0.0)
         highlights: Highlight rolloff in [0.0, 1.0] (default: 0.0)
-        tone: Dynamic range compression — "auto", "off", or 0.0–1.0 (default: 0.0)
-        gamut: Gamut compression — "auto", "off", or 0.0–1.0 (default: 0.0)
+        tone: Black-point lift, 0.0–1.0 (default: 0.0)
+        gamut: Gamut compression, 0.0–1.0 (default: 0.0)
         fit: How to map the image to display dimensions (default: CONTAIN)
         rotate: Source image rotation enum (0/90/180/270)
         dbs: Direct Binary Search refinement after dithering — ``None``/``False``
@@ -372,18 +372,22 @@ def prepare_image(
 
     palette = get_palette_for_display(panel_ic_type, color_scheme, use_measured_palettes)
     display_cfg = config.displays[0] if config is not None and config.displays else None
+    if not isinstance(dither_mode, str):  # DitherMode is a StrEnum; 6.x callers passed ints
+        raise ValueError(f"unknown dither mode {dither_mode!r}; pass a DitherMode")
     dithered = dither_image(
         image,
         palette,
-        mode=dither_mode,
-        serpentine=serpentine,
-        exposure=exposure,
-        saturation=saturation,
-        shadows=shadows,
-        highlights=highlights,
-        tone=tone,
-        gamut=gamut,
-        dbs=_resolve_dbs(dbs, display_cfg),
+        DitherOptions(
+            mode=dither_mode,
+            serpentine=serpentine,
+            exposure=exposure,
+            saturation=saturation,
+            shadows=shadows,
+            highlights=highlights,
+            tone=tone,
+            gamut=gamut,
+            dbs=_resolve_dbs(dbs, display_cfg),
+        ),
     )
 
     # Encode to device format
@@ -1778,8 +1782,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         saturation: float = 1.0,
         shadows: float = 0.0,
         highlights: float = 0.0,
-        tone: float | str = 0.0,
-        gamut: float | str = 0.0,
+        tone: float = 0.0,
+        gamut: float = 0.0,
         fit: FitMode = FitMode.CONTAIN,
         rotate: Rotation = Rotation.ROTATE_0,
         dbs: DbsParams | bool | None = None,
@@ -1818,8 +1822,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         saturation: float = 1.0,
         shadows: float = 0.0,
         highlights: float = 0.0,
-        tone: float | str = 0.0,
-        gamut: float | str = 0.0,
+        tone: float = 0.0,
+        gamut: float = 0.0,
         fit: FitMode = FitMode.CONTAIN,
         rotate: Rotation = Rotation.ROTATE_0,
         progress_callback: Callable[[int, int], None] | None = None,
@@ -1845,8 +1849,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             saturation: Saturation multiplier, >1.0 boosts (default: 1.0)
             shadows: Shadow lift in [0.0, 1.0] (default: 0.0)
             highlights: Highlight rolloff in [0.0, 1.0] (default: 0.0)
-            tone: Dynamic range compression — "auto", "off", or 0.0–1.0 (default: 0.0)
-            gamut: Gamut compression — "auto", "off", or 0.0–1.0 (default: 0.0)
+            tone: Black-point lift, 0.0–1.0 (default: 0.0)
+            gamut: Gamut compression, 0.0–1.0 (default: 0.0)
             fit: How to map the image to display dimensions (default: CONTAIN).
             rotate: Source image rotation enum, applied before fit/encoding.
             dbs: Direct Binary Search refinement — ``None``/``False`` = off
