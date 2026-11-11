@@ -6,7 +6,7 @@ import pytest
 from epaper_dithering import DitherMode
 from PIL import Image
 
-from opendisplay import prepare_image
+from opendisplay import prepare_image, preview_image
 from opendisplay.device import _rotate_source_image
 from opendisplay.models.config import (
     DisplayConfig,
@@ -18,7 +18,12 @@ from opendisplay.models.config import (
 from opendisplay.models.enums import ColorScheme, FitMode, Rotation
 
 
-def _config(width: int = 2, height: int = 2) -> GlobalConfig:
+def _config(
+    width: int = 2,
+    height: int = 2,
+    color_scheme: ColorScheme = ColorScheme.MONO,
+    rotation: int = 0,
+) -> GlobalConfig:
     return GlobalConfig(
         system=SystemConfig(
             ic_type=0,
@@ -63,14 +68,14 @@ def _config(width: int = 2, height: int = 2) -> GlobalConfig:
                 active_width_mm=10,
                 active_height_mm=10,
                 tag_type=0,
-                rotation=0,
+                rotation=rotation,
                 reset_pin=0xFF,
                 busy_pin=0xFF,
                 dc_pin=0xFF,
                 cs_pin=0xFF,
                 data_pin=0,
                 partial_update_support=0,
-                color_scheme=ColorScheme.MONO.value,
+                color_scheme=color_scheme.value,
                 transmission_modes=0,
                 clk_pin=0,
                 reserved_pins=b"\x00" * 7,
@@ -182,3 +187,34 @@ def test_prepare_image_without_rotation_preserves_orientation_before_fit(
     )
 
     assert seen["size_before_fit"] == (4, 2)
+
+
+_K, _W, _R = (0, 0, 0), (255, 255, 255), (255, 0, 0)
+# 4x2 and lopsided, so any wrong rotation or mirror changes some pixel.
+_SOURCE_ROWS = [[_R, _W, _W, _K], [_W, _W, _K, _W]]
+
+
+@pytest.mark.parametrize(
+    ("base", "rotate"),
+    [
+        (0, Rotation.ROTATE_0),
+        (90, Rotation.ROTATE_0),
+        (0, Rotation.ROTATE_180),
+        (90, Rotation.ROTATE_180),
+        (180, Rotation.ROTATE_90),
+    ],
+)
+def test_preview_image_restores_source_orientation(base: int, rotate: Rotation) -> None:
+    """The preview of a dithered frame faces the same way as the source image."""
+    source = Image.new("RGB", (4, 2))
+    for y, row in enumerate(_SOURCE_ROWS):
+        for x, color in enumerate(row):
+            source.putpixel((x, y), color)
+    transposed = (base + rotate.value) % 180 == 90
+    config = _config(*((2, 4) if transposed else (4, 2)), color_scheme=ColorScheme.BWR, rotation=base)
+
+    _, _, processed = prepare_image(source, config=config, dither_mode=DitherMode.NONE, rotate=rotate)
+    preview = preview_image(processed, config=config, rotate=rotate)
+
+    assert preview.mode == "RGB"
+    assert [[preview.getpixel((x, y)) for x in range(4)] for y in range(2)] == _SOURCE_ROWS
