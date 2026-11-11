@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from epaper_dithering import ColorScheme
 from PIL import Image
 
 from opendisplay.encoding.images import encode_image
 from opendisplay.models.advertisement import parse_advertisement
-from opendisplay.models.enums import SensorType
+from opendisplay.models.enums import ColorScheme, SensorType
 
 
 def test_sensor_type_has_bq27220() -> None:

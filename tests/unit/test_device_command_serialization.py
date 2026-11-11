@@ -6,10 +6,10 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from epaper_dithering import ColorScheme
 
 from opendisplay import OpenDisplayDevice
 from opendisplay.models.capabilities import DeviceCapabilities
+from opendisplay.models.enums import ColorScheme
 from opendisplay.transport.connection import BLEConnection
 
 

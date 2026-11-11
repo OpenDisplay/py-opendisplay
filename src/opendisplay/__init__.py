@@ -3,7 +3,7 @@
 Pure Python package for communicating with OpenDisplay BLE e-paper tags.
 """
 
-from epaper_dithering import ColorScheme, DitherMode
+from epaper_dithering import DitherMode
 
 from .battery import voltage_to_percent
 from .device import OpenDisplayDevice, prepare_image
@@ -75,6 +75,7 @@ from .models.enums import (
     ActiveLevel,
     BoardManufacturer,
     BusType,
+    ColorScheme,
     DIYBoardType,
     FitMode,
     FlashIcType,

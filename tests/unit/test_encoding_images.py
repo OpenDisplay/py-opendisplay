@@ -2,13 +2,13 @@
 
 import numpy as np
 import pytest
-from epaper_dithering import ColorScheme, DitherMode
+from epaper_dithering import DitherMode
 from PIL import Image
 
 from opendisplay.device import prepare_image
 from opendisplay.encoding.images import encode_4bpp, encode_image, fit_image
 from opendisplay.models.capabilities import DeviceCapabilities
-from opendisplay.models.enums import FitMode
+from opendisplay.models.enums import ColorScheme, FitMode
 
 
 def _palette_image(pixels: list[list[int]]) -> Image.Image:

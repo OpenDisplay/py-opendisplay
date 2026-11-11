@@ -1,0 +1,25 @@
+{
+  "format": "epaper-palette",
+  "version": 1,
+  "measured": false,
+  "entries": [
+    {
+      "appearance": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "name": "black",
+      "nominal": "#000000"
+    },
+    {
+      "appearance": [
+        100.0,
+        0.0,
+        0.0
+      ],
+      "name": "white",
+      "nominal": "#ffffff"
+    }
+  ]
+}

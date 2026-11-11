@@ -6,7 +6,6 @@ import asyncio
 import logging
 
 import pytest
-from epaper_dithering import ColorScheme
 
 from opendisplay import OpenDisplayDevice
 from opendisplay.exceptions import (
@@ -17,6 +16,7 @@ from opendisplay.exceptions import (
     TruncatedConfigError,
 )
 from opendisplay.models.capabilities import DeviceCapabilities
+from opendisplay.models.enums import ColorScheme
 from opendisplay.protocol.responses import (
     check_response_type,
     is_compressed_failure_frame,

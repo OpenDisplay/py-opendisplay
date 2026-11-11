@@ -6,6 +6,32 @@ from enum import IntEnum
 from typing import Final
 
 
+class ColorScheme(IntEnum):
+    """A display's colour scheme, as the firmware's ``color_scheme`` wire value.
+
+    Values match ``enum ColorScheme`` in ``opendisplay-protocol``. The palette each scheme
+    dithers to lives in ``opendisplay.display_palettes``.
+    """
+
+    MONO = 0
+    BWR = 1
+    BWY = 2
+    BWRY = 3
+    BWGBRY = 4
+    GRAYSCALE_4 = 5
+    GRAYSCALE_16 = 6
+    SEVEN_COLOR = 7
+    BWGBRY_SPLIT = 8
+
+    @classmethod
+    def from_value(cls, value: int) -> ColorScheme:
+        """Return the scheme for a wire value, raising ``ValueError`` for an unknown one."""
+        try:
+            return cls(value)
+        except ValueError:
+            raise ValueError(f"Invalid color scheme value: {value}") from None
+
+
 class RefreshMode(IntEnum):
     """Display refresh modes.
 

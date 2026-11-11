@@ -1,0 +1,62 @@
+{
+  "format": "epaper-palette",
+  "version": 1,
+  "measured": true,
+  "source": "Waveshare 7.3in Spectra 6, measured 2026-03-15 (6.x SPECTRA_7_3_6COLOR_V2)",
+  "entries": [
+    {
+      "appearance": [
+        17.887430721252116,
+        11.441585460763099,
+        -12.32031495261008
+      ],
+      "name": "black",
+      "nominal": "#000000"
+    },
+    {
+      "appearance": [
+        100.0,
+        0.0,
+        0.0
+      ],
+      "name": "white",
+      "nominal": "#ffffff"
+    },
+    {
+      "appearance": [
+        95.83885928437606,
+        -10.662354857510381,
+        95.27784521810392
+      ],
+      "name": "yellow",
+      "nominal": "#ffff00"
+    },
+    {
+      "appearance": [
+        37.327848055256304,
+        51.67796475307476,
+        37.127430068213826
+      ],
+      "name": "red",
+      "nominal": "#ff0000"
+    },
+    {
+      "appearance": [
+        45.33861337459962,
+        17.64909667924208,
+        -52.915853964251205
+      ],
+      "name": "blue",
+      "nominal": "#0000ff"
+    },
+    {
+      "appearance": [
+        47.65445591906768,
+        -20.734738683338417,
+        14.82496624785281
+      ],
+      "name": "green",
+      "nominal": "#00ff00"
+    }
+  ]
+}

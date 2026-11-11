@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from epaper_dithering import ColorScheme
 from PIL import Image
 
 from opendisplay import OpenDisplayDevice
@@ -15,6 +14,7 @@ from opendisplay.models.config import (
     PowerOption,
     SystemConfig,
 )
+from opendisplay.models.enums import ColorScheme
 from opendisplay.protocol.commands import MAX_COMPRESSED_SIZE
 
 

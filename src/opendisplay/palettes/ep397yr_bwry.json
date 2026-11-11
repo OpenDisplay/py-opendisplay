@@ -1,0 +1,44 @@
+{
+  "format": "epaper-palette",
+  "version": 1,
+  "measured": true,
+  "source": "EP397YR 3.97in BWRY (6.x BWRY_3_97)",
+  "entries": [
+    {
+      "appearance": [
+        5.132302378215279,
+        4.648260283295305,
+        -6.198568994895931
+      ],
+      "name": "black",
+      "nominal": "#000000"
+    },
+    {
+      "appearance": [
+        100.0,
+        0.0,
+        0.0
+      ],
+      "name": "white",
+      "nominal": "#ffffff"
+    },
+    {
+      "appearance": [
+        79.22967415521569,
+        12.224989948315223,
+        80.94276208562083
+      ],
+      "name": "yellow",
+      "nominal": "#ffff00"
+    },
+    {
+      "appearance": [
+        29.446465504915608,
+        37.14264420171534,
+        28.886888269300897
+      ],
+      "name": "red",
+      "nominal": "#ff0000"
+    }
+  ]
+}

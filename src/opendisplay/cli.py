@@ -111,16 +111,14 @@ def _parse_hex_key(hex_str: str | None) -> bytes | None:
         _error(f"--key contains invalid hex characters: {exc}")
 
 
-def _parse_compression_value(flag: str, value: str) -> float | str:
-    """Parse a compression knob value: 'auto'/'off' or a float in [0.0, 1.0]."""
-    if value in ("auto", "off"):
-        return value
+def _parse_compression_value(flag: str, value: str) -> float:
+    """Parse a 0.0–1.0 strength such as --tone or --gamut."""
     try:
         f = float(value)
     except ValueError:
-        _error(f'{flag} must be "auto", "off", or a float, got {value!r}')
+        _error(f"{flag} must be a number from 0.0 to 1.0, got {value!r}")
     if not 0.0 <= f <= 1.0:
-        _error(f"{flag} must be between 0.0 and 1.0, got {f}")
+        _error(f"{flag} must be a number from 0.0 to 1.0, got {value!r}")
     return f
 
 
@@ -1074,13 +1072,13 @@ def _add_upload_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         "--tone",
         default="0",
         metavar="VALUE",
-        help='Tone compression: "auto", "off", or 0.0–1.0 (default: 0)',
+        help="Black-point lift, 0.0–1.0 (default: 0)",
     )
     p.add_argument(
         "--gamut",
         default="0",
         metavar="VALUE",
-        help='Gamut compression: "auto", "off", or 0.0–1.0 (default: 0)',
+        help="Gamut compression, 0.0–1.0 (default: 0)",
     )
     p.add_argument(
         "--state-file",
@@ -1131,8 +1129,8 @@ async def _upload(
     saturation: float,
     shadows: float,
     highlights: float,
-    tone: float | str,
-    gamut: float | str,
+    tone: float,
+    gamut: float,
     state_file: str | None,
 ) -> None:
     try:

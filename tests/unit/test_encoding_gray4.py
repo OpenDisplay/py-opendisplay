@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-from epaper_dithering import ColorScheme
 from PIL import Image
 
 from opendisplay import prepare_image
@@ -10,6 +9,7 @@ from opendisplay.display_palettes import _GRAY4_CODES_BASE, get_gray4_codes
 from opendisplay.encoding.bitplanes import encode_gray4_bitplanes
 from opendisplay.encoding.images import encode_2bpp
 from opendisplay.models.capabilities import DeviceCapabilities
+from opendisplay.models.enums import ColorScheme
 
 EP426_PANEL_IC = 0x0028  # uses the v2 gray-code table
 BASE_PANEL_IC = 0x0008  # EP295: uses the base gray-code table

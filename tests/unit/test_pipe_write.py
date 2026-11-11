@@ -11,7 +11,6 @@ from __future__ import annotations
 import struct
 
 import pytest
-from epaper_dithering import ColorScheme
 from PIL import Image
 
 from opendisplay import OpenDisplayDevice
@@ -25,7 +24,7 @@ from opendisplay.models.config import (
     PowerOption,
     SystemConfig,
 )
-from opendisplay.models.enums import RefreshMode
+from opendisplay.models.enums import ColorScheme, RefreshMode
 from opendisplay.partial import PartialRegion
 from opendisplay.protocol import (
     DEFAULT_MAX_FRAME,

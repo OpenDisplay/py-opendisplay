@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, TypeVar, cast
 
-from epaper_dithering import ColorScheme, DbsParams, DitherMode, dither_image
+from epaper_dithering import DbsParams, DitherMode, DitherOptions, dither_image
 from PIL import Image
 
 from .crypto import (
@@ -56,7 +56,7 @@ from .models.advertisement import AdvertisementData, parse_advertisement
 from .models.buzzer_activate import BuzzerActivateConfig
 from .models.capabilities import DeviceCapabilities
 from .models.config import DisplayConfig, GlobalConfig
-from .models.enums import BoardManufacturer, FitMode, NfcRecordType, RefreshMode, Rotation
+from .models.enums import BoardManufacturer, ColorScheme, FitMode, NfcRecordType, RefreshMode, Rotation
 from .models.firmware import FirmwareVersion
 from .models.led_flash import LedFlashConfig
 from .partial import (
@@ -217,12 +217,6 @@ def _capabilities_from_config(config: GlobalConfig) -> DeviceCapabilities:
     display = config.displays[0]
     rotation = display.rotation_enum
     color_scheme = ColorScheme.from_value(display.color_scheme)
-    if color_scheme == ColorScheme.GRAYSCALE_8:
-        # GRAYSCALE_8 is library-local value 9 (epaper-dithering uses it for
-        # non-OpenDisplay 8-gray panels); it is never a valid firmware wire
-        # value. from_value(9) succeeds in 6.0.0, so guard here rather than
-        # letting a bogus config fail deep inside encode_image.
-        raise ValueError(f"color_scheme {display.color_scheme} (GRAYSCALE_8) is not a valid device wire value")
     return DeviceCapabilities(
         width=display.pixel_width,
         height=display.pixel_height,
@@ -301,8 +295,8 @@ def prepare_image(
     saturation: float = 1.0,
     shadows: float = 0.0,
     highlights: float = 0.0,
-    tone: float | str = 0.0,
-    gamut: float | str = 0.0,
+    tone: float = 0.0,
+    gamut: float = 0.0,
     fit: FitMode = FitMode.CONTAIN,
     rotate: Rotation = Rotation.ROTATE_0,
     dbs: DbsParams | bool | None = None,
@@ -328,8 +322,8 @@ def prepare_image(
         saturation: Saturation multiplier, >1.0 boosts (default: 1.0)
         shadows: Shadow lift in [0.0, 1.0] (default: 0.0)
         highlights: Highlight rolloff in [0.0, 1.0] (default: 0.0)
-        tone: Dynamic range compression — "auto", "off", or 0.0–1.0 (default: 0.0)
-        gamut: Gamut compression — "auto", "off", or 0.0–1.0 (default: 0.0)
+        tone: Black-point lift, 0.0–1.0 (default: 0.0)
+        gamut: Gamut compression, 0.0–1.0 (default: 0.0)
         fit: How to map the image to display dimensions (default: CONTAIN)
         rotate: Source image rotation enum (0/90/180/270)
         dbs: Direct Binary Search refinement after dithering — ``None``/``False``
@@ -342,6 +336,8 @@ def prepare_image(
 
     Raises:
         RuntimeError: If config has no display information
+        ValueError: If ``dither_mode`` is unknown, or ``tone``/``gamut`` is outside 0.0–1.0
+        TypeError: If ``tone`` or ``gamut`` is not a number (e.g. the 6.x ``"auto"``)
     """
     if capabilities is None:
         if config is None:
@@ -381,15 +377,17 @@ def prepare_image(
     dithered = dither_image(
         image,
         palette,
-        mode=dither_mode,
-        serpentine=serpentine,
-        exposure=exposure,
-        saturation=saturation,
-        shadows=shadows,
-        highlights=highlights,
-        tone=tone,
-        gamut=gamut,
-        dbs=_resolve_dbs(dbs, display_cfg),
+        DitherOptions(
+            mode=dither_mode,
+            serpentine=serpentine,
+            exposure=exposure,
+            saturation=saturation,
+            shadows=shadows,
+            highlights=highlights,
+            tone=tone,
+            gamut=gamut,
+            dbs=_resolve_dbs(dbs, display_cfg),
+        ),
     )
 
     # Encode to device format
@@ -464,7 +462,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         async with OpenDisplayDevice(mac, capabilities=caps) as device:
             await device.upload_image(image)
 
-        # Use theoretical ColorScheme instead of measured palettes
+        # Use the scheme's idealised palette instead of a measured one
         async with OpenDisplayDevice(mac, use_measured_palettes=False) as device:
             await device.upload_image(image)
     """
@@ -1784,8 +1782,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         saturation: float = 1.0,
         shadows: float = 0.0,
         highlights: float = 0.0,
-        tone: float | str = 0.0,
-        gamut: float | str = 0.0,
+        tone: float = 0.0,
+        gamut: float = 0.0,
         fit: FitMode = FitMode.CONTAIN,
         rotate: Rotation = Rotation.ROTATE_0,
         dbs: DbsParams | bool | None = None,
@@ -1824,8 +1822,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         saturation: float = 1.0,
         shadows: float = 0.0,
         highlights: float = 0.0,
-        tone: float | str = 0.0,
-        gamut: float | str = 0.0,
+        tone: float = 0.0,
+        gamut: float = 0.0,
         fit: FitMode = FitMode.CONTAIN,
         rotate: Rotation = Rotation.ROTATE_0,
         progress_callback: Callable[[int, int], None] | None = None,
@@ -1851,8 +1849,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             saturation: Saturation multiplier, >1.0 boosts (default: 1.0)
             shadows: Shadow lift in [0.0, 1.0] (default: 0.0)
             highlights: Highlight rolloff in [0.0, 1.0] (default: 0.0)
-            tone: Dynamic range compression — "auto", "off", or 0.0–1.0 (default: 0.0)
-            gamut: Gamut compression — "auto", "off", or 0.0–1.0 (default: 0.0)
+            tone: Black-point lift, 0.0–1.0 (default: 0.0)
+            gamut: Gamut compression, 0.0–1.0 (default: 0.0)
             fit: How to map the image to display dimensions (default: CONTAIN).
             rotate: Source image rotation enum, applied before fit/encoding.
             dbs: Direct Binary Search refinement — ``None``/``False`` = off

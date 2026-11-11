@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from epaper_dithering import ColorScheme, DitherMode
+from epaper_dithering import DitherMode
 from PIL import Image
 
 from opendisplay import prepare_image
@@ -15,7 +15,7 @@ from opendisplay.models.config import (
     PowerOption,
     SystemConfig,
 )
-from opendisplay.models.enums import FitMode, Rotation
+from opendisplay.models.enums import ColorScheme, FitMode, Rotation
 
 
 def _config(width: int = 2, height: int = 2) -> GlobalConfig:
@@ -88,9 +88,7 @@ def _stub_prepare_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         "opendisplay.device.dither_image",
-        lambda image, palette, *, mode, serpentine, exposure, saturation, shadows, highlights, tone, gamut, dbs: (
-            image.convert("P")
-        ),
+        lambda image, palette, options: image.convert("P"),
     )
     monkeypatch.setattr(
         "opendisplay.device.encode_image",

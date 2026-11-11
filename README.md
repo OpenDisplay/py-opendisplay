@@ -173,23 +173,27 @@ Upload your image and compare the visual results before choosing an algorithm.
 
 py-opendisplay automatically selects the best color palette for your display based on its hardware specifications.
 
-### Measured vs Theoretical Palettes
+### Measured and Idealised Palettes
 
-**Measured Palettes** (default): Use actual measured color values from physical e-paper displays for more accurate color reproduction. These palettes are calibrated for specific display models:
-- Spectra 7.3" 6-color (ep73_spectra_800x480)
-- 4.26" Monochrome (ep426_800x480)
-- Solum 2.6" BWR (ep26r_152x296)
+**Measured palettes** (default) use colours measured on real panels:
+- Spectra 6 7.3" (ep73_spectra_800x480), also used for the 13.3" split panel (T133A01)
+- 3.97" BWRY (ep397yr_800x480)
 
-**Theoretical Palettes**: Use ideal RGB color values (pure black, white, red, etc.) from the ColorScheme specification.
+**Idealised palettes** use the pure colours of the display's colour scheme (black, white, red, ...).
+Every other display uses these.
+
+To add a measured palette for your panel, see [docs/palettes.md](docs/palettes.md).
+
+In both, the pure inks are named, so a colour that asks for an ink (such as `#000000` text) comes
+out as that ink, solid.
 
 ### Disabling Measured Palettes
 
-If you want to force the use of theoretical ColorScheme palettes instead of measured palettes (useful for testing or comparison):
+To use the idealised palette even where a measured one exists (useful for testing or comparison):
 
 ```python
 from opendisplay import OpenDisplayDevice
 
-# Use theoretical ColorScheme palettes instead of measured palettes
 async with OpenDisplayDevice(
     mac_address="AA:BB:CC:DD:EE:FF",
     use_measured_palettes=False
@@ -197,25 +201,20 @@ async with OpenDisplayDevice(
     await device.upload_image(image)
 ```
 
-By default, `use_measured_palettes=True` and the library will automatically use measured palettes when available, falling back to theoretical palettes for unknown displays.
+### Tone and Gamut
 
-### Tone Compression
+Two opt-in strengths from `0.0` (off, the default) to `1.0`:
 
-E-paper displays can't reproduce the full luminance range of digital images. Tone compression remaps image luminance to the display's actual range before dithering, producing smoother results. It is off by default (`0.0`) and only applies when using measured palettes.
+- `tone` lifts the black point to bring out shadow detail, at the cost of the panel's deepest black.
+- `gamut` pulls colours the panel can't show towards ones it can before dithering.
 
 ```python
 async with OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF") as device:
-    # Default: tone/gamut compression off
+    # Default: both off
     await device.upload_image(image)
 
-    # Auto tone and gamut compression for photos
-    await device.upload_image(image, tone="auto", gamut="auto")
-
-    # Fixed linear compression
-    await device.upload_image(image, tone=1.0)
-
-    # Disable tone compression
-    await device.upload_image(image, tone="off")
+    # Full black-point lift and gamut compression for a photo
+    await device.upload_image(image, tone=1.0, gamut=1.0)
 ```
 
 ## Refresh Modes
