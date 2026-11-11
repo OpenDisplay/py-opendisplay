@@ -31,6 +31,18 @@ class ColorScheme(IntEnum):
         except ValueError:
             raise ValueError(f"Invalid color scheme value: {value}") from None
 
+    @property
+    def accent_color(self) -> str:
+        """The scheme's accent ink name: ``"yellow"`` for BWY, ``"black"`` for mono and greyscale, else ``"red"``.
+
+        Renderers use this for content drawn in the "accent" colour.
+        """
+        if self is ColorScheme.BWY:
+            return "yellow"
+        if self in (ColorScheme.MONO, ColorScheme.GRAYSCALE_4, ColorScheme.GRAYSCALE_16):
+            return "black"
+        return "red"
+
 
 class RefreshMode(IntEnum):
     """Display refresh modes.
