@@ -82,3 +82,22 @@ no longer accepted. The CLI follows.
 
 - Module layout and names, the data file layout inside the package.
 - Whether the measured palettes ship as JSON files or Python constants.
+
+## Notes for Step 2 (drive modes, palettes from the firmware)
+
+Two assumptions in this design have to change once palettes come from the tag's config:
+
+1. **Palette index order is an implicit contract with the encoders.** The encoders read a palette
+   index as a fixed ink per scheme (BWRY: index 2 = yellow, mapped to a panel code by
+   `get_bwry_codes`; BWR bitplanes: index 2 = the colour plane), and the shipped palette files
+   are written in that order. A firmware palette in another order, or one carrying a panel code
+   per entry (as `0xB0` does), would be encoded wrongly. Encode through each entry's panel code
+   (from the firmware) or its ink name, never by position. This touches `bitplanes.py`, the
+   2bpp and 4-gray encoders, and `partial.py`; `tests/unit/test_wire_bytes_golden.py` pins
+   today's output to check the rework against.
+2. **The palette lookup doesn't see the config.** `get_palette_for_display` takes only the panel
+   ID and scheme. Add "palette from the tag's config if present, else the shipped files" there;
+   `prepare_image` already has the config. Firmware Lab values convert with
+   `Palette.from_absolute_lab(..., white_index=...)`; pure inks only snap solid if the firmware
+   names them.
+
