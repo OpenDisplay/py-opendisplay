@@ -31,7 +31,7 @@ dependencies = [
     "pillow>=10.0.0",
     "numpy>=1.24.0,!=2.4.0",
     "bleak-retry-connector>=3.5.0",
-    "epaper-dithering",  # TEMP: 7.x from the local path below; pin ==7.x before merge
+    "epaper-dithering==7.0.0",
     "cryptography>=41.0.0",
 ]
 
@@ -124,7 +124,3 @@ dev = [
     "prek>=0.3.4",
     "pylint>=4.0.5",
 ]
-
-# TEMP: develop against epaper-dithering 7 (PR #100) until it is on PyPI. Remove before merge.
-[tool.uv.sources]
-epaper-dithering = { path = "../epaper-dithering/packages/python" }
