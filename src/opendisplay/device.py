@@ -417,6 +417,30 @@ def prepare_image(
     return image_data, compressed_data, dithered
 
 
+def preview_image(
+    processed: Image.Image,
+    config: GlobalConfig | None = None,
+    capabilities: DeviceCapabilities | None = None,
+    rotate: Rotation = Rotation.ROTATE_0,
+) -> Image.Image:
+    """Turn ``prepare_image``'s processed image into an RGB preview facing like the source.
+
+    The processed image is in the panel's native orientation, rotated by the display's
+    rotation plus ``rotate``; this undoes that rotation. Its colours are each palette
+    entry's appearance, so the preview shows what the panel shows. Pass the same
+    ``config``/``capabilities`` and ``rotate`` given to ``prepare_image``.
+
+    Raises:
+        RuntimeError: If config has no display information
+    """
+    if capabilities is None:
+        if config is None:
+            raise RuntimeError("Config has no display information")
+        capabilities = _capabilities_from_config(config)
+    effective = (_capabilities_rotation(capabilities.rotation).value + rotate.value) % 360
+    return _rotate_source_image(processed.convert("RGB"), Rotation((360 - effective) % 360))
+
+
 _T = TypeVar("_T")
 
 
