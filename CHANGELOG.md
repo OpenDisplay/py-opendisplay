@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.0.1](https://github.com/OpenDisplay/py-opendisplay/compare/v8.0.0...v8.0.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* restore ColorScheme.accent_color ([9b76353](https://github.com/OpenDisplay/py-opendisplay/commit/9b763533f0005fb2ae1473d5f87b1100ad4099b9))
+
 ## [8.0.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.18.1...v8.0.0) (2026-11-11)
 
 
