@@ -1,5 +1,28 @@
 # Changelog
 
+## [8.0.0](https://github.com/OpenDisplay/py-opendisplay/compare/v7.18.1...v8.0.0) (2026-11-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* requires epaper-dithering 7. tone and gamut take 0.0–1.0 numbers only ("auto"/"off" removed). Panels 39 and 33 use idealised palettes until measured; panel 35 uses the v2 Spectra 6 measurement; DitherMode is a string enum.
+* ColorScheme is an IntEnum owned by py-opendisplay; GRAYSCALE_8, .palette and .accent_color are gone.
+
+### Features
+
+* define ColorScheme in py-opendisplay instead of re-exporting epaper-dithering's ([f91f5d8](https://github.com/OpenDisplay/py-opendisplay/commit/f91f5d8a38662e553745a6a28486c0e049f5635c))
+* move to epaper-dithering 7 with py-opendisplay's own palette table ([1ecd02d](https://github.com/OpenDisplay/py-opendisplay/commit/1ecd02d6dc80505203cfe993326bb25993957201))
+
+
+### Documentation
+
+* add epaper-dithering 7 migration design and plan ([5ef3ec7](https://github.com/OpenDisplay/py-opendisplay/commit/5ef3ec7323a80171061bce0206fd02752d97460d))
+* describe py-opendisplay's palette table ([acb5cf9](https://github.com/OpenDisplay/py-opendisplay/commit/acb5cf9ad04da4922b7f72a6c16457387c5f7612))
+* explain how to add a measured palette ([edf0c57](https://github.com/OpenDisplay/py-opendisplay/commit/edf0c57ac647e4c9f4431c71f1ff8d8b099b4ebd))
+* note epaper-dithering 7's output change on measured-palette panels ([4e5b237](https://github.com/OpenDisplay/py-opendisplay/commit/4e5b237ebb89b3bbfceaec2c127a63d33b51c4b4))
+* note what Step 2 has to change for firmware palettes ([ca29742](https://github.com/OpenDisplay/py-opendisplay/commit/ca297421f75a0502d88ac44856250e4c4535ac5b))
+* record the BWRY panel-code band test for Step 2 ([925b82c](https://github.com/OpenDisplay/py-opendisplay/commit/925b82ce54f412bedcd6f137cc2f87e35543c2d5))
+
 ## [7.18.1](https://github.com/OpenDisplay/py-opendisplay/compare/v7.18.0...v7.18.1) (2026-10-07)
 
 
