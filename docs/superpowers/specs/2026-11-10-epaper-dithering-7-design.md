@@ -100,4 +100,12 @@ Two assumptions in this design have to change once palettes come from the tag's 
    `prepare_image` already has the config. Firmware Lab values convert with
    `Palette.from_absolute_lab(..., white_index=...)`; pure inks only snap solid if the firmware
    names them.
-
+3. **`code_map` (`0xB1`) needs a defined index order before py-opendisplay uses it.** On
+   2026-11-11, raw panel codes 0/1/2/3 sent as flat bands to OD58D951 (EP266YR, 0x001C, mode 0)
+   showed black/white/**yellow**/**red**: code 2 is yellow, code 3 is red. That matches
+   bb_epaper's `u8Colors_4clr_v2` and the identity codes py-opendisplay sends for this panel, but
+   not `panels.yaml`'s `code_map: [0, 1, 3, 2]` read with a black/white/yellow/red logical order
+   (which predicts the opposite). Pin the logical order to black, white, yellow, red (the
+   `ColorScheme.BWRY` palette order and bb_epaper's colour enum); v2 panels then map
+   `[0, 1, 2, 3]`, and only the `u8Colors_4clr` panels (0x001D) swap. 0x001E is identity on
+   hardware (#161) despite bb_epaper listing it as `u8Colors_4clr`.
