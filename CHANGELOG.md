@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.1.0](https://github.com/OpenDisplay/py-opendisplay/compare/v8.0.1...v8.1.0) (2026-11-11)
+
+
+### Features
+
+* add preview_image for showing a prepared frame as the panel shows it ([728a1c0](https://github.com/OpenDisplay/py-opendisplay/commit/728a1c0eb79c5ca91e3950cca6887c086433beff))
+
 ## [8.0.1](https://github.com/OpenDisplay/py-opendisplay/compare/v8.0.0...v8.0.1) (2026-11-11)
 
 
