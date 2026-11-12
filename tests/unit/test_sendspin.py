@@ -14,7 +14,6 @@ import pytest
 from aiosendspin.models.metadata import Progress, SessionUpdateMetadata
 from aiosendspin.noise.keys import Identity
 from aiosendspin.noise.trust_store import InMemoryClientPairingStore
-from epaper_dithering import ColorScheme
 from PIL import Image
 
 from opendisplay.models.config import (
@@ -24,6 +23,7 @@ from opendisplay.models.config import (
     PowerOption,
     SystemConfig,
 )
+from opendisplay.models.enums import ColorScheme
 from opendisplay.now_playing import NowPlaying
 from opendisplay.sendspin import (
     SendspinNowPlayingBridge,

@@ -512,9 +512,7 @@ def prepare_composite(  # pylint: disable=too-many-locals
     canvas = Image.new("P", size, white_index)
     canvas.putpalette([channel for rgb in palette.preview_rgb() for channel in rgb])
     if photo is not None:
-        dithered = dither_image(
-            photo, palette, DitherOptions(mode=dither_mode, dbs=_resolve_dbs(dbs, display))
-        )
+        dithered = dither_image(photo, palette, DitherOptions(mode=dither_mode, dbs=_resolve_dbs(dbs, display)))
         canvas.paste(dithered, photo_position)
     canvas.paste(black_index, (0, 0, *size), mask=ink)
 
