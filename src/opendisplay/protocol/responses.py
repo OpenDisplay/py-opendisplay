@@ -231,10 +231,29 @@ def parse_authenticate_challenge(data: bytes) -> tuple[bytes, bytes]:
     return server_nonce, device_id
 
 
+_AUTH_CHALLENGE_LEN = 23  # 2 echo + 1 status + 16 server nonce + 4 device id
+_AUTH_SUCCESS_LEN = 19  # 2 echo + 1 status + 16 server proof
+
+
+def is_authenticate_challenge_frame(data: bytes) -> bool:
+    """Return True if ``data`` is a step-1 AUTHENTICATE challenge rather than a step-2 response.
+
+    A challenge and a step-2 success both carry status 0x00, so the status byte
+    cannot tell them apart; the frame length is the only discriminator. Firmware
+    old enough to send a 19-byte challenge (no device ID) is indistinguishable
+    from a success and is not recognised here.
+    """
+    return (
+        len(data) == _AUTH_CHALLENGE_LEN
+        and unpack_command_code(data) in (0x0050, 0x0050 | RESPONSE_HIGH_BIT_FLAG)
+        and data[2] == _AUTH_STATUS_OK
+    )
+
+
 def parse_authenticate_success(data: bytes) -> bytes:
     """Parse step-2 AUTHENTICATE response and return the server proof.
 
-    Expected format: [0x0050][status:1][server_response:16]
+    Expected format: [0x0050][status:1][server_response:16], exactly 19 bytes.
 
     Args:
         data: Raw BLE notification from device
@@ -264,10 +283,14 @@ def parse_authenticate_success(data: bytes) -> bytes:
     if status != _AUTH_STATUS_OK:
         raise AuthenticationFailedError(f"Authentication failed with status 0x{status:02x}")
 
-    if len(data) < 19:  # 2 echo + 1 status + 16 server_response
-        raise InvalidResponseError(f"Auth success response too short for server proof: {len(data)} bytes (need 19)")
+    if is_authenticate_challenge_frame(data):
+        raise InvalidResponseError("Expected the step-2 auth response but got a step-1 challenge frame")
+    if len(data) != _AUTH_SUCCESS_LEN:
+        raise InvalidResponseError(
+            f"Auth success response has the wrong length: {len(data)} bytes (need {_AUTH_SUCCESS_LEN})"
+        )
 
-    return data[3:19]
+    return data[3:]
 
 
 def parse_firmware_version(data: bytes) -> FirmwareVersion:

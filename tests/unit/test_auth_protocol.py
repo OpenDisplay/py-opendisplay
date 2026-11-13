@@ -9,7 +9,11 @@ from opendisplay.exceptions import (
     InvalidResponseError,
 )
 from opendisplay.protocol.commands import build_authenticate_step1, build_authenticate_step2
-from opendisplay.protocol.responses import parse_authenticate_challenge, parse_authenticate_success
+from opendisplay.protocol.responses import (
+    is_authenticate_challenge_frame,
+    parse_authenticate_challenge,
+    parse_authenticate_success,
+)
 
 _SERVER_NONCE = bytes(range(16))
 _CLIENT_NONCE = bytes(range(16, 32))
@@ -181,3 +185,33 @@ class TestParseAuthenticateSuccess:
         """Empty response raises InvalidResponseError."""
         with pytest.raises(InvalidResponseError):
             parse_authenticate_success(b"")
+
+    def test_challenge_frame_is_not_a_success(self):
+        """A 23-byte step-1 challenge shares status 0x00 with success; only its length tells them apart."""
+        challenge = b"\x00\x50\x00" + _SERVER_NONCE + _CUSTOM_DEVICE_ID
+        with pytest.raises(InvalidResponseError, match="challenge"):
+            parse_authenticate_success(challenge)
+
+    def test_overlong_success_raises_invalid(self):
+        """Every firmware sends exactly 19 bytes; anything longer is not a step-2 response."""
+        with pytest.raises(InvalidResponseError):
+            parse_authenticate_success(self._valid() + b"\x00")
+
+
+class TestIsAuthenticateChallengeFrame:
+    """Tests for is_authenticate_challenge_frame."""
+
+    def test_recognises_a_challenge(self):
+        assert is_authenticate_challenge_frame(b"\x00\x50\x00" + _SERVER_NONCE + _CUSTOM_DEVICE_ID)
+
+    @pytest.mark.parametrize(
+        "frame",
+        [
+            b"\x00\x50\x00" + _SERVER_PROOF,  # step-2 success (19 bytes)
+            b"\x00\x50\x01",  # step-2 wrong key
+            b"\x00\x40\x00" + _SERVER_NONCE + _CUSTOM_DEVICE_ID,  # another command's frame
+            b"",
+        ],
+    )
+    def test_rejects_everything_else(self, frame: bytes):
+        assert not is_authenticate_challenge_frame(frame)

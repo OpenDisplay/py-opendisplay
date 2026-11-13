@@ -138,6 +138,7 @@ from .protocol.responses import (
     PIPE_START_NACK_RECT_INVALID,
     check_response_type,
     describe_command_code,
+    is_authenticate_challenge_frame,
     is_compressed_failure_frame,
     matches_command_echo,
     parse_authenticate_challenge,
@@ -499,6 +500,9 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
     # Bounded so a device streaming unrelated frames fails with a clear error
     # instead of renewing the read timeout indefinitely.
     MAX_STRAY_CONFIG_FRAMES = 8
+
+    # Step-1 challenge frames tolerated while waiting for the step-2 auth response.
+    MAX_STRAY_AUTH_FRAMES = 4
 
     # BLE operation timeouts (seconds)
     TIMEOUT_FIRST_CHUNK = 10.0  # First chunk may take longer
@@ -920,8 +924,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         client_nonce = generate_client_nonce()
         challenge = compute_challenge_response(key, server_nonce, client_nonce, device_id)
         await self._conn.write_command(build_authenticate_step2(client_nonce, challenge))
-        success_response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
-        server_proof = parse_authenticate_success(success_response)  # raises on wrong key / error
+        server_proof = parse_authenticate_success(await self._read_auth_step2())  # raises on wrong key / error
 
         # Derive session key and ID
         session_key = derive_session_key(key, client_nonce, server_nonce, device_id)
@@ -940,6 +943,29 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         self._auth_time = time.monotonic()
 
         _LOGGER.info("Authentication successful, session established")
+
+    async def _read_auth_step2(self) -> bytes:
+        """Read the step-2 AUTHENTICATE response, skipping repeated step-1 challenges.
+
+        A challenge and a step-2 success share status 0x00 and differ only in
+        length. A challenge frame that arrives twice (the notification queue has
+        no request/response correlation) would otherwise be taken for the
+        success, its server nonce for the proof, and the handshake would fail
+        with a misleading server-proof mismatch.
+
+        Raises:
+            ProtocolError: If more than ``MAX_STRAY_AUTH_FRAMES`` challenge
+                frames arrive instead of the step-2 response
+        """
+        for _ in range(self.MAX_STRAY_AUTH_FRAMES + 1):
+            response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
+            if not is_authenticate_challenge_frame(response):
+                return response
+            _LOGGER.warning("Ignoring a repeated auth challenge frame while waiting for the step-2 response")
+        raise ProtocolError(
+            f"Authentication aborted: more than {self.MAX_STRAY_AUTH_FRAMES} challenge frames "
+            "arrived instead of the step-2 response"
+        )
 
     def _ensure_capabilities(self) -> DeviceCapabilities:
         """Ensure device capabilities are available.
