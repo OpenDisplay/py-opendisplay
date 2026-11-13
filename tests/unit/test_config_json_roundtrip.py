@@ -6,6 +6,10 @@ must survive a binary -> JSON -> binary round-trip instead of being zeroed.
 
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from opendisplay.models.config import (
     BinaryInputs,
     DisplayConfig,
@@ -16,7 +20,7 @@ from opendisplay.models.config import (
 )
 from opendisplay.models.config_json import config_from_json, config_to_json
 from opendisplay.protocol.config_parser import _parse_power_option
-from opendisplay.protocol.config_serializer import serialize_power_option
+from opendisplay.protocol.config_serializer import serialize_config, serialize_power_option
 
 
 def _base_config(**overrides) -> GlobalConfig:
@@ -178,3 +182,42 @@ def test_legacy_zero_reserved_still_parses() -> None:
             packet["fields"]["reserved"] = "0x0"
     back = config_from_json(data)
     assert back.displays[0].reserved == bytes(13)
+
+
+# ─── Packets the library does not recognise (GlobalConfig.unparsed_tail) ─────
+
+# One length-prefixed packet as newer firmware writes it: number 5, type 0xB1, 3-byte body.
+_UNKNOWN_PACKETS = bytes([5, 0xB1, 3, 0, 0xAA, 0xBB, 0xCC])
+
+
+def test_unparsed_tail_survives_json_roundtrip() -> None:
+    """Packets after the first unknown one must not be dropped by export -> import.
+
+    On firmware that stores its panel drive data in such packets, losing them on
+    a write-config would leave the device unable to drive its panel.
+    """
+    cfg = _base_config(displays=[_display()])
+    cfg.unparsed_tail = _UNKNOWN_PACKETS
+
+    exported = config_to_json(cfg)
+    back = config_from_json(json.loads(json.dumps(exported)))
+
+    assert back.unparsed_tail == _UNKNOWN_PACKETS
+    assert serialize_config(back).count(_UNKNOWN_PACKETS) == 1
+
+
+def test_json_without_unparsed_tail_imports_an_empty_one() -> None:
+    cfg = _base_config(displays=[_display()])
+
+    exported = config_to_json(cfg)
+
+    assert "unparsed_tail" not in exported  # nothing to carry: the Config Builder format is unchanged
+    assert config_from_json(exported).unparsed_tail == b""
+
+
+def test_malformed_unparsed_tail_is_rejected() -> None:
+    exported = config_to_json(_base_config(displays=[_display()]))
+    exported["unparsed_tail"] = "0xnot-hex"
+
+    with pytest.raises(ValueError, match="unparsed_tail"):
+        config_from_json(exported)
