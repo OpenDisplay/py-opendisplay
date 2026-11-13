@@ -985,7 +985,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         bit 0x10) — a device whose config lacks the bit never sees a 0x0080 probe.
         Also off when disabled by the caller (max_queue_size <= 1), when this
         connection already probed negative, and on LAN: PIPE_WRITE (0x0080-0x82)
-        is forbidden there (SECTION 9 rule 3), so a large-frame transport streams
+        is forbidden there (SECTION 9 rule 2), so a large-frame transport streams
         via plain DIRECT_WRITE instead.
         """
         return (
