@@ -106,10 +106,16 @@ from .protocol import MANUFACTURER_ID, SERVICE_UUID
 from .sensors import SensorReading, read_sensor_values
 from .transport import BleTransport, TcpTransport, Transport
 
-try:
-    __version__ = version("py-opendisplay")
-except PackageNotFoundError:  # running from a source tree or bundle without package metadata
-    __version__ = "unknown"
+
+def _package_version() -> str:
+    """Return the installed package version, or "unknown" without package metadata (e.g. a bundle)."""
+    try:
+        return version("py-opendisplay")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+__version__ = _package_version()
 
 __all__ = [
     # Main API

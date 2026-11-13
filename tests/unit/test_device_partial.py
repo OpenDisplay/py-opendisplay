@@ -258,6 +258,61 @@ def test_non_etag_start_nack_falls_back_to_full(monkeypatch):
     assert full_uploads == 1
 
 
+def test_unchanged_image_uploads_nothing():
+    device = _device()
+    state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
+    conn = ScriptedConn([])
+    device._connection = conn
+
+    asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, _image()), state=state))
+
+    assert conn.written == []
+    assert state.etag == 0x01020304
+
+
+def test_unacknowledged_partial_start_falls_back_to_full():
+    device = _device()
+    new = _image(changed=True)
+    state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
+    # 0x76 START goes unanswered; the full upload (0x70, one 0x71 chunk, 0x72, refresh) then succeeds.
+    conn = ScriptedConn([BLETimeoutError, b"\x00\x70", b"\x00\x71", b"\x00\x72", b"\x00\x73"])
+    device._connection = conn
+
+    asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
+
+    assert [w[:2] for w in conn.written] == [b"\x00\x76", b"\x00\x70", b"\x00\x71", b"\x00\x72"]
+    assert state.etag == int.from_bytes(conn.written[-1][3:7], "big")  # the full upload's END-with-etag
+    assert state.last_image == new.tobytes()
+
+
+def test_partial_chunk_nack_falls_back_to_full():
+    # A 64x32 all-changed frame makes a 512-byte partial stream: more than the 0x76 START
+    # carries, so 0x71 chunks follow and the device can reject one mid-stream.
+    device = _pipe_device(_config(pixel_width=64, pixel_height=32), width=64, height=32)
+    new = _mono(64, 32, fill=1)
+    state = PartialState(etag=0x01020304, last_image=_mono(64, 32).tobytes(), width=64, height=32, bytes_per_pixel=1)
+    conn = ScriptedConn(
+        [
+            b"\x00\x76",  # partial START accepted
+            bytes([0xFF, 0x71, 0x06, 0x00]),  # first chunk NACKed (ERR_PARTIAL_STREAM)
+            b"\x00\x70",  # full upload: START
+            b"\x00\x71",
+            b"\x00\x71",
+            b"\x00\x72",
+            b"\x00\x73",
+        ]
+    )
+    device._connection = conn
+
+    asyncio.run(device.upload_prepared_image((b"\xff" * 256, None, new), state=state))
+
+    opcodes = [w[:2] for w in conn.written]
+    assert opcodes[:3] == [b"\x00\x76", b"\x00\x71", b"\x00\x70"]
+    assert opcodes[-1] == b"\x00\x72"
+    assert state.etag == int.from_bytes(conn.written[-1][3:7], "big")
+    assert state.last_image == new.tobytes()
+
+
 def test_non_mono_scheme_never_attempts_partial(monkeypatch):
     """Only MONO panels may attempt a partial update (M1)."""
     from opendisplay.partial import compute_partial_region
