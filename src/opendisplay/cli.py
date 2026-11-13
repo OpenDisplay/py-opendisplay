@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, NoReturn, TypeVar
 
@@ -1316,15 +1316,46 @@ def _add_write_config_parser(subparsers: argparse._SubParsersAction[argparse.Arg
     p = subparsers.add_parser("write-config", help="Write configuration from a JSON file to the device")
     _add_device_options(p)
     p.add_argument("input", metavar="INPUT_PATH", help="Path to the JSON config file")
+    unknown = p.add_mutually_exclusive_group()
+    unknown.add_argument(
+        "--keep-unknown-packets",
+        dest="unknown_packets",
+        action="store_const",
+        const="keep",
+        help="If the device has config packets this tool does not recognise and the file has none, "
+        "carry the device's over unchanged",
+    )
+    unknown.add_argument(
+        "--discard-unknown-packets",
+        dest="unknown_packets",
+        action="store_const",
+        const="discard",
+        help="Write the file as it is, deleting config packets this tool does not recognise from the device",
+    )
     p.set_defaults(func=_cmd_write_config)
 
 
 def _cmd_write_config(args: argparse.Namespace) -> None:
     key = _parse_hex_key(args.key)
-    _run(_write_config(_device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls), args.input))
+    device_kwargs = _device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls)
+    _run(_write_config(device_kwargs, args.input, args.unknown_packets))
 
 
-async def _write_config(device_kwargs: dict[str, Any], input_path: str) -> None:
+_UNKNOWN_PACKETS_REFUSAL = (
+    "The device holds {size} bytes of config packets this tool does not recognise, and the file has none. "
+    "Writing it would delete them; on some firmware they hold the panel drive data. "
+    "Pass --keep-unknown-packets to carry them over unchanged, or --discard-unknown-packets to delete them."
+)
+
+
+async def _write_config(device_kwargs: dict[str, Any], input_path: str, unknown_packets: str | None = None) -> None:
+    """Write a JSON config file to the device.
+
+    A file that went through a tool unaware of ``unparsed_tail`` no longer has
+    the packets this library does not recognise. If the device has such packets
+    and the file has none, ``unknown_packets`` decides: ``"keep"`` carries the
+    device's over, ``"discard"`` writes the file as it is, and ``None`` refuses.
+    """
     try:
         config = OpenDisplayDevice.import_config_json(input_path)
     except FileNotFoundError:
@@ -1332,22 +1363,36 @@ async def _write_config(device_kwargs: dict[str, Any], input_path: str) -> None:
     except (OSError, ValueError, KeyError) as exc:
         _error(f"Cannot read config file: {exc}")
 
+    refusal = None
+    kept = 0
     try:
         with _spinner() as progress:
             task = progress.add_task("Connecting...", total=None)
             async with OpenDisplayDevice(**device_kwargs) as device:
-                progress.update(task, description="Writing config...")
-                await device.write_config(config)
+                device_tail = device.config.unparsed_tail if device.config else b""
+                if device_tail and not config.unparsed_tail:
+                    if unknown_packets == "keep":
+                        config = replace(config, unparsed_tail=device_tail)
+                        kept = len(device_tail)
+                    elif unknown_packets != "discard":
+                        refusal = _UNKNOWN_PACKETS_REFUSAL.format(size=len(device_tail))
+                if refusal is None:
+                    progress.update(task, description="Writing config...")
+                    await device.write_config(config)
     except OpenDisplayError as exc:
         _handle_ble_error(exc)
+    if refusal is not None:
+        _error(refusal)
+    if kept:
+        _console.print(f"Kept {kept} bytes of unrecognised config packets from the device.")
     _console.print("Config written [green]successfully[/green].")
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
 
 
-def main() -> None:
-    """Entry point for the opendisplay CLI."""
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser with every subcommand."""
     parser = argparse.ArgumentParser(
         prog="opendisplay",
         description="OpenDisplay BLE command-line tool",
@@ -1362,8 +1407,12 @@ def main() -> None:
     _add_sleep_parser(subparsers)
     _add_export_config_parser(subparsers)
     _add_write_config_parser(subparsers)
+    return parser
 
-    args = parser.parse_args()
+
+def main() -> None:
+    """Entry point for the opendisplay CLI."""
+    args = _build_parser().parse_args()
     _setup_logging(args.verbose)
     args.func(args)
 

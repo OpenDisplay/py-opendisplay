@@ -76,6 +76,8 @@ opendisplay write-config --device AA:BB:CC:DD:EE:FF config.json
 
 Encrypted devices require `--key HEX` (32 hex characters). Pass `-v` / `--verbose` for debug logging.
 
+`export-config` keeps config packets this library does not recognise in an `unparsed_tail` field, so writing the file back restores them. If a file has lost that field (for example after editing it in another tool) and the device has such packets, `write-config` refuses to write. Pass `--keep-unknown-packets` to carry the device's packets over unchanged, or `--discard-unknown-packets` to delete them.
+
 ## Image Fitting
 
 Images are automatically fitted to the display dimensions. Control how aspect ratio mismatches are handled with the `fit` parameter:
