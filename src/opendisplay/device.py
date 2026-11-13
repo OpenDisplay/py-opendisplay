@@ -42,11 +42,13 @@ from .exceptions import (
     AuthenticationFailedError,
     AuthenticationRequiredError,
     AuthenticationSessionExistsError,
-    BLETimeoutError,
+    BLEConnectionError,
     ImageEncodingError,
     IntegrityCheckError,
     InvalidResponseError,
     NfcNotSupportedError,
+    OpenDisplayConnectionError,
+    OpenDisplayTimeoutError,
     ProtocolError,
     RefreshTimeoutError,
     TruncatedConfigError,
@@ -654,7 +656,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             _LOGGER.debug("Resolving device name '%s' to MAC address", self._device_name)
 
             from .discovery import discover_devices
-            from .exceptions import BLEConnectionError
 
             devices = await discover_devices(timeout=self._discovery_timeout)
 
@@ -1105,7 +1106,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         rather than skipped: it answers this command and the caller reports it.
 
         Raises:
-            BLETimeoutError: If no frame arrives within ``timeout``
+            OpenDisplayTimeoutError: If no frame arrives within ``timeout``
             ProtocolError: If more than ``MAX_STRAY_CONFIG_FRAMES`` foreign frames
                 arrive while waiting for this chunk
         """
@@ -1171,7 +1172,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         while len(tlv_data) < total_length:
             try:
                 next_response = await self._read_config_frame(self.TIMEOUT_CONFIG_CHUNK)
-            except BLETimeoutError as err:
+            except OpenDisplayTimeoutError as err:
                 raise TruncatedConfigError(
                     f"Config read truncated: device stopped sending chunks at {len(tlv_data)}/{total_length} bytes"
                 ) from err
@@ -1287,7 +1288,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             within a few seconds).
 
         Raises:
-            BLEConnectionError: If command cannot be sent
+            OpenDisplayConnectionError: If command cannot be sent
         """
         _LOGGER.debug("Sending reboot command to device %s", self.mac_address)
 
@@ -1330,13 +1331,11 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             ProtocolError: If the device explicitly reports that deep sleep is not
                 supported (protocol error frame 0xFF53).
         """
-        from .exceptions import BLEConnectionError
-
         _LOGGER.debug("Sending deep sleep command (0x0053) to device %s", self.mac_address)
 
         try:
             await self._write(build_deep_sleep_command(duration_seconds))
-        except BLEConnectionError as exc:
+        except OpenDisplayConnectionError as exc:
             # An ESP32 without a power latch tears down BLE synchronously as it
             # enters deep sleep, so the write-with-response confirmation can fail
             # (e.g. a GATT/disconnect error over a Bluetooth proxy) even though the
@@ -1354,7 +1353,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # A disconnect or timeout here means the device slept without acking.
         try:
             response = await self._read(self.TIMEOUT_ACK)
-        except (BLEConnectionError, BLETimeoutError) as exc:
+        except (OpenDisplayConnectionError, OpenDisplayTimeoutError) as exc:
             _LOGGER.debug(
                 "No deep sleep ACK (expected — device dropped the link or sleeps silently): %s",
                 exc,
@@ -1385,13 +1384,11 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             ProtocolError: If the device explicitly reports that it has no
                 power latch (protocol error frame 0xFF52).
         """
-        from .exceptions import BLEConnectionError
-
         _LOGGER.debug("Sending power off command (0x0052) to device %s", self.mac_address)
 
         try:
             await self._write(build_power_off_command())
-        except BLEConnectionError as exc:
+        except OpenDisplayConnectionError as exc:
             _LOGGER.debug(
                 "Power off write did not confirm (expected — device powers off before responding): %s",
                 exc,
@@ -1401,7 +1398,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         try:
             response = await self._read(self.TIMEOUT_ACK)
-        except (BLEConnectionError, BLETimeoutError) as exc:
+        except (OpenDisplayConnectionError, OpenDisplayTimeoutError) as exc:
             _LOGGER.debug(
                 "No power off ACK (expected — device dropped the link): %s",
                 exc,
@@ -1431,14 +1428,12 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         The BLE connection will drop immediately after this call returns.
 
         Raises:
-            BLEConnectionError: If the command cannot be sent
+            OpenDisplayConnectionError: If the command cannot be sent
         """
-        from .exceptions import BLEConnectionError
-
         _LOGGER.debug("Triggering DFU bootloader on device %s", self.mac_address)
         try:
             await self._write(build_enter_dfu_command())
-        except BLEConnectionError as exc:
+        except OpenDisplayConnectionError as exc:
             # The firmware resets before it can ACK this command — it has no time
             # to send a write response — so the confirmation never arrives. With a
             # write-with-response transport, especially over a Bluetooth proxy,
@@ -1474,7 +1469,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             True if a cache was cleared, False if unsupported by the backend.
 
         Raises:
-            BLEConnectionError: If the device is not connected.
+            OpenDisplayConnectionError: If the device is not connected.
         """
         return await self._conn.clear_cache()
 
@@ -1610,7 +1605,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             nonlocal first_read
             try:
                 response = await self._read(read_timeout)
-            except BLETimeoutError:
+            except OpenDisplayTimeoutError:
                 if first_read:
                     raise NfcNotSupportedError() from None
                 raise
@@ -1708,7 +1703,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         Raises:
             ValueError: If config serialization fails or exceeds size limit
-            BLEConnectionError: If write fails
+            OpenDisplayConnectionError: If write fails
             ProtocolError: If device returns error response
         """
         _LOGGER.debug("Writing config to device %s", self.mac_address)
@@ -2275,7 +2270,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 except RefreshTimeoutError:
                     # 0x74 after END_ACK: firmware already cleared its etag on
                     # the failed refresh; re-raise (parity with the 0x76 path).
-                    # Note BLETimeoutError on the post-DATA reads deliberately
+                    # Note a read timeout on the post-DATA reads deliberately
                     # propagates too (not caught below): the END may already have
                     # committed on the device, so falling back to full and
                     # re-baselining state on an unknown outcome would be unsafe.
@@ -2339,7 +2334,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 state.last_image = None
                 return "fallback_full"
             validate_ack_response(response, CommandCode.DIRECT_WRITE_PARTIAL_START)
-        except (BLETimeoutError, InvalidResponseError):
+        except (OpenDisplayTimeoutError, InvalidResponseError):
             _LOGGER.info("Partial upload start was not acknowledged; falling back to full upload")
             return "fallback_full"
 
@@ -2523,7 +2518,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         Raises:
             ProtocolError: If device responds with an unexpected code
-            BLETimeoutError: If no response within chunk_timeout
+            OpenDisplayTimeoutError: If no response within chunk_timeout
 
         ``chunk_timeout`` defaults to the DATA-ACK budget rather than the general
         TIMEOUT_ACK: every 0x0071 ACK waits on a blocking panel write, so the 5s
@@ -2602,7 +2597,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         )
         try:
             resp = await self._read(TIMEOUT_PIPE_START)
-        except BLETimeoutError:
+        except OpenDisplayTimeoutError:
             _LOGGER.debug("No 0x0080 response within %.1fs; firmware lacks PIPE_WRITE", TIMEOUT_PIPE_START)
             return None
 
@@ -2680,7 +2675,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         )
         try:
             resp = await self._read(TIMEOUT_PIPE_START)
-        except BLETimeoutError:
+        except OpenDisplayTimeoutError:
             _LOGGER.debug("No 0x0080 partial response within %.1fs; firmware lacks PIPE_WRITE", TIMEOUT_PIPE_START)
             self._pipe_probed = True
             self._pipe_supported = False
@@ -2912,7 +2907,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             read_timeout = self.TIMEOUT_PIPE_TAIL_FLUSH if tail_flush else chunk_timeout
             try:
                 resp = await self._read(read_timeout)
-            except BLETimeoutError:
+            except OpenDisplayTimeoutError:
                 if window_base >= n:
                     # Uncompressed with everything acked: firmware owes the
                     # unsolicited END_ACK; there is nothing left to probe.
