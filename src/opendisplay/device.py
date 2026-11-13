@@ -1517,7 +1517,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         BlueZ on a bleak build lacking ``clear_cache``).
 
         Returns:
-            True if a cache was cleared, False if unsupported by the backend.
+            True if a cache was cleared, False if the backend does not support
+            it or the clear failed.
 
         Raises:
             OpenDisplayConnectionError: If the device is not connected.

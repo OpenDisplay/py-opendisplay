@@ -7,6 +7,7 @@ AppLoader connection re-discovers the OTA service.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -55,6 +56,40 @@ async def test_clear_cache_no_backend_support_returns_false() -> None:
     conn = _connected(client)
 
     assert await conn.clear_cache() is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("Timeout waiting for BluetoothDeviceClearCacheResponse"),  # a slow ESPHome proxy
+        BleakError("Not connected"),
+    ],
+    ids=["proxy_timeout", "backend_error"],
+)
+async def test_clear_cache_failure_in_the_backend_returns_false(
+    error: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Clearing the cache is best effort: a backend that fails must not abort the caller's OTA."""
+    client = MagicMock(is_connected=True)
+    client.clear_cache = AsyncMock(side_effect=error)
+    conn = _connected(client)
+
+    with caplog.at_level("WARNING"):
+        assert await conn.clear_cache() is False
+
+    assert "GATT cache" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_clear_cache_does_not_swallow_cancellation() -> None:
+    """A caller's deadline (asyncio.timeout) cancels the call and must still get through."""
+    client = MagicMock(is_connected=True)
+    client.clear_cache = AsyncMock(side_effect=asyncio.CancelledError())
+    conn = _connected(client)
+
+    with pytest.raises(asyncio.CancelledError):
+        await conn.clear_cache()
 
 
 @pytest.mark.asyncio
