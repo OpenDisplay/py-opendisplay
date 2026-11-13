@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from opendisplay.partial import (
     ERR_ETAG_MISMATCH,
@@ -109,6 +111,32 @@ class TestAlignRect:
 
     def test_right_edge_clamp_keeps_width_aligned(self):
         assert align_rect(30, 1, 32, 2, 32, 20, pixels_per_byte=8) == (24, 1, 8, 1)
+
+    def test_change_in_a_trailing_partial_byte_has_no_aligned_rect(self):
+        # 13 px wide panel, change at x=12: the only byte column covering it ends at 16,
+        # past the panel edge, and the firmware rejects any x or width off the 8 px grid.
+        assert align_rect(12, 2, 13, 3, 13, 3, pixels_per_byte=8) is None
+
+    def test_change_left_of_a_trailing_partial_byte_still_aligns(self):
+        assert align_rect(100, 0, 101, 1, 122, 250, pixels_per_byte=8) == (96, 0, 8, 1)
+
+    @given(st.data())
+    def test_every_rect_satisfies_the_firmware_checks(self, data):
+        """Whatever align_rect returns must pass the firmware's 0x76 validation and cover the change."""
+        width = data.draw(st.integers(1, 400))
+        x0 = data.draw(st.integers(0, width - 1))
+        x1 = data.draw(st.integers(x0 + 1, width))
+
+        rect = align_rect(x0, 0, x1, 1, width, 1, pixels_per_byte=8)
+
+        last_full_byte_end = width - width % 8
+        if x1 > last_full_byte_end:
+            assert rect is None
+        else:
+            assert rect is not None
+            x, _, w, _ = rect
+            assert x % 8 == 0 and w % 8 == 0 and x + w <= width
+            assert x <= x0 and x + w >= x1
 
 
 class TestLogicalStream:

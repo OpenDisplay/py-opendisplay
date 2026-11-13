@@ -105,16 +105,19 @@ def compute_partial_region(
         return "no_change"
 
     # MONO packs 8 pixels/byte and firmware requires 8-pixel x/width alignment.
-    rx, ry, rw, rh = align_rect(*bbox, width, height, pixels_per_byte=8)
-    if rw == 0 or rh == 0:
-        return "fallback_full"
-
+    rect: tuple[int, int, int, int] | None
     if display.partial_update_support == PartialUpdateSupport.FULL_FRAME:
         # Firmware white-fills the controller RAM at partial start; on these
         # panels the partial waveform erases everything the stream does not
         # cover, so the region must span the whole panel
-        # (OpenDisplay/Firmware#80). Still refreshes flicker-free.
-        rx, ry, rw, rh = 0, 0, width, height
+        # (OpenDisplay/Firmware#80). Still refreshes flicker-free. A panel whose
+        # width is off the 8-pixel grid has no valid whole-panel rect.
+        rect = (0, 0, width, height) if width % 8 == 0 else None
+    else:
+        rect = align_rect(*bbox, width, height, pixels_per_byte=8)
+    if rect is None:
+        return "fallback_full"
+    rx, ry, rw, rh = rect
 
     return PartialRegion(
         display=display,
@@ -159,20 +162,18 @@ def align_rect(
     display_width: int,
     _display_height: int,
     pixels_per_byte: int,
-) -> tuple[int, int, int, int]:
+) -> tuple[int, int, int, int] | None:
     """Expand (x0, y0, x1, y1) to packed-byte boundaries.
 
-    Returns (x, y, width, height) ready to send in 0x76.
+    Returns (x, y, width, height) ready to send in 0x76, or None when no such
+    rectangle exists. The firmware requires x and width on the byte grid and
+    the rectangle inside the panel; on a panel whose width is off that grid, a
+    change in the trailing partial byte column cannot satisfy both.
     """
-    aligned_x0 = (x0 // pixels_per_byte) * pixels_per_byte
-    aligned_x1 = x1
-    if aligned_x1 % pixels_per_byte:
-        aligned_x1 += pixels_per_byte - (aligned_x1 % pixels_per_byte)
+    aligned_x0 = x0 - x0 % pixels_per_byte
+    aligned_x1 = x1 + -x1 % pixels_per_byte
     if aligned_x1 > display_width:
-        aligned_x1 = display_width
-        misalign = (aligned_x1 - aligned_x0) % pixels_per_byte
-        if misalign:
-            aligned_x0 = max(0, aligned_x0 - (pixels_per_byte - misalign))
+        return None
     return (aligned_x0, y0, aligned_x1 - aligned_x0, y1 - y0)
 
 

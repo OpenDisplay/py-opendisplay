@@ -397,6 +397,31 @@ def test_rect_support_keeps_minimal_region():
     assert (region.rx, region.ry, region.rw, region.rh) == (8, 3, 8, 1)
 
 
+def test_change_in_trailing_partial_byte_falls_back_to_full():
+    """No 8-aligned rect inside a 122 px panel covers x=121, so no doomed 0x76 is sent (#169)."""
+    from opendisplay.partial import compute_partial_region
+
+    old, new = Image.new("P", (122, 8), 0), Image.new("P", (122, 8), 0)
+    new.putpixel((121, 3), 1)
+    state = PartialState(etag=0x01, last_image=old.tobytes(), width=122, height=8, bytes_per_pixel=1)
+
+    assert compute_partial_region(new, state, _config(pixel_width=122), ColorScheme.MONO) == "fallback_full"
+
+
+def test_full_frame_panel_with_unaligned_width_falls_back_to_full():
+    """A whole-panel rect on a 122 px panel has a width off the 8 px grid; the firmware rejects it."""
+    from opendisplay.models.enums import PartialUpdateSupport
+    from opendisplay.partial import compute_partial_region
+
+    old, new = Image.new("P", (122, 8), 0), Image.new("P", (122, 8), 0)
+    new.putpixel((5, 3), 1)
+    state = PartialState(etag=0x01, last_image=old.tobytes(), width=122, height=8, bytes_per_pixel=1)
+    config = _config(partial_update_support=PartialUpdateSupport.FULL_FRAME, pixel_width=122)
+
+    assert compute_partial_region(new, state, config, ColorScheme.MONO) == "fallback_full"
+    assert compute_partial_region(old, state, config, ColorScheme.MONO) == "no_change"
+
+
 def test_no_change_still_skips_transfer_on_full_frame_panels():
     """FULL_FRAME panels must still report no_change for identical frames."""
     from opendisplay.models.enums import PartialUpdateSupport
