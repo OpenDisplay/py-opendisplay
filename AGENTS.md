@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Always use `uv`, never `pip`. Requires Python ≥ 3.13.
 
 ```bash
-uv sync --all-extras                 # install deps (pytest lives in the `test` extra, not the dev group)
+uv sync --all-extras                 # install deps (the default `dev` group brings the linters and the `test` group)
 uv run prek install                  # install the pre-commit hook (once per clone, if not already installed)
 uv run pytest                        # run all tests (asyncio_mode=auto, so no @pytest.mark.asyncio needed)
 uv run pytest tests/unit/test_partial.py                 # one file
@@ -25,7 +25,6 @@ The lint suite (`prek`, configured in `.pre-commit-config.yaml`) runs ruff check
 
 Gotchas:
 
-- In a git worktree, `uv run pytest` can silently fall back to a system pytest with the *main checkout* installed editable — sync the worktree's venv first and verify you're testing the right code.
 - Don't `git add -A` or `git add .` — the repo root has many loose untracked device-config JSON files. Stage explicit file names.
 - Version and CHANGELOG are managed by release-please; never bump `version` in `pyproject.toml` by hand.
 - Pylint limits in `pyproject.toml` are deliberately tuned to this codebase (large config dataclasses, TLV dispatch functions) — fix code to fit them rather than raising them further.
