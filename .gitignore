@@ -213,3 +213,5 @@ __marimo__/
 *.avif
 
 .idea
+# Local device inventory (contains encryption keys)
+device_inventory.csv
