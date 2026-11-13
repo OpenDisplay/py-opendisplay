@@ -65,6 +65,17 @@ def _parse_hex_bytes(value: str | int, size: int) -> bytes:
     return raw[:size].ljust(size, b"\x00")
 
 
+def _parse_unparsed_tail(value: object) -> bytes:
+    """Decode the exported ``unparsed_tail`` hex string; absent means no unrecognised packets."""
+    if value is None:
+        return b""
+    text = str(value).strip()
+    try:
+        return bytes.fromhex(text[2:] if text.lower().startswith("0x") else text)
+    except ValueError as err:
+        raise ValueError(f"unparsed_tail is not a hex string: {text[:32]!r}") from err
+
+
 def config_to_json(config: GlobalConfig) -> dict[str, Any]:
     """Export GlobalConfig to JSON-serializable dict.
 
@@ -77,7 +88,9 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
         config: GlobalConfig to export
 
     Returns:
-        Dict with version, packets array, and metadata
+        Dict with version, packets array, and metadata. When the config holds
+        packets the library does not recognise, they are carried verbatim in an
+        extra ``unparsed_tail`` hex string.
     """
     packets = []
 
@@ -428,13 +441,18 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
             }
         )
 
-    return {
+    exported: dict[str, Any] = {
         "version": config.version,
         "minor_version": 1,  # JSON format version (not stored in device)
         "packets": packets,
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "exported_by": "py-opendisplay",
     }
+    if config.unparsed_tail:
+        # Packets this library does not recognise, verbatim. Without them an
+        # export -> import -> write would delete them from the device.
+        exported["unparsed_tail"] = _hex_bytes(config.unparsed_tail)
+    return exported
 
 
 def config_from_json(data: dict[str, Any]) -> GlobalConfig:
@@ -449,8 +467,8 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
         GlobalConfig instance
 
     Raises:
-        ValueError: If required packets (including at least one display) are missing
-            or packet structure is invalid
+        ValueError: If required packets (including at least one display) are missing,
+            packet structure is invalid, or ``unparsed_tail`` is not a hex string
     """
     system: SystemConfig | None = None
     manufacturer: ManufacturerData | None = None
@@ -751,6 +769,7 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
         data_extended=data_extended,
+        unparsed_tail=_parse_unparsed_tail(data.get("unparsed_tail")),
         version=version,
         minor_version=minor_version,
         loaded=True,
