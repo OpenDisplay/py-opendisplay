@@ -2017,8 +2017,9 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
     ) -> None:
         """Send an encoded frame: partial when ``state`` allows it, otherwise full.
 
-        With a ``state`` the full upload always refreshes FULL and commits a new
-        etag, so the next upload can be a partial one against this frame.
+        With a ``state`` a full upload commits a new etag, so the next upload can
+        be a partial one against this frame. It refreshes in the requested mode;
+        PARTIAL is not a mode for a whole new frame, so that request refreshes FULL.
         """
         if state is None:
             await self._dispatch_upload(image_data, refresh_mode, compress, compressed_data, progress_callback)
@@ -2034,9 +2035,10 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             return
         _LOGGER.info("Partial path unavailable or etag mismatch; continuing with full upload")
 
+        full_refresh_mode = RefreshMode.FULL if refresh_mode is RefreshMode.PARTIAL else refresh_mode
         new_etag = _generate_etag()
         etag_committed = await self._dispatch_upload(
-            image_data, RefreshMode.FULL, compress, compressed_data, progress_callback, new_etag=new_etag
+            image_data, full_refresh_mode, compress, compressed_data, progress_callback, new_etag=new_etag
         )
         _LOGGER.info("Image upload complete")
         self._update_partial_state(state, processed_image, new_etag if etag_committed else None)
