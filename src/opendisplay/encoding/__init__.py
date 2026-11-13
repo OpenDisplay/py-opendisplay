@@ -9,10 +9,11 @@ from .compression import (
     decompress_image_data,
     zlib_window_bits,
 )
-from .images import encode_1bpp, encode_2bpp, encode_4bpp, encode_image, fit_image
+from .images import encode_1bpp, encode_2bpp, encode_4bpp, encode_image, fit_image, normalize_source_image
 
 __all__ = [
     "fit_image",
+    "normalize_source_image",
     "encode_image",
     "encode_1bpp",
     "encode_2bpp",
