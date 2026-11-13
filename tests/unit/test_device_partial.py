@@ -313,6 +313,53 @@ def test_partial_chunk_nack_falls_back_to_full():
     assert state.last_image == new.tobytes()
 
 
+@pytest.mark.parametrize(
+    ("requested", "sent"),
+    [
+        (RefreshMode.FAST, RefreshMode.FAST),
+        (RefreshMode.FULL, RefreshMode.FULL),
+        # A partial refresh of a whole new frame makes no sense; the fallback is a full one.
+        (RefreshMode.PARTIAL, RefreshMode.FULL),
+    ],
+)
+def test_full_upload_with_state_uses_the_requested_refresh_mode(requested: RefreshMode, sent: RefreshMode):
+    """Passing a state must not turn a FAST refresh into a FULL one.
+
+    With no previous frame in the state the upload is a full one. It still commits
+    an etag, so the next upload can be partial.
+    """
+    device = _device()
+    new = _image(changed=True)
+    state = PartialState()
+    conn = ScriptedConn([b"\x00\x70", b"\x00\x71", b"\x00\x72", b"\x00\x73"])
+    device._connection = conn
+
+    asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), refresh_mode=requested, state=state))
+
+    end = conn.written[-1]
+    assert end[:2] == b"\x00\x72"
+    assert end[2] == sent.value
+    assert state.etag == int.from_bytes(end[3:7], "big") != 0
+    assert state.last_image == new.tobytes()
+
+
+def test_partial_update_ignores_the_requested_refresh_mode():
+    """With a previous frame in the state, a changed frame is still sent as a partial update."""
+    device = _device()
+    state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
+    conn = ScriptedConn([b"\x00\x76", b"\x00\x72", b"\x00\x73"])
+    device._connection = conn
+
+    asyncio.run(
+        device.upload_prepared_image(
+            (b"\x00" * 16, None, _image(changed=True)), refresh_mode=RefreshMode.FAST, state=state
+        )
+    )
+
+    assert conn.written[0][:2] == b"\x00\x76"
+    assert conn.written[-1] == b"\x00\x72" + bytes([RefreshMode.PARTIAL.value])
+
+
 def test_non_mono_scheme_never_attempts_partial(monkeypatch):
     """Only MONO panels may attempt a partial update (M1)."""
     from opendisplay.partial import compute_partial_region
