@@ -3,6 +3,8 @@
 Pure Python package for communicating with OpenDisplay BLE e-paper tags.
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 from epaper_dithering import DitherMode
 
 from .battery import voltage_to_percent
@@ -104,7 +106,10 @@ from .protocol import MANUFACTURER_ID, SERVICE_UUID
 from .sensors import SensorReading, read_sensor_values
 from .transport import BleTransport, TcpTransport, Transport
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("py-opendisplay")
+except PackageNotFoundError:  # running from a source tree or bundle without package metadata
+    __version__ = "unknown"
 
 __all__ = [
     # Main API
