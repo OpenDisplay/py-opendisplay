@@ -100,6 +100,14 @@ from .models.enums import (
 )
 from .models.firmware import firmware_ota_asset, firmware_release_repo
 from .models.led_flash import LedFlashConfig, LedFlashStep
+from .models.panel_drive import (
+    CalibrationEntry,
+    DisplayCalibration,
+    DisplayLut,
+    DisplayMode,
+    DisplayPanel,
+    LengthPrefixedPacket,
+)
 from .ota import find_nrf_dfu_device, perform_nrf_dfu, perform_silabs_ota
 from .partial import PartialState
 from .protocol import MANUFACTURER_ID, SERVICE_UUID
@@ -182,6 +190,13 @@ __all__ = [
     "SecurityConfig",
     "TouchController",
     "WifiConfig",
+    # Models - Panel drive data (length-prefixed config packets)
+    "LengthPrefixedPacket",
+    "DisplayMode",
+    "DisplayLut",
+    "DisplayCalibration",
+    "CalibrationEntry",
+    "DisplayPanel",
     # Models - Other
     "DeviceCapabilities",
     "AdvertisementData",

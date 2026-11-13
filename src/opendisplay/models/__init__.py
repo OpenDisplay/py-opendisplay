@@ -55,6 +55,14 @@ from .enums import (
 )
 from .firmware import FirmwareVersion, firmware_ota_asset, firmware_release_repo
 from .led_flash import LedFlashConfig, LedFlashStep
+from .panel_drive import (
+    CalibrationEntry,
+    DisplayCalibration,
+    DisplayLut,
+    DisplayMode,
+    DisplayPanel,
+    LengthPrefixedPacket,
+)
 
 __all__ = [
     "AdvertisementData",
@@ -73,6 +81,12 @@ __all__ = [
     "BuzzerStep",
     "note_to_index",
     "BusType",
+    "CalibrationEntry",
+    "DisplayCalibration",
+    "DisplayLut",
+    "DisplayMode",
+    "DisplayPanel",
+    "LengthPrefixedPacket",
     "DIYBoardType",
     "config_from_json",
     "config_to_json",
