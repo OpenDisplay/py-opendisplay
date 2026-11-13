@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import logging
-
 import numpy as np
 from PIL import Image, ImageOps
 
 from ..models.enums import ColorScheme, FitMode
-
-_LOGGER = logging.getLogger(__name__)
 
 
 def _pad_color_for_mode(mode: str) -> int | tuple[int, ...]:

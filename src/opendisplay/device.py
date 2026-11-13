@@ -529,10 +529,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
     # 90 s budget covers legitimate SPI stalls.
     TIMEOUT_PIPE_TAIL_FLUSH = 0.5
 
-    # Version gate sentinel: None ⇒ version gating disabled, the 0x0080 probe is
-    # authoritative. Pin a (major, minor) tuple once a firmware release ships PIPE_WRITE.
-    PIPE_MIN_FW: tuple[int, int] | None = None
-
     def __init__(
         self,
         mac_address: str | None = None,
@@ -639,7 +635,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # Sliding-window (PIPE_WRITE) tuning + per-connection capability cache.
         self._blocks_per_ack = blocks_per_ack
         self._max_queue_size = max_queue_size
-        self._pipe_params: PipeParams | None = None  # active transfer only
         self._pipe_probed: bool = False  # capability determined this connection
         self._pipe_supported: bool = False  # probe result (valid iff _pipe_probed)
         # Pipe-partial support is inferred, then confirmed by the 0x0080 ACK flags
@@ -798,7 +793,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         self._pipe_probed = False
         self._pipe_supported = False
         self._pipe_partial_supported = None
-        self._pipe_params = None
 
     def _encrypt_frame(self, data: bytes) -> bytes:
         """Encrypt one plaintext command frame under the active session.
@@ -960,6 +954,30 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             raise RuntimeError("Device capabilities unknown - interrogate first or provide config/capabilities")
         return self._capabilities
 
+    def _require_config(self) -> GlobalConfig:
+        """Return the device config, raising RuntimeError if it is not known yet."""
+        if not self._config:
+            raise RuntimeError("Device config unknown - interrogate first or provide config")
+        return self._config
+
+    @property
+    def _display_config(self) -> DisplayConfig | None:
+        """The first display's config, or None when no config (or no display) is known."""
+        return self._config.displays[0] if self._config and self._config.displays else None
+
+    @property
+    def _supports_compression(self) -> bool:
+        """Whether a compressed upload is worth attempting.
+
+        Post-2.0 configs may advertise only streaming decompression (bit 0x01,
+        historically ZIPXL) without the plain ZIP bit; firmware 2.0 accepts
+        compressed uploads either way (<=1.81 NACKs without the ZIP bit and the
+        upload falls back to uncompressed). Without a config, assume yes: the
+        compressed START falls back to uncompressed when the device rejects it.
+        """
+        display = self._display_config
+        return display is None or display.supports_zip or display.supports_streaming_decompression
+
     def _pipe_write_allowed(self, display: DisplayConfig | None) -> bool:
         """Whether a PIPE_WRITE (0x0080) attempt may be made on this connection.
 
@@ -977,12 +995,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             and not (self._pipe_probed and not self._pipe_supported)
             and self._conn.max_frame <= DEFAULT_MAX_FRAME
         )
-
-    def _ensure_manufacturer_data(self) -> BoardManufacturer | int:
-        """Ensure manufacturer data is available and return board manufacturer."""
-        if not self._config:
-            raise RuntimeError("Device config unknown - interrogate first or provide config")
-        return self._config.manufacturer.manufacturer_id_enum
 
     @property
     def config(self) -> GlobalConfig | None:
@@ -1041,7 +1053,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         Raises:
             RuntimeError: If config is missing.
         """
-        return self._ensure_manufacturer_data()
+        return self._require_config().manufacturer.manufacturer_id_enum
 
     def get_board_type(self) -> int:
         """Get raw board type ID from config.
@@ -1051,9 +1063,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         Raises:
             RuntimeError: If config is missing.
         """
-        if not self._config:
-            raise RuntimeError("Device config unknown - interrogate first or provide config")
-        return self._config.manufacturer.board_type
+        return self._require_config().manufacturer.board_type
 
     def get_board_type_name(self) -> str | None:
         """Get human-readable board type name from config, if known.
@@ -1063,9 +1073,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         Raises:
             RuntimeError: If config is missing.
         """
-        if not self._config:
-            raise RuntimeError("Device config unknown - interrogate first or provide config")
-        return self._config.manufacturer.board_type_name
+        return self._require_config().manufacturer.board_type_name
 
     def landing_url(self) -> str:
         """Build the per-device configuration deep link (opendisplay.org/l/?...).
@@ -1082,14 +1090,13 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         Raises:
             RuntimeError: If config is missing.
         """
-        if not self._config:
-            raise RuntimeError("Device config unknown - interrogate first or provide config")
-        tag_type = self._config.displays[0].tag_type if self._config.displays else 0
+        config = self._require_config()
+        tag_type = config.displays[0].tag_type if config.displays else 0
         return build_landing_url(
             tag_type,
             self._device_id_bytes(),
             self._encryption_key,
-            self._config.manufacturer.manufacturer_id,
+            config.manufacturer.manufacturer_id,
         )
 
     def _device_id_bytes(self) -> bytes:
@@ -1826,13 +1833,11 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         dbs: DbsParams | bool | None = None,
     ) -> tuple[bytes, bytes | None, Image.Image]:
         """Prepare image for upload. Internal wrapper for the module-level prepare_image()."""
-        panel_ic_type = self._config.displays[0].panel_ic_type if self._config and self._config.displays else None
         return prepare_image(
             image,
             config=self._config,
             capabilities=self._ensure_capabilities(),
             use_measured_palettes=self._use_measured_palettes,
-            panel_ic_type=panel_ic_type,
             dither_mode=dither_mode,
             compress=compress,
             serpentine=serpentine,
@@ -1912,20 +1917,11 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             self.color_scheme.name,
         )
 
-        # Check compression support early to avoid wasted CPU in _prepare_image.
-        # Post-2.0 configs may advertise only streaming decompression (bit 0x01,
-        # historically ZIPXL) without the plain ZIP bit; firmware 2.0 accepts
-        # compressed uploads either way (<=1.81 NACKs without the ZIP bit and
-        # the upload falls back to uncompressed).
-        display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
-        supports_compression = (
-            (display_cfg.supports_zip or display_cfg.supports_streaming_decompression) if display_cfg else True
-        )
-
-        # When a partial upload may succeed, defer full-frame compression: it is
+        # Skip compression in _prepare_image when the device can't use it (wasted
+        # CPU), and when a partial upload may succeed: full-frame compression is
         # pure waste if the partial path handles the update. _dispatch_upload
         # compresses lazily on the full-upload fallback.
-        prepare_compress = compress and supports_compression and state is None
+        prepare_compress = compress and self._supports_compression and state is None
 
         # Prepare image (fit, dither, encode, compress). CPU-bound — seconds with
         # DBS refinement — so run it in a worker thread instead of blocking the
@@ -1947,31 +1943,9 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             dbs=dbs,
         )
 
-        if state is not None:
-            partial_outcome = await self._maybe_upload_partial(processed_image, state, progress_callback)
-            if partial_outcome == "success":
-                _LOGGER.info("Image upload complete (partial path)")
-                return processed_image
-            if partial_outcome == "no_change":
-                _LOGGER.info("No pixels changed; skipping upload")
-                return processed_image
-            if partial_outcome == "fallback_full":
-                _LOGGER.info("Partial path unavailable or etag mismatch; continuing with full upload")
-
-        upload_refresh_mode = RefreshMode.FULL if state is not None else refresh_mode
-        full_upload_etag = _generate_etag() if state is not None else None
-        etag_committed = await self._dispatch_upload(
-            image_data,
-            upload_refresh_mode,
-            compress,
-            compressed_data,
-            progress_callback,
-            new_etag=full_upload_etag,
+        await self._upload_prepared(
+            image_data, compressed_data, processed_image, refresh_mode, compress, progress_callback, state
         )
-
-        _LOGGER.info("Image upload complete")
-        if state is not None:
-            self._update_partial_state(state, processed_image, image_data, full_upload_etag if etag_committed else None)
         return processed_image
 
     @_serialized
@@ -2001,31 +1975,45 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             ProtocolError: If upload fails
         """
         image_data, compressed_data, processed_image = prepared_data
-
-        if state is not None:
-            partial_outcome = await self._maybe_upload_partial(processed_image, state, progress_callback)
-            if partial_outcome == "success":
-                _LOGGER.info("Prepared image upload complete (partial path)")
-                return
-            if partial_outcome == "no_change":
-                _LOGGER.info("No pixels changed; skipping prepared upload")
-                return
-            if partial_outcome == "fallback_full":
-                _LOGGER.info("Partial prepared upload unavailable or etag mismatch; continuing with full upload")
-
-        upload_refresh_mode = RefreshMode.FULL if state is not None else refresh_mode
-        full_upload_etag = _generate_etag() if state is not None else None
-        etag_committed = await self._dispatch_upload(
-            image_data,
-            upload_refresh_mode,
-            compress,
-            compressed_data,
-            progress_callback,
-            new_etag=full_upload_etag,
+        await self._upload_prepared(
+            image_data, compressed_data, processed_image, refresh_mode, compress, progress_callback, state
         )
-        _LOGGER.info("Prepared image upload complete")
-        if state is not None:
-            self._update_partial_state(state, processed_image, image_data, full_upload_etag if etag_committed else None)
+
+    async def _upload_prepared(
+        self,
+        image_data: bytes,
+        compressed_data: bytes | None,
+        processed_image: Image.Image,
+        refresh_mode: RefreshMode,
+        compress: bool,
+        progress_callback: Callable[[int, int], None] | None,
+        state: PartialState | None,
+    ) -> None:
+        """Send an encoded frame: partial when ``state`` allows it, otherwise full.
+
+        With a ``state`` the full upload always refreshes FULL and commits a new
+        etag, so the next upload can be a partial one against this frame.
+        """
+        if state is None:
+            await self._dispatch_upload(image_data, refresh_mode, compress, compressed_data, progress_callback)
+            _LOGGER.info("Image upload complete")
+            return
+
+        partial_outcome = await self._maybe_upload_partial(processed_image, state, progress_callback)
+        if partial_outcome == "success":
+            _LOGGER.info("Image upload complete (partial path)")
+            return
+        if partial_outcome == "no_change":
+            _LOGGER.info("No pixels changed; skipping upload")
+            return
+        _LOGGER.info("Partial path unavailable or etag mismatch; continuing with full upload")
+
+        new_etag = _generate_etag()
+        etag_committed = await self._dispatch_upload(
+            image_data, RefreshMode.FULL, compress, compressed_data, progress_callback, new_etag=new_etag
+        )
+        _LOGGER.info("Image upload complete")
+        self._update_partial_state(state, processed_image, new_etag if etag_committed else None)
 
     async def _dispatch_upload(
         self,
@@ -2041,10 +2029,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         Returns True if the device committed ``new_etag`` (END-with-etag was
         sent), False if the firmware auto-completed the upload.
         """
-        display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
-        supports_compression = (
-            (display_cfg.supports_zip or display_cfg.supports_streaming_decompression) if display_cfg else True
-        )
+        display_cfg = self._display_config
+        supports_compression = self._supports_compression
         streaming_decompression = bool(display_cfg and display_cfg.supports_streaming_decompression)
         if (
             compress
@@ -2097,13 +2083,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             new_etag=new_etag,
         )
 
-    def _update_partial_state(
-        self,
-        state: PartialState,
-        processed_image: Image.Image,
-        image_data: bytes,
-        etag: int | None = None,
-    ) -> None:
+    @staticmethod
+    def _update_partial_state(state: PartialState, processed_image: Image.Image, etag: int | None) -> None:
         """After a full upload, refresh state to reflect what's now on the panel.
 
         ``etag`` is the etag committed to the device via END-with-etag, or None
@@ -2112,18 +2093,12 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         make the next partial attempt fail ERR_ETAG_MISMATCH (or match a stale
         device etag and render against the wrong old plane). In that case
         invalidate the partial state so the next upload goes full.
-        ``image_data`` is unused but kept for API symmetry.
         """
-        del image_data
         if etag is None:
-            state.etag = 0
-            state.last_image = None
+            state.invalidate()
             return
         palette_image = processed_image.convert("P") if processed_image.mode != "P" else processed_image
-        state.etag = etag
-        state.last_image = palette_image.tobytes()
-        state.width, state.height = processed_image.size
-        state.bytes_per_pixel = 1
+        state.commit(etag, palette_image.tobytes(), *processed_image.size)
 
     def _direct_write_chunk_size(self) -> int:
         """Data bytes per 0x71 DIRECT_WRITE chunk for the current transport.
@@ -2170,8 +2145,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                     opcode,
                     err,
                 )
-                state.etag = 0
-                state.last_image = None
+                state.invalidate()
                 return "fallback_full"
             validate_ack_response(ack, CommandCode.DIRECT_WRITE_DATA)
             offset += len(chunk)
@@ -2231,9 +2205,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # accepts a <= 9-bit zlib window, so always use a 9-bit window (a 15-bit
         # window would be NACKed with ERR_PARTIAL_STREAM by 9-bit firmware).
         compressed_stream = compress_image_data(logical_stream, level=6, window_bits=FIRMWARE_ZLIB_WINDOW_BITS)
-        use_compression = (display.supports_zip or display.supports_streaming_decompression) and len(
-            compressed_stream
-        ) < len(logical_stream)
+        use_compression = self._supports_compression and len(compressed_stream) < len(logical_stream)
         stream_bytes = compressed_stream if use_compression else logical_stream
 
         flags = 0
@@ -2266,14 +2238,12 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 # Device already cleared its etag — a 0x76 retry would mismatch
                 # again, so skip straight to a full upload.
                 _LOGGER.info("pipe-partial etag mismatch (0x05); clearing state, falling back to full")
-                state.etag = 0
-                state.last_image = None
+                state.invalidate()
                 return "fallback_full"
             except _PipePartialRejected as exc:
                 # 0x76 runs identical bpp/rect checks and would fail identically.
                 _LOGGER.info("pipe-partial rejected (%s); clearing state, falling back to full", exc)
-                state.etag = 0
-                state.last_image = None
+                state.invalidate()
                 return "fallback_full"
             if params is not None:
                 # Negotiation may have downgraded compressed→uncompressed (NACK 0x02).
@@ -2302,15 +2272,9 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                     # Mid-stream NACK / MAX_RETX / END NACK before any refresh — the
                     # transfer aborted cleanly, so a full upload is safe.
                     _LOGGER.info("pipe-partial upload failed (%s); clearing state, falling back to full", exc)
-                    state.etag = 0
-                    state.last_image = None
+                    state.invalidate()
                     return "fallback_full"
-                # Success — commit partial state (mirrors the 0x76 success path).
-                state.etag = new_etag
-                state.last_image = region.new_palette
-                state.width = region.width
-                state.height = region.height
-                state.bytes_per_pixel = 1
+                state.commit(new_etag, region.new_palette, region.width, region.height)
                 return "success"
             # params is None → fall through to the legacy 0x76 flow unchanged.
 
@@ -2343,8 +2307,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                     opcode,
                     err,
                 )
-                state.etag = 0
-                state.last_image = None
+                state.invalidate()
                 return "fallback_full"
             validate_ack_response(response, CommandCode.DIRECT_WRITE_PARTIAL_START)
         except (OpenDisplayTimeoutError, InvalidResponseError):
@@ -2357,19 +2320,9 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         await self._write(build_direct_write_end_command(RefreshMode.PARTIAL.value))
         response = await self._read(self.TIMEOUT_ACK)
         validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
+        await self._await_refresh_complete()
 
-        response = await self._read(self.TIMEOUT_REFRESH)
-        command, _ = check_response_type(response)
-        if command == CommandCode.DIRECT_WRITE_REFRESH_TIMEOUT:
-            raise RefreshTimeoutError("Display refresh timed out (device sent 0x74)")
-        if command != CommandCode.DIRECT_WRITE_REFRESH_COMPLETE:
-            raise ProtocolError(f"Unexpected response waiting for refresh: {command.name} (0x{command:04x})")
-
-        state.etag = new_etag
-        state.last_image = region.new_palette
-        state.width = region.width
-        state.height = region.height
-        state.bytes_per_pixel = 1
+        state.commit(new_etag, region.new_palette, region.width, region.height)
         return "success"
 
     async def _execute_upload(
@@ -2401,8 +2354,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # 0. Sliding-window (PIPE_WRITE) attempt (see _pipe_write_allowed). The
         # 0x0080 negotiation below remains authoritative for the transfer
         # parameters when the gate passes.
-        display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
-        if self._pipe_write_allowed(display_cfg):
+        if self._pipe_write_allowed(self._display_config):
             total_size = len(image_data)
             params = await self._negotiate_pipe(use_compression, total_size)
             self._pipe_probed = True
@@ -2464,17 +2416,12 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             response = await self._read(self.TIMEOUT_FIRST_CHUNK)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
 
-        # 3. Send data chunks
+        # 3. Send data chunks: whatever the compressed START could not carry, or
+        # the whole uncompressed frame.
+        chunk_data = remaining_compressed if use_compression else image_data
         auto_completed = False
-        if use_compression:
-            if remaining_compressed:
-                auto_completed = await self._send_data_chunks(
-                    remaining_compressed, progress_callback, chunk_timeout=self.TIMEOUT_DIRECT_WRITE_DATA_ACK
-                )
-        else:
-            auto_completed = await self._send_data_chunks(
-                image_data, progress_callback, chunk_timeout=self.TIMEOUT_DIRECT_WRITE_DATA_ACK
-            )
+        if chunk_data:
+            auto_completed = await self._send_data_chunks(chunk_data, progress_callback)
 
         # 4. Send END (unless device auto-triggered refresh), then wait for 0x73
         if not auto_completed:
@@ -2490,8 +2437,20 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             end_ack_timeout = self.TIMEOUT_COMPRESSED_END_ACK if use_compression else self.TIMEOUT_UNCOMPRESSED_END_ACK
             response = await self._read(end_ack_timeout)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
-        _LOGGER.debug("Display refresh started, waiting for completion...")
+        await self._await_refresh_complete()
 
+        # The etag is only committed on the device when we send END-with-etag;
+        # a firmware auto-END (auto_completed) never sets displayed_etag.
+        return not auto_completed and new_etag is not None
+
+    async def _await_refresh_complete(self) -> None:
+        """Wait for the panel refresh that follows a completed transfer (0x73).
+
+        Raises:
+            RefreshTimeoutError: If the device reports a refresh timeout (0x74)
+            ProtocolError: If any other frame arrives instead
+        """
+        _LOGGER.debug("Display refresh started, waiting for completion...")
         response = await self._read(self.TIMEOUT_REFRESH)
         command, _ = check_response_type(response)
         if command == CommandCode.DIRECT_WRITE_REFRESH_TIMEOUT:
@@ -2500,15 +2459,10 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             raise ProtocolError(f"Unexpected response waiting for refresh: {command.name} (0x{command:04x})")
         _LOGGER.info("Display refresh complete")
 
-        # The etag is only committed on the device when we send END-with-etag;
-        # a firmware auto-END (auto_completed) never sets displayed_etag.
-        return not auto_completed and new_etag is not None
-
     async def _send_data_chunks(
         self,
         image_data: bytes,
         progress_callback: Callable[[int, int], None] | None = None,
-        chunk_timeout: float | None = None,
     ) -> bool:
         """Send image data chunks, waiting for ACK after each.
 
@@ -2520,13 +2474,12 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         Raises:
             ProtocolError: If device responds with an unexpected code
-            OpenDisplayTimeoutError: If no response within chunk_timeout
+            OpenDisplayTimeoutError: If no response within the DATA-ACK budget
 
-        ``chunk_timeout`` defaults to the DATA-ACK budget rather than the general
+        Reads use TIMEOUT_DIRECT_WRITE_DATA_ACK rather than the general
         TIMEOUT_ACK: every 0x0071 ACK waits on a blocking panel write, so the 5s
         command-ack budget is never right here.
         """
-        timeout = chunk_timeout if chunk_timeout is not None else self.TIMEOUT_DIRECT_WRITE_DATA_ACK
         bytes_sent = 0
         chunks_sent = 0
 
@@ -2544,7 +2497,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             if progress_callback is not None:
                 progress_callback(bytes_sent, len(image_data))
 
-            response = await self._read(timeout)
+            response = await self._read(self.TIMEOUT_DIRECT_WRITE_DATA_ACK)
             command, _ = check_response_type(response)
 
             if command == CommandCode.DIRECT_WRITE_END:
@@ -2617,15 +2570,20 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             _LOGGER.info("PIPE_WRITE START NACK (err 0x%02x); falling back to legacy", err_code)
             return None
 
-        ver, dev_max_window, dev_max_ack_every, dev_max_frame, flags = cast("tuple[int, int, int, int, int]", payload)
-        # Min-rule (Part 1 §1.1) — computed identically to firmware.
+        return self._effective_pipe_params(cast("tuple[int, int, int, int, int]", payload), compressed, partial=False)
+
+    def _effective_pipe_params(
+        self, ack: tuple[int, int, int, int, int], compressed: bool, *, partial: bool
+    ) -> PipeParams:
+        """Apply the min-rule (Part 1 §1.1) to a 0x0080 ACK — computed identically to firmware."""
+        ver, dev_max_window, dev_max_ack_every, dev_max_frame, flags = ack
         w_eff = max(1, min(self._max_queue_size, dev_max_window, 32))
         n_eff = max(1, min(self._blocks_per_ack, dev_max_ack_every, w_eff))
-        frame_eff = min(req_frame, dev_max_frame)
+        frame_eff = min(self._conn.max_frame, dev_max_frame)
         selective = bool(flags & 0x01)
-        params = PipeParams(w_eff, n_eff, frame_eff, selective, compressed)
         _LOGGER.info(
-            "PIPE_WRITE negotiated: W=%d N=%d frame=%d selective=%s compressed=%s (dev max %d/%d/%d, ver %d)",
+            "%s negotiated: W=%d N=%d frame=%d selective=%s compressed=%s (dev max %d/%d/%d, ver %d)",
+            "pipe-partial" if partial else "PIPE_WRITE",
             w_eff,
             n_eff,
             frame_eff,
@@ -2636,7 +2594,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             dev_max_frame,
             ver,
         )
-        return params
+        return PipeParams(w_eff, n_eff, frame_eff, selective, compressed, partial=partial)
 
     async def _negotiate_pipe_partial(
         self,
@@ -2719,11 +2677,11 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             _LOGGER.info("pipe-partial START NACK (err 0x%02x); falling back to legacy", err_code)
             return None
 
-        ver, dev_max_window, dev_max_ack_every, dev_max_frame, flags = cast("tuple[int, int, int, int, int]", payload)
+        ack = cast("tuple[int, int, int, int, int]", payload)
         # A valid ACK is a valid pipe probe.
         self._pipe_probed = True
         self._pipe_supported = True
-        if not flags & PIPE_FLAG_PARTIAL:
+        if not ack[4] & PIPE_FLAG_PARTIAL:
             # Requested partial but the device did not confirm bit1 → older
             # pipe-capable firmware. Abandon the pipe attempt; the subsequent 0x76
             # START resets the orphaned firmware session (Part 1 §1.2).
@@ -2731,25 +2689,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             self._pipe_partial_supported = False
             return None
         self._pipe_partial_supported = True
-        # Min-rule (Part 1 §1.1) — identical to _negotiate_pipe.
-        w_eff = max(1, min(self._max_queue_size, dev_max_window, 32))
-        n_eff = max(1, min(self._blocks_per_ack, dev_max_ack_every, w_eff))
-        frame_eff = min(req_frame, dev_max_frame)
-        selective = bool(flags & 0x01)
-        params = PipeParams(w_eff, n_eff, frame_eff, selective, compressed, partial=True)
-        _LOGGER.info(
-            "pipe-partial negotiated: W=%d N=%d frame=%d selective=%s compressed=%s (dev max %d/%d/%d, ver %d)",
-            w_eff,
-            n_eff,
-            frame_eff,
-            selective,
-            compressed,
-            dev_max_window,
-            dev_max_ack_every,
-            dev_max_frame,
-            ver,
-        )
-        return params
+        return self._effective_pipe_params(ack, compressed, partial=True)
 
     def _pipe_data_size(self, frame_eff: int) -> int:
         """Chunk data capacity for a pipe frame at ``frame_eff`` bytes.
@@ -2784,38 +2724,24 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             # An etag-less partial END would make firmware commit displayed_etag=0
             # on a successful refresh, silently desyncing the client PartialState.
             raise ProtocolError("PIPE_WRITE partial transfer requires a new_etag for the END commit")
-        self._pipe_params = params
         chunk_timeout = self.TIMEOUT_PIPE_DATA_COMPRESSED if params.compressed else self.TIMEOUT_PIPE_DATA_UNCOMPRESSED
 
-        try:
-            auto_completed = await self._send_pipe_chunks(chunks, params, chunk_timeout, progress_callback)
-            # Uncompressed full-frame transfers ALWAYS auto-complete (firmware
-            # resets pipe state and sends an unsolicited END_ACK once total_size is
-            # reached), so the explicit END path below is skipped there. Compressed
-            # and partial transfers use the explicit END (partial firmware never
-            # auto-completes — Part 1 §1.5). Sending an END after auto-complete
-            # would be NACKed and desync etag accounting.
-            if params.partial and auto_completed:
-                # Partial firmware must never auto-complete; an unsolicited END_ACK
-                # here is a contract violation (would have refreshed FULL, not
-                # REFRESH_PARTIAL, with no committed etag).
-                raise ProtocolError("PIPE_WRITE partial transfer auto-completed unexpectedly (unsolicited END_ACK)")
-            if not auto_completed:
-                await self._await_pipe_end_ack(chunks, refresh_mode, new_etag, params)
+        auto_completed = await self._send_pipe_chunks(chunks, params, chunk_timeout, progress_callback)
+        # Uncompressed full-frame transfers ALWAYS auto-complete (firmware
+        # resets pipe state and sends an unsolicited END_ACK once total_size is
+        # reached), so the explicit END path below is skipped there. Compressed
+        # and partial transfers use the explicit END (partial firmware never
+        # auto-completes — Part 1 §1.5). Sending an END after auto-complete
+        # would be NACKed and desync etag accounting.
+        if params.partial and auto_completed:
+            # Partial firmware must never auto-complete; an unsolicited END_ACK
+            # here is a contract violation (would have refreshed FULL, not
+            # REFRESH_PARTIAL, with no committed etag).
+            raise ProtocolError("PIPE_WRITE partial transfer auto-completed unexpectedly (unsolicited END_ACK)")
+        if not auto_completed:
+            await self._await_pipe_end_ack(refresh_mode, new_etag, params)
 
-            # Shared refresh wait — identical to the legacy _execute_upload tail for
-            # both the auto-complete and explicit-END paths.
-            _LOGGER.debug("Display refresh started, waiting for completion...")
-            response = await self._read(self.TIMEOUT_REFRESH)
-            command, _ = check_response_type(response)
-            if command == CommandCode.DIRECT_WRITE_REFRESH_TIMEOUT:
-                raise RefreshTimeoutError("Display refresh timed out (device sent 0x74)")
-            if command != CommandCode.DIRECT_WRITE_REFRESH_COMPLETE:
-                raise ProtocolError(f"Unexpected response waiting for refresh: {command.name} (0x{command:04x})")
-            _LOGGER.info("Display refresh complete (pipe)")
-        finally:
-            self._pipe_params = None
-
+        await self._await_refresh_complete()
         return not auto_completed and new_etag is not None
 
     async def _send_pipe_chunks(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -2877,7 +2803,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         bytes_sent_hw = 0
 
         async def _send(idx: int) -> None:
-            nonlocal bytes_sent_hw
             await self._write_pipe_frame(build_pipe_write_data_command(idx % 256, chunks[idx]), response=False)
 
         while True:
@@ -3002,7 +2927,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
     async def _await_pipe_end_ack(
         self,
-        chunks: list[bytes],
         refresh_mode: RefreshMode,
         new_etag: int | None,
         params: PipeParams,
@@ -3019,7 +2943,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         END_NACK or data NACK aborts (the caller's existing retry-from-scratch
         recovers).
         """
-        del chunks  # completeness already guaranteed by the sender loop
         end_cmd = build_pipe_write_end_command(refresh_mode.value, new_etag)
         await self._write_pipe_frame(end_cmd, response=True)
 

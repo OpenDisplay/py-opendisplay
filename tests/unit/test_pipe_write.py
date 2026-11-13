@@ -691,11 +691,11 @@ async def test_disconnect_resets_pipe_cache() -> None:
     dev, _ = make_device([], max_queue_size=16)
     dev._pipe_probed = True
     dev._pipe_supported = False
-    dev._pipe_params = PipeParams(8, 4, 244, True, False)
+    dev._pipe_partial_supported = False
     dev._on_disconnect()
     assert dev._pipe_probed is False
     assert dev._pipe_supported is False
-    assert dev._pipe_params is None
+    assert dev._pipe_partial_supported is None
 
 
 def test_supports_pipe_write_bit() -> None:

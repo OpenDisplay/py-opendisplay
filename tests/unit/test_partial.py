@@ -163,3 +163,16 @@ class TestBuilders:
     def test_end_with_etag(self):
         cmd = build_direct_write_end_with_etag(refresh_mode=2, new_etag=0x01020304)
         assert cmd == b"\x00\x72\x02\x01\x02\x03\x04"
+
+
+class TestPartialStateTransitions:
+    def test_commit_records_the_displayed_frame(self):
+        state = PartialState()
+        state.commit(0x01020304, b"\x01" * 16, 8, 2)
+        assert state == PartialState(etag=0x01020304, last_image=b"\x01" * 16, width=8, height=2, bytes_per_pixel=1)
+
+    def test_invalidate_forces_the_next_upload_full(self):
+        state = PartialState(etag=0x01020304, last_image=b"\x01" * 16, width=8, height=2, bytes_per_pixel=1)
+        state.invalidate()
+        assert state.etag == 0
+        assert state.last_image is None

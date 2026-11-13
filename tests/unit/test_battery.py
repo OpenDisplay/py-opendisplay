@@ -95,3 +95,7 @@ def test_accepts_raw_int_chemistry(chemistry: int, voltage_mv: int) -> None:
 def test_unknown_chemistry_returns_none(chemistry: int) -> None:
     """Unknown chemistry values return None."""
     assert voltage_to_percent(3800, chemistry) is None
+
+
+def test_every_capacity_estimator_has_a_curve() -> None:
+    assert all(voltage_to_percent(3300, chemistry) is not None for chemistry in CapacityEstimator)
