@@ -275,6 +275,19 @@ class PartialState:
     height: int = 0
     bytes_per_pixel: int = 0
 
+    def commit(self, etag: int, image: bytes, width: int, height: int) -> None:
+        """Record the frame the device now shows under ``etag``."""
+        self.etag = etag
+        self.last_image = image
+        self.width = width
+        self.height = height
+        self.bytes_per_pixel = 1
+
+    def invalidate(self) -> None:
+        """Forget the displayed frame, so the next upload is a full one."""
+        self.etag = 0
+        self.last_image = None
+
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------

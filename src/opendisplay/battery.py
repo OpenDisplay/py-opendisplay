@@ -98,6 +98,15 @@ _SOC_SEEED_LI_ION: list[tuple[int, int]] = [
 ]
 
 
+_SOC_TABLES: dict[CapacityEstimator, list[tuple[int, int]]] = {
+    CapacityEstimator.LI_ION: _SOC_LI_ION,
+    CapacityEstimator.LIFEPO4: _SOC_LIFEPO4,
+    CapacityEstimator.LITHIUM_PRIMARY: _SOC_LITHIUM_PRIMARY,
+    CapacityEstimator.SUPERCAP: _SOC_SUPERCAP,
+    CapacityEstimator.SEEED_LI_ION: _SOC_SEEED_LI_ION,
+}
+
+
 def _interpolate(table: list[tuple[int, int]], voltage_mv: int) -> int:
     """Linearly interpolate SOC from a voltage lookup table.
 
@@ -134,20 +143,7 @@ def voltage_to_percent(
         is unknown.
     """
     try:
-        chemistry = CapacityEstimator(chemistry)
-    except ValueError:
+        table = _SOC_TABLES[CapacityEstimator(chemistry)]
+    except (ValueError, KeyError):
         return None
-
-    match chemistry:
-        case CapacityEstimator.LI_ION:
-            return _interpolate(_SOC_LI_ION, voltage_mv)
-        case CapacityEstimator.LIFEPO4:
-            return _interpolate(_SOC_LIFEPO4, voltage_mv)
-        case CapacityEstimator.LITHIUM_PRIMARY:
-            return _interpolate(_SOC_LITHIUM_PRIMARY, voltage_mv)
-        case CapacityEstimator.SUPERCAP:
-            return _interpolate(_SOC_SUPERCAP, voltage_mv)
-        case CapacityEstimator.SEEED_LI_ION:
-            return _interpolate(_SOC_SEEED_LI_ION, voltage_mv)
-        case _:
-            return None
+    return _interpolate(table, voltage_mv)

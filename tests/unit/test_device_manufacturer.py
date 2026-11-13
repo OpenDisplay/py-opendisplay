@@ -2,7 +2,7 @@
 
 import pytest
 
-from opendisplay import OpenDisplayDevice
+from opendisplay import OpenDisplayDevice, build_landing_url, parse_landing_url
 from opendisplay.models.config import (
     DisplayConfig,
     GlobalConfig,
@@ -133,3 +133,30 @@ class TestBoardManufacturerAccess:
         device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config)
 
         assert device.get_board_type_name() is None
+
+
+class TestLandingUrl:
+    """Test OpenDisplayDevice.landing_url()."""
+
+    def test_encodes_tag_type_identity_key_and_manufacturer(self):
+        key = bytes(range(16))
+        config = _config_with_manufacturer(1)
+        config.displays[0].tag_type = 0x0102
+        device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config, encryption_key=key)
+
+        info = parse_landing_url(device.landing_url())
+
+        # No connection yet, so no GAP name: the identity falls back to the MAC's last three bytes.
+        assert info == parse_landing_url(build_landing_url(0x0102, b"\xdd\xee\xff", key, 1))
+        assert (info.tag_type, info.device_id, info.encryption_key, info.manufacturer_id) == (
+            0x0102,
+            b"\xdd\xee\xff",
+            key,
+            1,
+        )
+
+    def test_raises_when_config_missing(self):
+        device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
+
+        with pytest.raises(RuntimeError, match="config unknown"):
+            device.landing_url()
