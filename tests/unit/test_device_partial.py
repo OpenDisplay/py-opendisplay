@@ -606,6 +606,22 @@ def test_gate_max_queue_size_one_skips_0x0080():
     assert conn.written[0][:2] == b"\x00\x76"
 
 
+def test_gate_lan_transport_skips_0x0080():
+    # PIPE_WRITE is forbidden on LAN: a large-frame transport must go straight to 0x76.
+    device = _pipe_device(_config(transmission_modes=0x10), width=16, height=8)
+    new = _image(changed=True)
+    state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
+    conn = ScriptedConn([b"\x00\x76", b"\x00\x72", b"\x00\x73"])
+    conn.max_frame = 4094
+    device._connection = conn
+
+    asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
+
+    assert all(w[:2] != b"\x00\x80" for w in conn.written)
+    assert conn.written[0][:2] == b"\x00\x76"
+    assert state.last_image == new.tobytes()
+
+
 def test_gate_full_frame_whole_panel_rect_and_total_size():
     cfg = _config(
         partial_update_support=PartialUpdateSupport.FULL_FRAME,

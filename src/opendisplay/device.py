@@ -960,6 +960,24 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             raise RuntimeError("Device capabilities unknown - interrogate first or provide config/capabilities")
         return self._capabilities
 
+    def _pipe_write_allowed(self, display: DisplayConfig | None) -> bool:
+        """Whether a PIPE_WRITE (0x0080) attempt may be made on this connection.
+
+        Gated on the device config advertising pipe support (transmission_modes
+        bit 0x10) — a device whose config lacks the bit never sees a 0x0080 probe.
+        Also off when disabled by the caller (max_queue_size <= 1), when this
+        connection already probed negative, and on LAN: PIPE_WRITE (0x0080-0x82)
+        is forbidden there (SECTION 9 rule 3), so a large-frame transport streams
+        via plain DIRECT_WRITE instead.
+        """
+        return (
+            display is not None
+            and display.supports_pipe_write
+            and self._max_queue_size > 1
+            and not (self._pipe_probed and not self._pipe_supported)
+            and self._conn.max_frame <= DEFAULT_MAX_FRAME
+        )
+
     def _ensure_manufacturer_data(self) -> BoardManufacturer | int:
         """Ensure manufacturer data is available and return board manufacturer."""
         if not self._config:
@@ -2236,16 +2254,11 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         new_etag = _generate_etag()
         _LOGGER.debug("Partial upload: old_etag=0x%08x new_etag=0x%08x", state.etag, new_etag)
 
-        # Pipe-first: ride the sliding window when the device advertises PIPE_WRITE
-        # and pipe-partial has not been disabled this connection. partial_update_support
+        # Pipe-first: ride the sliding window when PIPE_WRITE is allowed and
+        # pipe-partial has not been disabled this connection. partial_update_support
         # != NONE is already guaranteed (compute_partial_region gated on it). Falls
         # back to the legacy 0x76 flow below on any None result.
-        if (
-            display.supports_pipe_write
-            and self._max_queue_size > 1
-            and not (self._pipe_probed and not self._pipe_supported)
-            and self._pipe_partial_supported is not False
-        ):
+        if self._pipe_write_allowed(display) and self._pipe_partial_supported is not False:
             total_size = len(logical_stream)
             try:
                 params = await self._negotiate_pipe_partial(use_compression, total_size, state.etag, region)
@@ -2385,22 +2398,11 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         Raises:
             ProtocolError: If upload fails
         """
-        # 0. Sliding-window (PIPE_WRITE) attempt. Gated on the device config
-        # advertising pipe support (transmission_modes bit 0x10) — a device whose
-        # config lacks the bit never sees a 0x0080 probe. Also skipped when
-        # disabled (max_queue_size <= 1) or when this connection already probed
-        # negative. The 0x0080 negotiation below remains authoritative for the
-        # transfer parameters when the gate passes.
+        # 0. Sliding-window (PIPE_WRITE) attempt (see _pipe_write_allowed). The
+        # 0x0080 negotiation below remains authoritative for the transfer
+        # parameters when the gate passes.
         display_cfg = self._config.displays[0] if (self._config and self._config.displays) else None
-        pipe_eligible = (
-            bool(display_cfg and display_cfg.supports_pipe_write)
-            and self._max_queue_size > 1
-            and not (self._pipe_probed and not self._pipe_supported)
-            # PIPE_WRITE (0x0080-0x82) is forbidden on LAN (SECTION 9 rule 3): a
-            # large-frame transport streams via plain DIRECT_WRITE instead.
-            and self._conn.max_frame <= DEFAULT_MAX_FRAME
-        )
-        if pipe_eligible:
+        if self._pipe_write_allowed(display_cfg):
             total_size = len(image_data)
             params = await self._negotiate_pipe(use_compression, total_size)
             self._pipe_probed = True
