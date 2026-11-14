@@ -279,7 +279,8 @@ class BLEConnection:
 
         Returns:
             True if a cache was cleared, False if the backend has no cache
-            support (e.g. direct BlueZ on a bleak build without ``clear_cache``).
+            support (e.g. direct BlueZ on a bleak build without ``clear_cache``)
+            or the clear failed (e.g. a Bluetooth proxy that did not answer).
 
         Raises:
             BLEConnectionError: If not connected.
@@ -291,8 +292,15 @@ class BLEConnection:
         clear_cache_fn = getattr(self._client, "clear_cache", None)
         if not callable(clear_cache_fn):
             return False
-        # Guarded by callable() above; pylint can't infer through getattr.
-        return bool(await clear_cache_fn())  # pylint: disable=not-callable
+        # Best effort: the caller clears the cache to help a later connection, so a
+        # backend that fails here (a slow ESPHome proxy times out, for one) must not
+        # abort what the caller is doing. Guarded by callable() above; pylint can't
+        # infer through getattr.
+        try:
+            return bool(await clear_cache_fn())  # pylint: disable=not-callable
+        except Exception as err:  # noqa: BLE001 - best-effort
+            _LOGGER.warning("Clearing the GATT cache for %s failed: %s", self.mac_address, err)
+            return False
 
     async def _setup_notifications(self) -> None:
         """Set up BLE notifications for responses.
