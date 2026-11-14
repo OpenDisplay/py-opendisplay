@@ -35,6 +35,7 @@ from .encoding import (
     encode_gray4_bitplanes,
     encode_image,
     fit_image,
+    normalize_source_image,
     zlib_window_bits,
 )
 from .exceptions import (
@@ -308,7 +309,8 @@ def prepare_image(
 
     Standalone function that processes an image (rotate, fit, dither, encode)
     using only the device configuration. No device instance or BLE connection
-    needed.
+    needed. Transparency in the source is resolved to white, and an embedded
+    colour profile other than sRGB is converted to sRGB first.
 
     Args:
         image: PIL Image to prepare
@@ -353,7 +355,7 @@ def prepare_image(
     target_size = (capabilities.width, capabilities.height)
     base = _capabilities_rotation(capabilities.rotation)
     effective = Rotation((base.value + rotate.value) % 360)
-    image = _rotate_source_image(image, effective)
+    image = _rotate_source_image(normalize_source_image(image), effective)
 
     if image.size != target_size:
         _LOGGER.info(
