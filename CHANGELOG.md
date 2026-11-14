@@ -1,5 +1,26 @@
 # Changelog
 
+## [8.1.1](https://github.com/OpenDisplay/py-opendisplay/compare/v8.1.0...v8.1.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **cli:** refuse a write-config that would delete unrecognised config packets ([b7c7467](https://github.com/OpenDisplay/py-opendisplay/commit/b7c7467cd3f39ad0bd096c731e1f7df01466e4bf))
+* don't take a repeated auth challenge frame for the step-2 response ([861e4f3](https://github.com/OpenDisplay/py-opendisplay/commit/861e4f37d939e9c2608eacf4ad47118966650b36)), closes [#141](https://github.com/OpenDisplay/py-opendisplay/issues/141)
+* fall back to a full upload when no aligned partial rectangle fits the panel ([d5b6334](https://github.com/OpenDisplay/py-opendisplay/commit/d5b633460eda33a1b485c27644e2d6233b2146f0)), closes [#169](https://github.com/OpenDisplay/py-opendisplay/issues/169)
+* keep unrecognised config packets across a JSON export and import ([8fa71cf](https://github.com/OpenDisplay/py-opendisplay/commit/8fa71cfe2f537c0c08ed97aa4e9d998d9b0b766d))
+* never attempt PIPE_WRITE on a LAN transport for partial updates ([d63cc4f](https://github.com/OpenDisplay/py-opendisplay/commit/d63cc4fa941c74551fcafe3a9b8f0d17618ac53d))
+* recover from timeouts and link drops on the TCP transport too ([a7ccb02](https://github.com/OpenDisplay/py-opendisplay/commit/a7ccb020a00b7b41b465f81622e176a7a07f66ad))
+* refresh in the requested mode when a full upload is made with a partial state ([00b634d](https://github.com/OpenDisplay/py-opendisplay/commit/00b634d750d9ce6f80b19f735c34fa8fb606cebb))
+* report the released version as __version__ ([6b22cfc](https://github.com/OpenDisplay/py-opendisplay/commit/6b22cfc97ffb7bf9bfe56349aabafd33e9bdd509))
+* resolve transparency to white and convert colour profiles to sRGB ([26a803a](https://github.com/OpenDisplay/py-opendisplay/commit/26a803ab0aa6ec5d65908b9bbd0569bb161e1578))
+* return False from clear_gatt_cache when the backend fails to clear ([e0e1736](https://github.com/OpenDisplay/py-opendisplay/commit/e0e1736ee730edc145870f50329ca3492d4ecc3a))
+
+
+### Documentation
+
+* cite the right protocol rule for no PIPE_WRITE on LAN ([9dcd3c5](https://github.com/OpenDisplay/py-opendisplay/commit/9dcd3c5f335649c42fc6b7dfd1aecc18bd1acc48))
+
 ## [8.1.0](https://github.com/OpenDisplay/py-opendisplay/compare/v8.0.1...v8.1.0) (2026-11-11)
 
 
