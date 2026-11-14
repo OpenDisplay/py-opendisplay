@@ -26,6 +26,7 @@ from .config import (
     TouchController,
     WifiConfig,
 )
+from .panel_drive import LENGTH_PREFIXED_MIN_TYPE, LengthPrefixedPacket
 
 
 def _parse_int(value: str | int) -> int:
@@ -76,6 +77,27 @@ def _parse_unparsed_tail(value: object) -> bytes:
         raise ValueError(f"unparsed_tail is not a hex string: {text[:32]!r}") from err
 
 
+def _parse_length_prefixed_packets(value: object) -> list[LengthPrefixedPacket]:
+    """Decode the exported ``length_prefixed_packets`` list; absent means the config has none."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("length_prefixed_packets is not a list")
+    packets = []
+    for entry in value:
+        try:
+            packet_type = _parse_int(entry["id"])
+            number = _parse_int(entry["number"])
+            body_text = str(entry["body"]).strip()
+            body = bytes.fromhex(body_text[2:] if body_text.lower().startswith("0x") else body_text)
+        except (KeyError, TypeError, ValueError) as err:
+            raise ValueError(f"length_prefixed_packets entry is malformed: {entry!r}") from err
+        if not LENGTH_PREFIXED_MIN_TYPE <= packet_type <= 0xFF or not 0 <= number <= 0xFF:
+            raise ValueError(f"length_prefixed_packets entry is out of range: id {packet_type}, number {number}")
+        packets.append(LengthPrefixedPacket(number, packet_type, body))
+    return packets
+
+
 def config_to_json(config: GlobalConfig) -> dict[str, Any]:
     """Export GlobalConfig to JSON-serializable dict.
 
@@ -88,9 +110,10 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
         config: GlobalConfig to export
 
     Returns:
-        Dict with version, packets array, and metadata. When the config holds
-        packets the library does not recognise, they are carried verbatim in an
-        extra ``unparsed_tail`` hex string.
+        Dict with version, packets array, and metadata. Length-prefixed packets
+        (types 0x80+) are carried verbatim in an extra ``length_prefixed_packets``
+        list, and packets the library does not recognise in an ``unparsed_tail``
+        hex string.
     """
     packets = []
 
@@ -448,6 +471,13 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "exported_by": "py-opendisplay",
     }
+    if config.length_prefixed_packets:
+        # Length-prefixed packets (types 0x80+), verbatim: the library writes them
+        # back exactly as the device stored them.
+        exported["length_prefixed_packets"] = [
+            {"number": packet.number, "id": str(packet.packet_type), "body": _hex_bytes(packet.body)}
+            for packet in config.length_prefixed_packets
+        ]
     if config.unparsed_tail:
         # Packets this library does not recognise, verbatim. Without them an
         # export -> import -> write would delete them from the device.
@@ -468,7 +498,8 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
 
     Raises:
         ValueError: If required packets (including at least one display) are missing,
-            packet structure is invalid, or ``unparsed_tail`` is not a hex string
+            packet structure is invalid, or ``length_prefixed_packets`` /
+            ``unparsed_tail`` are malformed
     """
     system: SystemConfig | None = None
     manufacturer: ManufacturerData | None = None
@@ -769,6 +800,7 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
         data_extended=data_extended,
+        length_prefixed_packets=_parse_length_prefixed_packets(data.get("length_prefixed_packets")),
         unparsed_tail=_parse_unparsed_tail(data.get("unparsed_tail")),
         version=version,
         minor_version=minor_version,

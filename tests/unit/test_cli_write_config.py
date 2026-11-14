@@ -17,6 +17,7 @@ from test_config_json_roundtrip import _base_config, _display
 
 from opendisplay import GlobalConfig, cli
 from opendisplay.models import config_to_json
+from opendisplay.models.panel_drive import LengthPrefixedPacket
 
 _TAIL = bytes([5, 0xB1, 3, 0, 0xAA, 0xBB, 0xCC])
 _OTHER_TAIL = bytes([5, 0xB1, 1, 0, 0x11])
@@ -91,6 +92,41 @@ def test_a_file_with_its_own_unknown_packets_is_written_as_it_is(
     written = _write(monkeypatch, tmp_path, device_tail=_TAIL, file_tail=_OTHER_TAIL, unknown_packets=unknown_packets)
 
     assert [c.unparsed_tail for c in written] == [_OTHER_TAIL]
+
+
+def test_length_prefixed_packets_are_guarded_like_the_tail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A device whose packets are all length-prefixed (no tail) is protected the same way."""
+    packets = [LengthPrefixedPacket(0, 0xB1, b"\x01\x02\x03")]
+    written: list[GlobalConfig] = []
+
+    class FakeDevice:
+        import_config_json = staticmethod(cli.OpenDisplayDevice.import_config_json)
+
+        def __init__(self, **kwargs: object) -> None:
+            self.config = dataclasses.replace(_config(), length_prefixed_packets=packets)
+
+        async def __aenter__(self) -> FakeDevice:
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def write_config(self, config: GlobalConfig) -> None:
+            written.append(config)
+
+    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config_to_json(_config())))
+
+    with pytest.raises(SystemExit):
+        asyncio.run(cli._write_config({}, str(path)))
+    assert written == []
+    assert "--keep-unknown-packets" in capsys.readouterr().err
+
+    asyncio.run(cli._write_config({}, str(path), "keep"))
+    assert [c.length_prefixed_packets for c in written] == [packets]
 
 
 def test_a_device_without_unknown_packets_needs_no_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

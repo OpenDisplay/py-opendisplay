@@ -669,6 +669,12 @@ def serialize_config(config: GlobalConfig) -> bytes:
         packet_data += bytes([i, PACKET_TYPE_NFC_CONFIG])
         packet_data += serialize_nfc_config(nfc)
 
+    # Length-prefixed packets (0x80+) go back verbatim. Writers must place them
+    # after every legacy packet: a legacy reader stops at the first id it does not
+    # know, so with these last it still sees the whole config it understands.
+    for packet in config.length_prefixed_packets:
+        packet_data += packet.to_bytes()
+
     # Packets the parser could not read go back verbatim, after everything else for
     # the same reason as NFC above.
     packet_data += config.unparsed_tail

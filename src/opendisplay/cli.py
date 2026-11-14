@@ -1341,8 +1341,17 @@ def _cmd_write_config(args: argparse.Namespace) -> None:
     _run(_write_config(device_kwargs, args.input, args.unknown_packets))
 
 
+def _carried_packet_bytes(config: GlobalConfig) -> int:
+    """Bytes of packets a config carries verbatim: length-prefixed ones plus the unparsed tail.
+
+    These are the packets a JSON file loses when it passes through a tool that
+    does not know the fields holding them.
+    """
+    return sum(len(packet.to_bytes()) for packet in config.length_prefixed_packets) + len(config.unparsed_tail)
+
+
 _UNKNOWN_PACKETS_REFUSAL = (
-    "The device holds {size} bytes of config packets this tool does not recognise, and the file has none. "
+    "The device holds {size} bytes of config packets that the file does not carry. "
     "Writing it would delete them; on some firmware they hold the panel drive data. "
     "Pass --keep-unknown-packets to carry them over unchanged, or --discard-unknown-packets to delete them."
 )
@@ -1351,10 +1360,11 @@ _UNKNOWN_PACKETS_REFUSAL = (
 async def _write_config(device_kwargs: dict[str, Any], input_path: str, unknown_packets: str | None = None) -> None:
     """Write a JSON config file to the device.
 
-    A file that went through a tool unaware of ``unparsed_tail`` no longer has
-    the packets this library does not recognise. If the device has such packets
-    and the file has none, ``unknown_packets`` decides: ``"keep"`` carries the
-    device's over, ``"discard"`` writes the file as it is, and ``None`` refuses.
+    A file that went through a tool unaware of ``length_prefixed_packets`` and
+    ``unparsed_tail`` no longer has the packets they carry verbatim. If the
+    device has such packets and the file has none, ``unknown_packets`` decides:
+    ``"keep"`` carries the device's over, ``"discard"`` writes the file as it
+    is, and ``None`` refuses.
     """
     try:
         config = OpenDisplayDevice.import_config_json(input_path)
@@ -1369,13 +1379,18 @@ async def _write_config(device_kwargs: dict[str, Any], input_path: str, unknown_
         with _spinner() as progress:
             task = progress.add_task("Connecting...", total=None)
             async with OpenDisplayDevice(**device_kwargs) as device:
-                device_tail = device.config.unparsed_tail if device.config else b""
-                if device_tail and not config.unparsed_tail:
+                on_device = device.config
+                at_risk = _carried_packet_bytes(on_device) if on_device else 0
+                if on_device and at_risk and not _carried_packet_bytes(config):
                     if unknown_packets == "keep":
-                        config = replace(config, unparsed_tail=device_tail)
-                        kept = len(device_tail)
+                        config = replace(
+                            config,
+                            length_prefixed_packets=list(on_device.length_prefixed_packets),
+                            unparsed_tail=on_device.unparsed_tail,
+                        )
+                        kept = at_risk
                     elif unknown_packets != "discard":
-                        refusal = _UNKNOWN_PACKETS_REFUSAL.format(size=len(device_tail))
+                        refusal = _UNKNOWN_PACKETS_REFUSAL.format(size=at_risk)
                 if refusal is None:
                     progress.update(task, description="Writing config...")
                     await device.write_config(config)
@@ -1384,7 +1399,7 @@ async def _write_config(device_kwargs: dict[str, Any], input_path: str, unknown_
     if refusal is not None:
         _error(refusal)
     if kept:
-        _console.print(f"Kept {kept} bytes of unrecognised config packets from the device.")
+        _console.print(f"Kept {kept} bytes of config packets from the device that the file does not carry.")
     _console.print("Config written [green]successfully[/green].")
 
 
