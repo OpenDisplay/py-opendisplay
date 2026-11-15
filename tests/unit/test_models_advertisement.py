@@ -665,3 +665,76 @@ def test_chip_temperature_is_not_the_sensor_reading() -> None:
     assert reading is not None
     assert adv.temperature_c == pytest.approx(31.0)
     assert reading.temperature_c == pytest.approx(22.4)
+
+
+# ─── Device state in the status byte, and the "no drivable display" rule ─────
+
+# Captured from a reTerminal E1002 on Firmware_Unified 3.0.2 with no config, in fresh claim mode.
+AWAITING_CLAIM = bytes.fromhex("ffffffffffffffffffffff860016")
+
+_ADDRESS = "AA:BB:CC:DD:EE:FF"
+_LEGACY_PAYLOAD = bytes([0x02, 0x36, 0x00, 0x6C, 0x00, 0xC3, 0x01, 0x55, 0x0F, 0x16, 0x4D])
+
+
+def _with_status_bits(payload: bytes, bits: int) -> bytes:
+    return payload[:-1] + bytes([payload[-1] | bits])
+
+
+def test_fresh_3_0_device_is_unconfigured_and_awaiting_claim() -> None:
+    adv = parse_advertisement(AWAITING_CLAIM)
+
+    assert (adv.unconfigured, adv.claim_mode, adv.session_required, adv.awaiting_claim) == (True, True, False, True)
+    assert adv.connection_requested is True  # the old name for the same bit
+
+
+def test_unconfigured_advertisement_decodes_no_slots() -> None:
+    adv = parse_advertisement(AWAITING_CLAIM)
+
+    assert adv.button_events == []
+    assert adv.button_event(0) is None
+    assert adv.is_pressed(0) is None
+    assert adv.touch_event(0) is None
+    assert adv.sht40_reading() is None
+
+
+def test_claimed_device_in_claim_mode_is_not_awaiting_claim() -> None:
+    adv = parse_advertisement(_with_status_bits(_v1_payload(bytes(11), connection_requested=True), 0x08))
+
+    assert (adv.claim_mode, adv.session_required, adv.awaiting_claim) == (True, True, False)
+
+
+def test_session_required_bit_on_a_configured_device() -> None:
+    adv = parse_advertisement(_with_status_bits(_v1_payload(bytes([0x0A]) + bytes(10)), 0x08))
+
+    assert (adv.session_required, adv.claim_mode, adv.unconfigured) == (True, False, False)
+    assert adv.button_event(0) is not None  # a configured device's slots are still decoded
+
+
+def test_legacy_payload_has_no_state() -> None:
+    adv = parse_advertisement(_LEGACY_PAYLOAD)
+
+    assert adv.format_version == "legacy"
+    assert (adv.session_required, adv.claim_mode, adv.awaiting_claim, adv.unconfigured) == (None, None, None, False)
+
+
+def test_button_tracker_ignores_an_unconfigured_device_and_keeps_its_state() -> None:
+    tracker = AdvertisementTracker()
+    first = parse_advertisement(_v1_payload(bytes([0x0A]) + bytes(10), loop_counter=1))  # id=2, count=1, up
+    pressed = parse_advertisement(_v1_payload(bytes([0x92]) + bytes(10), loop_counter=3))  # id=2, count=2, down
+    assert tracker.update(_ADDRESS, first, timestamp=1.0) == []
+
+    assert tracker.update(_ADDRESS, parse_advertisement(AWAITING_CLAIM), timestamp=2.0) == []
+
+    # The FF bytes were not taken for button data: the next real advertisement is compared with `first`.
+    events = tracker.update(_ADDRESS, pressed, timestamp=3.0)
+    assert [e.event_type for e in events] == ["button_down", "press_count_changed"]
+    assert events[1].previous_press_count == 1
+
+
+def test_touch_tracker_ignores_an_unconfigured_device() -> None:
+    tracker = TouchTracker(instance=0, start_byte=0)
+    idle = parse_advertisement(_v1_payload(bytes(11)))
+    assert tracker.update(_ADDRESS, idle, timestamp=1.0) == []
+
+    # 0xFF in the touch block would read as 15 contacts: a phantom touch_down.
+    assert tracker.update(_ADDRESS, parse_advertisement(AWAITING_CLAIM), timestamp=2.0) == []
