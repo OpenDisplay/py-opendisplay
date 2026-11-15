@@ -6,9 +6,7 @@ import logging
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import (
-    cast,
-)
+from typing import Protocol, cast
 
 from PIL import (
     Image,
@@ -119,6 +117,20 @@ class UploadTarget:
     """The device address, for log lines."""
 
 
+class UploadTimeouts(Protocol):  # pylint: disable=too-few-public-methods
+    """The timeouts an upload reads (seconds). ``Uploader`` and ``OpenDisplayDevice`` both carry them."""
+
+    TIMEOUT_FIRST_CHUNK: float
+    TIMEOUT_ACK: float
+    TIMEOUT_DIRECT_WRITE_DATA_ACK: float
+    TIMEOUT_UNCOMPRESSED_END_ACK: float
+    TIMEOUT_COMPRESSED_END_ACK: float
+    TIMEOUT_REFRESH: float
+    TIMEOUT_PIPE_DATA_COMPRESSED: float
+    TIMEOUT_PIPE_DATA_UNCOMPRESSED: float
+    TIMEOUT_PIPE_TAIL_FLUSH: float
+
+
 class Uploader:
     """Sends encoded frames over a :class:`SecureChannel`.
 
@@ -131,6 +143,9 @@ class Uploader:
             because the device config can arrive after the uploader is built.
         blocks_per_ack: Requested PIPE_WRITE ACK cadence.
         max_queue_size: Requested PIPE_WRITE window; 1 or less disables PIPE_WRITE.
+        timeouts: Where the ``TIMEOUT_*`` values are read from, at the moment each is needed.
+            The device passes itself, so a timeout changed on the device object applies to
+            its uploads. Defaults to the values defined on this class.
     """
 
     # Operation timeouts (seconds)
@@ -167,9 +182,11 @@ class Uploader:
         target: Callable[[], UploadTarget],
         blocks_per_ack: int,
         max_queue_size: int,
+        timeouts: UploadTimeouts | None = None,
     ) -> None:
         self._channel = channel
         self._target = target
+        self._timeouts: UploadTimeouts = timeouts if timeouts is not None else self
         self._blocks_per_ack = blocks_per_ack
         self._max_queue_size = max_queue_size
         self.pipe_probed: bool = False  # capability determined this connection
@@ -375,7 +392,7 @@ class Uploader:
             chunk = remaining[offset : offset + chunk_size]
             # Write Without Response; the per-chunk ACK read below keeps flow control.
             await self._channel.write(build_direct_write_data_command(chunk, max_data_len=chunk_size), response=False)
-            ack = await self._channel.read(self.TIMEOUT_ACK)
+            ack = await self._channel.read(self._timeouts.TIMEOUT_ACK)
             nack = parse_nack(ack)
             if nack is not None:
                 opcode, err = nack
@@ -533,7 +550,7 @@ class Uploader:
         )
         await self._channel.write(start_pkt)
         try:
-            response = await self._channel.read(self.TIMEOUT_ACK)
+            response = await self._channel.read(self._timeouts.TIMEOUT_ACK)
             nack = parse_nack(response)
             if nack is not None:
                 opcode, err = nack
@@ -557,7 +574,7 @@ class Uploader:
             return "fallback_full"
 
         await self._channel.write(build_direct_write_end_command(RefreshMode.PARTIAL.value))
-        response = await self._channel.read(self.TIMEOUT_ACK)
+        response = await self._channel.read(self._timeouts.TIMEOUT_ACK)
         validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
         await self.await_refresh_complete()
 
@@ -627,7 +644,7 @@ class Uploader:
         await self._channel.write(start_cmd)
 
         # 2. Wait for START ACK — firmware initializes display hardware here, which can be slow
-        response = await self._channel.read(self.TIMEOUT_FIRST_CHUNK)
+        response = await self._channel.read(self._timeouts.TIMEOUT_FIRST_CHUNK)
         try:
             validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
         except InvalidResponseError:
@@ -652,7 +669,7 @@ class Uploader:
             use_compression = False
             start_cmd = build_direct_write_start_uncompressed()
             await self._channel.write(start_cmd)
-            response = await self._channel.read(self.TIMEOUT_FIRST_CHUNK)
+            response = await self._channel.read(self._timeouts.TIMEOUT_FIRST_CHUNK)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
 
         # 3. Send data chunks: whatever the compressed START could not carry, or
@@ -673,7 +690,11 @@ class Uploader:
 
             # END triggers the SPI write and/or refresh on device before the ACK is sent.
             # Both paths can block up to ~60s on slow displays (Spectra/ACeP).
-            end_ack_timeout = self.TIMEOUT_COMPRESSED_END_ACK if use_compression else self.TIMEOUT_UNCOMPRESSED_END_ACK
+            end_ack_timeout = (
+                self._timeouts.TIMEOUT_COMPRESSED_END_ACK
+                if use_compression
+                else self._timeouts.TIMEOUT_UNCOMPRESSED_END_ACK
+            )
             response = await self._channel.read(end_ack_timeout)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
         await self.await_refresh_complete()
@@ -690,7 +711,7 @@ class Uploader:
             ProtocolError: If any other frame arrives instead
         """
         _LOGGER.debug("Display refresh started, waiting for completion...")
-        response = await self._channel.read(self.TIMEOUT_REFRESH)
+        response = await self._channel.read(self._timeouts.TIMEOUT_REFRESH)
         command, _ = check_response_type(response)
         if command == CommandCode.DIRECT_WRITE_REFRESH_TIMEOUT:
             raise RefreshTimeoutError("Display refresh timed out (device sent 0x74)")
@@ -738,7 +759,7 @@ class Uploader:
             if progress_callback is not None:
                 progress_callback(bytes_sent, len(image_data))
 
-            response = await self._channel.read(self.TIMEOUT_DIRECT_WRITE_DATA_ACK)
+            response = await self._channel.read(self._timeouts.TIMEOUT_DIRECT_WRITE_DATA_ACK)
             command, _ = check_response_type(response)
 
             if command == CommandCode.DIRECT_WRITE_END:
@@ -951,7 +972,11 @@ class Uploader:
             # An etag-less partial END would make firmware commit displayed_etag=0
             # on a successful refresh, silently desyncing the client PartialState.
             raise ProtocolError("PIPE_WRITE partial transfer requires a new_etag for the END commit")
-        chunk_timeout = self.TIMEOUT_PIPE_DATA_COMPRESSED if params.compressed else self.TIMEOUT_PIPE_DATA_UNCOMPRESSED
+        chunk_timeout = (
+            self._timeouts.TIMEOUT_PIPE_DATA_COMPRESSED
+            if params.compressed
+            else self._timeouts.TIMEOUT_PIPE_DATA_UNCOMPRESSED
+        )
 
         auto_completed = await self.send_pipe_chunks(chunks, params, chunk_timeout, progress_callback)
         # Uncompressed full-frame transfers ALWAYS auto-complete (firmware
@@ -1060,7 +1085,7 @@ class Uploader:
                 and 0 < n - window_base < params.ack_every
                 and not (acked and max(acked) >= window_base)  # no known holes
             )
-            read_timeout = self.TIMEOUT_PIPE_TAIL_FLUSH if tail_flush else chunk_timeout
+            read_timeout = self._timeouts.TIMEOUT_PIPE_TAIL_FLUSH if tail_flush else chunk_timeout
             try:
                 resp = await self._channel.read(read_timeout)
             except OpenDisplayTimeoutError:
@@ -1175,7 +1200,11 @@ class Uploader:
         end_cmd = build_pipe_write_end_command(refresh_mode.value, new_etag)
         await self._channel.write_stream_frame(end_cmd, response=True)
 
-        end_timeout = self.TIMEOUT_COMPRESSED_END_ACK if params.compressed else self.TIMEOUT_UNCOMPRESSED_END_ACK
+        end_timeout = (
+            self._timeouts.TIMEOUT_COMPRESSED_END_ACK
+            if params.compressed
+            else self._timeouts.TIMEOUT_UNCOMPRESSED_END_ACK
+        )
         stray_acks = 0
         while True:
             resp = await self._channel.read(end_timeout)

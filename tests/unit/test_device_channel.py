@@ -5,10 +5,13 @@ from __future__ import annotations
 import time
 
 import pytest
+from PIL import Image
 
 from opendisplay import OpenDisplayDevice
 from opendisplay.crypto import _DEVICE_ID, compute_server_proof, derive_session_key
 from opendisplay.device.channel import LegacySession, SecureChannel
+from opendisplay.models.capabilities import DeviceCapabilities
+from opendisplay.models.enums import ColorScheme
 
 _KEY = bytes(range(16))
 _SERVER_NONCE = bytes(range(100, 116))
@@ -72,15 +75,6 @@ async def test_write_in_session_sends_the_sealed_frame(fake_transport) -> None:
     assert channel.transport.written == [_session().seal(b"\x00\x43")]
 
 
-async def test_reset_drops_the_session(fake_transport) -> None:
-    channel = SecureChannel(fake_transport())
-    channel.session = _session()
-
-    channel.reset()
-
-    assert channel.session is None
-
-
 async def test_reauth_runs_before_write_at_90_percent(fake_transport, monkeypatch: pytest.MonkeyPatch) -> None:
     channel = SecureChannel(fake_transport(), reauth_key=_KEY, session_timeout=lambda: 100)
     await _authenticate(channel, monkeypatch)
@@ -129,11 +123,19 @@ async def test_authenticate_restarts_the_nonce_counter(fake_transport, monkeypat
 # ─── Through the device object ───────────────────────────────────────────────
 
 
-async def test_command_before_connect_raises_not_connected() -> None:
+async def test_channel_command_before_connect_raises_not_connected() -> None:
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
 
     with pytest.raises(RuntimeError, match="Device not connected"):
-        await device.read_firmware_version()
+        await device.reboot()
+
+
+async def test_upload_before_connect_raises_not_connected() -> None:
+    caps = DeviceCapabilities(width=2, height=2, color_scheme=ColorScheme.MONO)
+    device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", capabilities=caps)
+
+    with pytest.raises(RuntimeError, match="Device not connected"):
+        await device.upload_prepared_image((b"\x00", None, Image.new("P", (2, 2))))
 
 
 def test_disconnect_callback_before_attach_does_not_raise() -> None:

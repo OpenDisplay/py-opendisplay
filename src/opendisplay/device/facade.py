@@ -382,12 +382,20 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             reauth_key=self._encryption_key,
             session_timeout=self._session_timeout_seconds,
         )
+        previous = self._attached_uploader
         self._attached_uploader = Uploader(
             self._attached_channel,
             target=self._upload_target,
             blocks_per_ack=self._blocks_per_ack,
             max_queue_size=self._max_queue_size,
+            timeouts=self,
         )
+        if previous is not None:
+            # What an earlier connection learned about PIPE_WRITE is dropped only by the
+            # disconnect callback (_on_disconnect), not by connecting again.
+            self._attached_uploader.pipe_probed = previous.pipe_probed
+            self._attached_uploader.pipe_supported = previous.pipe_supported
+            self._attached_uploader.pipe_partial_supported = previous.pipe_partial_supported
 
     @property
     def _channel(self) -> SecureChannel:
