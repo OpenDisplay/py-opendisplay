@@ -21,6 +21,7 @@ class CommandCode(IntEnum):
     # Firmware commands
     READ_FW_VERSION = 0x0043  # Read firmware version
     READ_MSD = 0x0044  # Read the 16-byte manufacturer-specific data record
+    READ_IDENT = 0x0046  # Read device identity (plaintext; 3.0 adds a tail)
     REBOOT = 0x000F  # Reboot device
 
     # Authentication command (firmware with encryption support)
@@ -122,6 +123,15 @@ def build_read_config_command() -> bytes:
         Command bytes: 0x0040 (2 bytes, big-endian)
     """
     return CommandCode.READ_CONFIG.to_bytes(2, byteorder="big")
+
+
+def build_read_ident_command() -> bytes:
+    """Build command to read the device identity.
+
+    Returns:
+        Command bytes: 0x0046 (2 bytes, big-endian)
+    """
+    return CommandCode.READ_IDENT.to_bytes(2, byteorder="big")
 
 
 def build_read_fw_version_command() -> bytes:

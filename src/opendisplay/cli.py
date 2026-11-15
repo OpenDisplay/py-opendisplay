@@ -30,14 +30,21 @@ from .exceptions import (
     AuthenticationRequiredError,
     BLEConnectionError,
     BLETimeoutError,
+    IdentNotSupportedError,
+    NoStoredConfigError,
     OpenDisplayError,
 )
+from .models.capabilities import DeviceCapabilities
 from .models.enums import (
     CapacityEstimator,
+    ColorScheme,
     FitMode,
+    ICType,
     RefreshMode,
     Rotation,
 )
+from .models.firmware import FirmwareVersion
+from .models.ident import DeviceIdent
 from .partial import PartialState
 from .sensors import SensorReading
 
@@ -323,27 +330,84 @@ async def _read_sensors(device: OpenDisplayDevice, progress: Progress, task: Tas
     return {reading.instance_number: reading for reading in readings}
 
 
+async def _read_ident(device: OpenDisplayDevice, fw: FirmwareVersion) -> DeviceIdent | None:
+    """Read the device identity where the firmware can have it.
+
+    Firmware 3.0 answers READ_IDENT, and so do config-driven EFR32BG22 builds before it.
+    Other 2.x firmware stays silent on the command, so it is not asked and costs no timeout.
+    """
+    ic_type = device.config.system.ic_type if device.config and device.config.system else None
+    if fw["major"] < 3 and ic_type != ICType.EFR32BG22:
+        return None
+    try:
+        return await device.read_ident()
+    except IdentNotSupportedError:
+        return None
+
+
+async def _info_with_config(device_kwargs: dict[str, Any]) -> _InfoContext:
+    """Gather the full report from a device that has a config."""
+    with _spinner() as progress:
+        task = progress.add_task("Connecting...", total=None)
+        async with OpenDisplayDevice(**device_kwargs) as device:
+            progress.update(task, description="Reading info...")
+            fw = await device.read_firmware_version()
+            config = device.config
+            display = config.displays[0] if config and config.displays else None
+            return _InfoContext(
+                mac=device.mac_address,
+                device_name=device.device_name,
+                fw=fw,
+                config=config,
+                width=device.width,
+                height=device.height,
+                color_scheme_name=device.color_scheme.name,
+                rotation=display.rotation_enum if display else device.rotation,
+                board_type_name=device.get_board_type_name() if config else None,
+                sensor_readings=await _read_sensors(device, progress, task),
+                ident=await _read_ident(device, fw),
+            )
+
+
+async def _info_without_config(device_kwargs: dict[str, Any]) -> _InfoContext:
+    """Gather what a device with no stored config can still say: firmware and identity.
+
+    Connects with placeholder capabilities so the device object does not try to read the
+    config again. Display size and colours come from the identity's first display record
+    when the firmware reports one (devices with factory data do), otherwise they are left out.
+    """
+    placeholder = DeviceCapabilities(width=0, height=0, color_scheme=ColorScheme.MONO)
+    async with OpenDisplayDevice(**device_kwargs, capabilities=placeholder) as device:
+        fw = await device.read_firmware_version()
+        ident = await _read_ident(device, fw)
+        record = ident.displays[0] if ident and ident.displays else None
+        try:
+            scheme_name = ColorScheme.from_value(record.color_scheme).name if record else ""
+        except ValueError:
+            scheme_name = ""
+        return _InfoContext(
+            mac=device.mac_address,
+            device_name=device.device_name,
+            fw=fw,
+            config=None,
+            width=record.pixel_width if record else 0,
+            height=record.pixel_height if record else 0,
+            color_scheme_name=scheme_name,
+            rotation=0,
+            board_type_name=None,
+            ident=ident,
+        )
+
+
 async def _info(device_kwargs: dict[str, Any], output_json: bool) -> None:
     try:
-        with _spinner() as progress:
-            task = progress.add_task("Connecting...", total=None)
-            async with OpenDisplayDevice(**device_kwargs) as device:
-                progress.update(task, description="Reading info...")
-                fw = await device.read_firmware_version()
-                config = device.config
-                display = config.displays[0] if config and config.displays else None
-                ctx = _InfoContext(
-                    mac=device.mac_address,
-                    device_name=device.device_name,
-                    fw=fw,
-                    config=config,
-                    width=device.width,
-                    height=device.height,
-                    color_scheme_name=device.color_scheme.name,
-                    rotation=display.rotation_enum if display else device.rotation,
-                    board_type_name=device.get_board_type_name() if config else None,
-                    sensor_readings=await _read_sensors(device, progress, task),
-                )
+        ctx = await _info_with_config(device_kwargs)
+    except NoStoredConfigError:
+        _console.print("[yellow]The device has no stored configuration; showing firmware and identity only.[/yellow]")
+        try:
+            ctx = await _info_without_config(device_kwargs)
+        except OpenDisplayError as exc:
+            _handle_ble_error(exc)
     except OpenDisplayError as exc:
         _handle_ble_error(exc)
 

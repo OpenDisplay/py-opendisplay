@@ -67,6 +67,19 @@ class ConfigParseError(ProtocolError):
     pass
 
 
+class NoStoredConfigError(ProtocolError):
+    """The device has no configuration stored (READ_CONFIG answered with an error frame).
+
+    Normal for a freshly flashed device, and for firmware 3.0 after an install that erased
+    the config: the device is reachable but cannot drive a display until a config is written.
+    """
+
+    def __init__(
+        self, message: str = "Device has no stored configuration (READ_CONFIG returned an error frame)"
+    ) -> None:
+        super().__init__(message)
+
+
 class TruncatedConfigError(ConfigParseError):
     """Device stopped sending config chunks before the advertised length.
 
@@ -144,6 +157,20 @@ class NfcWriteError(ProtocolError):
     def __init__(self, message: str, error_code: int | None = None) -> None:
         super().__init__(message)
         self.error_code = error_code
+
+
+class IdentNotSupportedError(ProtocolError):
+    """Device does not implement READ_IDENT (0x0046).
+
+    Firmware before 3.0 (EFR32BG22 before 2.3) does not know the command. Depending on the
+    build it stays silent, answers with the 3-byte "session required" frame, or sends a NACK.
+    """
+
+    def __init__(
+        self,
+        message: str = "Device does not answer READ_IDENT (firmware before 3.0 does not implement it)",
+    ) -> None:
+        super().__init__(message)
 
 
 class NfcNotSupportedError(ProtocolError):

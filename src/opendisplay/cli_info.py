@@ -26,6 +26,7 @@ from .models.enums import (
     WifiEncryption,
 )
 from .models.firmware import FirmwareVersion
+from .models.ident import DeviceIdent, FirmwareTarget
 from .sensors import SensorReading
 
 _COLOR_SCHEME_STYLES: dict[str, str] = {"R": "red", "Y": "yellow", "G": "green"}
@@ -119,6 +120,8 @@ class _InfoContext:
     board_type_name: str | None
     # Live sensor values by instance number; empty when none could be read.
     sensor_readings: dict[int, SensorReading] = field(default_factory=dict)
+    # READ_IDENT answer; None when the firmware predates the command or it was not asked.
+    ident: DeviceIdent | None = None
 
     @property
     def display(self) -> Any:
@@ -327,6 +330,22 @@ def _has_security(ctx: _InfoContext) -> bool:
     return bool(ctx.config and ctx.config.security_config)
 
 
+def _yes_no(value: Any) -> str:
+    return "yes" if value else "no"
+
+
+def _fw_target_label(ctx: _InfoContext) -> str | None:
+    if ctx.ident is None:
+        return None
+    target = ctx.ident.fw_target
+    return target.name if isinstance(target, FirmwareTarget) else f"unknown (0x{target:02x})"
+
+
+def _ident_attr(name: str) -> Callable[[_InfoContext], Any]:
+    """Extractor for one attribute of the identity, None when no identity was read."""
+    return lambda ctx: getattr(ctx.ident, name) if ctx.ident else None
+
+
 def _has_identity(ctx: _InfoContext) -> bool:
     extended = ctx.config.data_extended if ctx.config else None
     if extended is None:
@@ -362,6 +381,9 @@ _INFO_SECTIONS: tuple[_Section, ...] = (
     _Section(
         title="Display",
         key="display",
+        # A device with no config (and no display record in its identity) has nothing to show here.
+        available=lambda c: c.config is not None or c.width > 0,
+        json_nullable=True,
         fields=(
             _Field(
                 "Resolution",
@@ -484,6 +506,21 @@ _INFO_SECTIONS: tuple[_Section, ...] = (
             ),
             _Field("Server", "server", _wifi_server),
             _Field("Encryption", "encryption", _wifi_encryption),
+        ),
+    ),
+    _Section(
+        title="Protocol",
+        key="ident",
+        available=lambda c: c.ident is not None,
+        json_nullable=True,
+        fields=(
+            _Field("Target", "fw_target", _fw_target_label),
+            _Field("Protocol minor", "proto_minor", _ident_attr("proto_minor")),
+            _Field("Config-driven", "config_driven", _ident_attr("config_driven"), _yes_no),
+            _Field("Needs migration", "needs_migration", _ident_attr("needs_migration"), _yes_no),
+            _Field("Built-in driver", "builtin_driver", _ident_attr("builtin_driver"), _yes_no),
+            _Field("Max config", "max_config", _ident_attr("max_config"), lambda v: f"{v} bytes"),
+            _Field("Max sequence steps", "max_seq_steps", _ident_attr("max_seq_steps")),
         ),
     ),
     _Section(
