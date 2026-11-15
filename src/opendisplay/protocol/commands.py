@@ -473,7 +473,7 @@ def build_pipe_write_data_command(seq: int, chunk: bytes) -> bytes:
         - seq  = chunk index mod 256, reset to 0 by each 0x0080
         - data = chunk bytes (<= frame_eff - PIPE_FRAME_OVERHEAD)
 
-    When a session is active the frame is encrypted downstream (device._encrypt_frame):
+    When a session is active the frame is encrypted downstream (LegacySession.seal):
     the standard CCM envelope wraps ``[seq][data]`` as the plaintext payload, so seq
     remains the first authenticated plaintext byte.
 

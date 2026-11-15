@@ -847,7 +847,7 @@ class Uploader:
 
         Sends an extended PIPE_WRITE_START (flags bit1 + 12-byte geometry) and
         interprets the response per Part 1 §1.2. A partial 0x0080 is a valid pipe
-        probe, so this also updates ``_pipe_probed`` / ``_pipe_supported``.
+        probe, so this also updates ``pipe_probed`` / ``pipe_supported``.
 
         Returns:
             PipeParams(partial=True) on an ACK confirming partial (flags bit1),

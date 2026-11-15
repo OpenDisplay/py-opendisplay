@@ -1,5 +1,5 @@
-"""Main OpenDisplay BLE device class."""
-# pylint: disable=too-many-lines,too-many-public-methods
+"""OpenDisplayDevice: connect, interrogate, commands and config. Uploads and sessions are delegated."""
+# pylint: disable=too-many-public-methods
 
 from __future__ import annotations
 
@@ -1404,7 +1404,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         # Skip compression in _prepare_image when the device can't use it (wasted
         # CPU), and when a partial upload may succeed: full-frame compression is
-        # pure waste if the partial path handles the update. _dispatch_upload
+        # pure waste if the partial path handles the update. dispatch_upload
         # compresses lazily on the full-upload fallback.
         prepare_compress = compress and self._uploader.supports_compression and state is None
 
