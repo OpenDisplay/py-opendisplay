@@ -9,8 +9,11 @@ from ..exceptions import (
     AuthenticationFailedError,
     AuthenticationRequiredError,
     AuthenticationSessionExistsError,
+    ConfigWriteBusyError,
     InvalidResponseError,
+    NeedsMigrationError,
     NfcWriteError,
+    PanelBusyError,
 )
 from ..models.firmware import FirmwareVersion
 from .commands import RESPONSE_HIGH_BIT_FLAG, CommandCode
@@ -351,6 +354,54 @@ def parse_firmware_version(data: bytes) -> FirmwareVersion:
         "sha": sha,
         "patch": patch,
     }
+
+
+# Upload START refusals that carry a reason (firmware 3.0, opendisplay_protocol.h section 4h).
+# The same two values are free in the DIRECT_WRITE, partial and PIPE START error sets.
+UPLOAD_START_NACK_NEEDS_MIGRATION = 0x08
+UPLOAD_START_NACK_PANEL_BUSY = 0x09
+# Config write refusal (section 4g): nothing was stored, a display pass was reading the config.
+CONFIG_WRITE_NACK_BUSY = 0x01
+
+_UPLOAD_START_OPCODES = (
+    CommandCode.DIRECT_WRITE_START & 0xFF,
+    CommandCode.DIRECT_WRITE_PARTIAL_START & 0xFF,
+    CommandCode.PIPE_WRITE_START & 0xFF,
+)
+
+
+def raise_for_upload_start_refusal(opcode: int, err: int) -> None:
+    """Raise the typed error for an upload START refusal that names its reason.
+
+    Args:
+        opcode: Low byte of the refused START (0x70, 0x76 or 0x80)
+        err: Error byte of the NACK
+
+    Raises:
+        NeedsMigrationError: err 0x08
+        PanelBusyError: err 0x09 (PIPE never sends it: it ACKs before the panel comes up)
+
+    Any other combination returns, so the caller's existing handling applies.
+    """
+    if opcode not in _UPLOAD_START_OPCODES:
+        return
+    if err == UPLOAD_START_NACK_NEEDS_MIGRATION:
+        raise NeedsMigrationError()
+    if err == UPLOAD_START_NACK_PANEL_BUSY and opcode != CommandCode.PIPE_WRITE_START & 0xFF:
+        raise PanelBusyError()
+
+
+def raise_for_config_write_refusal(response: bytes) -> None:
+    """Raise ConfigWriteBusyError for ``[FF][41|42][01][00]``; return for anything else."""
+    opcodes = (CommandCode.WRITE_CONFIG & 0xFF, CommandCode.WRITE_CONFIG_CHUNK & 0xFF)
+    if (
+        len(response) == 4
+        and response[0] == 0xFF
+        and response[1] in opcodes
+        and response[2] == CONFIG_WRITE_NACK_BUSY
+        and response[3] == 0x00
+    ):
+        raise ConfigWriteBusyError()
 
 
 MSD_LENGTH = 16  # company_id:2 + dynamic:11 + chip_temp:1 + battery_low:1 + status:1
