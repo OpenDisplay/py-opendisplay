@@ -14,7 +14,7 @@ import pytest
 from PIL import Image
 
 from opendisplay import OpenDisplayDevice
-from opendisplay.device.facade import _PipePartialEtagMismatch, _PipePartialRejected
+from opendisplay.device.upload import _PipePartialEtagMismatch, _PipePartialRejected
 from opendisplay.exceptions import BLETimeoutError, InvalidResponseError
 from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.config import (
@@ -469,7 +469,7 @@ def test_classify_pipe_frame(frame: bytes, expected: str) -> None:
 @pytest.mark.asyncio
 async def test_negotiate_min_rule() -> None:
     dev, conn = make_device([start_ack(dw=32, da=32, df=244, flags=0x01)], blocks_per_ack=8, max_queue_size=16)
-    params = await dev._negotiate_pipe(compressed=True, total_size=100)
+    params = await dev._uploader.negotiate_pipe(compressed=True, total_size=100)
     assert params == PipeParams(window=16, ack_every=8, max_frame=244, selective=True, compressed=True)
     # 0x0080 sent with the requested params. The START wait is a normal command
     # timeout (attempts are config-gated), sized for ESP32's ACK-after-bring-up
@@ -481,7 +481,7 @@ async def test_negotiate_min_rule() -> None:
 @pytest.mark.asyncio
 async def test_negotiate_window_clamped_to_32() -> None:
     dev, _ = make_device([start_ack(dw=64, da=64, df=244)], blocks_per_ack=64, max_queue_size=64)
-    params = await dev._negotiate_pipe(compressed=False, total_size=10)
+    params = await dev._uploader.negotiate_pipe(compressed=False, total_size=10)
     assert params is not None
     assert params.window == 32  # hard cap
     assert params.ack_every == 32  # min(req, dev, W)
@@ -490,7 +490,7 @@ async def test_negotiate_window_clamped_to_32() -> None:
 @pytest.mark.asyncio
 async def test_negotiate_ack_every_clamped_to_window() -> None:
     dev, _ = make_device([start_ack(dw=4, da=32, df=244)], blocks_per_ack=32, max_queue_size=16)
-    params = await dev._negotiate_pipe(compressed=False, total_size=10)
+    params = await dev._uploader.negotiate_pipe(compressed=False, total_size=10)
     assert params is not None
     assert params.window == 4
     assert params.ack_every == 4  # N clamped to W
@@ -501,7 +501,7 @@ async def test_negotiate_floor_one() -> None:
     dev, _ = make_device([start_ack(dw=0, da=0, df=244)], blocks_per_ack=1, max_queue_size=1)
     # max_queue_size=1 disables pipe entirely, so call with a device that allows it:
     dev2, _ = make_device([start_ack(dw=0, da=0, df=244)], blocks_per_ack=1, max_queue_size=2)
-    params = await dev2._negotiate_pipe(compressed=False, total_size=10)
+    params = await dev2._uploader.negotiate_pipe(compressed=False, total_size=10)
     assert params is not None
     assert params.window == 1
     assert params.ack_every == 1
@@ -510,7 +510,7 @@ async def test_negotiate_floor_one() -> None:
 @pytest.mark.asyncio
 async def test_negotiate_frame_min() -> None:
     dev, _ = make_device([start_ack(dw=32, da=32, df=180)], max_queue_size=16)
-    params = await dev._negotiate_pipe(compressed=False, total_size=10)
+    params = await dev._uploader.negotiate_pipe(compressed=False, total_size=10)
     assert params is not None
     assert params.max_frame == min(DEFAULT_MAX_FRAME, 180)
 
@@ -518,20 +518,20 @@ async def test_negotiate_frame_min() -> None:
 @pytest.mark.asyncio
 async def test_negotiate_silence_returns_none() -> None:
     dev, conn = make_device([BLETimeoutError], max_queue_size=16)
-    params = await dev._negotiate_pipe(compressed=True, total_size=10)
+    params = await dev._uploader.negotiate_pipe(compressed=True, total_size=10)
     assert params is None
 
 
 @pytest.mark.asyncio
 async def test_negotiate_nack_bad_params_returns_none() -> None:
     dev, _ = make_device([start_nack(0x01)], max_queue_size=16)
-    assert await dev._negotiate_pipe(compressed=True, total_size=10) is None
+    assert await dev._uploader.negotiate_pipe(compressed=True, total_size=10) is None
 
 
 @pytest.mark.asyncio
 async def test_negotiate_nack_compression_retries_uncompressed() -> None:
     dev, conn = make_device([start_nack(0x02), start_ack(flags=0x01)], max_queue_size=16)
-    params = await dev._negotiate_pipe(compressed=True, total_size=10)
+    params = await dev._uploader.negotiate_pipe(compressed=True, total_size=10)
     assert params is not None
     assert params.compressed is False
     # Two 0x0080 writes: first compressed, second uncompressed (flags=0).
@@ -545,7 +545,7 @@ async def test_negotiate_nack_compression_retries_uncompressed() -> None:
 async def test_negotiate_nack_compression_no_double_retry() -> None:
     # Second attempt also NACKs 0x02 → give up (no infinite recursion).
     dev, conn = make_device([start_nack(0x02), start_nack(0x02)], max_queue_size=16)
-    assert await dev._negotiate_pipe(compressed=True, total_size=10) is None
+    assert await dev._uploader.negotiate_pipe(compressed=True, total_size=10) is None
     assert len([w for w in conn.written if w[:2] == b"\x00\x80"]) == 2
 
 
@@ -555,7 +555,7 @@ async def test_negotiate_nack_compression_no_double_retry() -> None:
 @pytest.mark.asyncio
 async def test_negotiate_partial_ack_bit1_returns_partial_params() -> None:
     dev, conn = make_device([start_ack(flags=0x03)], blocks_per_ack=8, max_queue_size=16)
-    params = await dev._negotiate_pipe_partial(
+    params = await dev._uploader.negotiate_pipe_partial(
         compressed=False, total_size=16, old_etag=0x01020304, region=make_region()
     )
     assert params == PipeParams(window=16, ack_every=8, max_frame=244, selective=True, compressed=False, partial=True)
@@ -565,66 +565,72 @@ async def test_negotiate_partial_ack_bit1_returns_partial_params() -> None:
     assert start[3] & PIPE_FLAG_PARTIAL
     assert len(start) == 24
     # A valid ACK is a valid pipe probe.
-    assert dev._pipe_probed is True
-    assert dev._pipe_supported is True
-    assert dev._pipe_partial_supported is True
+    assert dev._uploader.pipe_probed is True
+    assert dev._uploader.pipe_supported is True
+    assert dev._uploader.pipe_partial_supported is True
 
 
 @pytest.mark.asyncio
 async def test_negotiate_partial_ack_bit1_clear_caches_negative() -> None:
     # Device ACKs pipe write but does NOT set the partial bit → unsupported.
     dev, conn = make_device([start_ack(flags=0x01)], max_queue_size=16)
-    params = await dev._negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
+    params = await dev._uploader.negotiate_pipe_partial(
+        compressed=False, total_size=16, old_etag=0x1, region=make_region()
+    )
     assert params is None
-    assert dev._pipe_supported is True  # pipe write itself works
-    assert dev._pipe_partial_supported is False
+    assert dev._uploader.pipe_supported is True  # pipe write itself works
+    assert dev._uploader.pipe_partial_supported is False
 
 
 @pytest.mark.asyncio
 async def test_negotiate_partial_nack_etag_mismatch_raises() -> None:
     dev, _ = make_device([start_nack(0x05)], max_queue_size=16)
     with pytest.raises(_PipePartialEtagMismatch):
-        await dev._negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
+        await dev._uploader.negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
 
 
 @pytest.mark.asyncio
 async def test_negotiate_partial_nack_unsupported_raises_and_caches() -> None:
     dev, _ = make_device([start_nack(0x06)], max_queue_size=16)
     with pytest.raises(_PipePartialRejected):
-        await dev._negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
-    assert dev._pipe_partial_supported is False  # 0x06 caches negative
+        await dev._uploader.negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
+    assert dev._uploader.pipe_partial_supported is False  # 0x06 caches negative
 
 
 @pytest.mark.asyncio
 async def test_negotiate_partial_nack_rect_invalid_raises_no_cache() -> None:
     dev, _ = make_device([start_nack(0x07)], max_queue_size=16)
     with pytest.raises(_PipePartialRejected):
-        await dev._negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
+        await dev._uploader.negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
     # Rect-invalid is per-request, not a capability signal → no negative cache.
-    assert dev._pipe_partial_supported is None
+    assert dev._uploader.pipe_partial_supported is None
 
 
 @pytest.mark.asyncio
 async def test_negotiate_partial_compressed_02_retries_uncompressed_then_caches() -> None:
     # Compressed partial → 0x02 → retry uncompressed-still-partial → 0x02 → give up.
     dev, conn = make_device([start_nack(0x02), start_nack(0x02)], max_queue_size=16)
-    params = await dev._negotiate_pipe_partial(compressed=True, total_size=16, old_etag=0x1, region=make_region())
+    params = await dev._uploader.negotiate_pipe_partial(
+        compressed=True, total_size=16, old_etag=0x1, region=make_region()
+    )
     assert params is None
     starts = [w for w in conn.written if w[:2] == b"\x00\x80"]
     assert len(starts) == 2
     # Both retained the partial flag; the retry dropped only the compressed bit.
     assert starts[0][3] == PIPE_FLAG_COMPRESSED | PIPE_FLAG_PARTIAL  # 0x03
     assert starts[1][3] == PIPE_FLAG_PARTIAL  # 0x02
-    assert dev._pipe_partial_supported is False
+    assert dev._uploader.pipe_partial_supported is False
 
 
 @pytest.mark.asyncio
 async def test_negotiate_partial_silence_returns_none() -> None:
     dev, _ = make_device([BLETimeoutError], max_queue_size=16)
-    params = await dev._negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
+    params = await dev._uploader.negotiate_pipe_partial(
+        compressed=False, total_size=16, old_etag=0x1, region=make_region()
+    )
     assert params is None
-    assert dev._pipe_probed is True
-    assert dev._pipe_supported is False
+    assert dev._uploader.pipe_probed is True
+    assert dev._uploader.pipe_supported is False
 
 
 # ─── Routing / probe-cache via _execute_upload ───────────────────────────────
@@ -637,7 +643,7 @@ async def test_max_queue_size_one_skips_probe() -> None:
         [b"\x00\x70", b"\x00\x71", b"\x00\x72", REFRESH_COMPLETE],
         max_queue_size=1,
     )
-    await dev._execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False)
+    await dev._uploader.execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False)
     assert conn.written[0][:2] == b"\x00\x70"  # no probe first
     assert all(w[:2] != b"\x00\x80" for w in conn.written)
 
@@ -654,11 +660,11 @@ async def test_silence_falls_back_to_legacy_and_caches() -> None:
         ],
         max_queue_size=16,
     )
-    await dev._execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False)
+    await dev._uploader.execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False)
     assert conn.written[0][:2] == b"\x00\x80"  # probed once
     assert conn.written[1][:2] == b"\x00\x70"  # then legacy
-    assert dev._pipe_probed is True
-    assert dev._pipe_supported is False
+    assert dev._uploader.pipe_probed is True
+    assert dev._uploader.pipe_supported is False
 
 
 @pytest.mark.asyncio
@@ -678,9 +684,9 @@ async def test_probe_cache_skips_second_probe() -> None:
         ],
         max_queue_size=16,
     )
-    await dev._execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False)
+    await dev._uploader.execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False)
     n_probes_1 = len([w for w in conn.written if w[:2] == b"\x00\x80"])
-    await dev._execute_upload(b"EFGH", RefreshMode.FULL, use_compression=False)
+    await dev._uploader.execute_upload(b"EFGH", RefreshMode.FULL, use_compression=False)
     n_probes_2 = len([w for w in conn.written if w[:2] == b"\x00\x80"])
     assert n_probes_1 == 1
     assert n_probes_2 == 1  # no additional probe on the second upload
@@ -689,13 +695,13 @@ async def test_probe_cache_skips_second_probe() -> None:
 @pytest.mark.asyncio
 async def test_disconnect_resets_pipe_cache() -> None:
     dev, _ = make_device([], max_queue_size=16)
-    dev._pipe_probed = True
-    dev._pipe_supported = False
-    dev._pipe_partial_supported = False
+    dev._uploader.pipe_probed = True
+    dev._uploader.pipe_supported = False
+    dev._uploader.pipe_partial_supported = False
     dev._on_disconnect()
-    assert dev._pipe_probed is False
-    assert dev._pipe_supported is False
-    assert dev._pipe_partial_supported is None
+    assert dev._uploader.pipe_probed is False
+    assert dev._uploader.pipe_supported is False
+    assert dev._uploader.pipe_partial_supported is None
 
 
 def test_supports_pipe_write_bit() -> None:
@@ -717,7 +723,7 @@ async def test_execute_upload_uncompressed_pipe_auto_completes_end_to_end() -> N
         [start_ack(), data_ack({0}), END_ACK, REFRESH_COMPLETE],
         max_queue_size=16,
     )
-    committed = await dev._execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False, new_etag=0x1234)
+    committed = await dev._uploader.execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False, new_etag=0x1234)
     assert committed is False  # etag never committed on auto-complete
     assert any(w[:2] == b"\x00\x81" for w in conn.written)  # data went via pipe frames
     assert all(w[:2] != b"\x00\x82" for w in conn.written)  # no spurious END
@@ -735,10 +741,10 @@ async def test_execute_upload_skips_pipe_without_config_bit() -> None:
         max_queue_size=16,
         transmission_modes=0x02,  # zip only — pipe bit clear
     )
-    await dev._execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False)
+    await dev._uploader.execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False)
     assert all(w[:2] != b"\x00\x80" for w in conn.written)  # never probed
     assert conn.written[0] == b"\x00\x70"  # legacy START
-    assert not dev._pipe_probed  # gate skipped before any probe caching
+    assert not dev._uploader.pipe_probed  # gate skipped before any probe caching
 
 
 @pytest.mark.asyncio
@@ -748,7 +754,7 @@ async def test_legacy_uncompressed_flow_byte_identical() -> None:
         [b"\x00\x70", b"\x00\x71", b"\x00\x72", REFRESH_COMPLETE],
         max_queue_size=1,
     )
-    await dev._execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False)
+    await dev._uploader.execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False)
     assert conn.written == [
         b"\x00\x70",  # START (uncompressed)
         b"\x00\x71ABCD",  # single DATA chunk

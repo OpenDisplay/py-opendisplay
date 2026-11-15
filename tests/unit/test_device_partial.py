@@ -123,7 +123,7 @@ def test_no_change_image_skips_transfer(monkeypatch):
 
     monkeypatch.setattr(device._channel, "write", fail_write)
 
-    outcome = asyncio.run(device._maybe_upload_partial(_image(), state, None))
+    outcome = asyncio.run(device._uploader.maybe_upload_partial(_image(), state, None))
 
     assert outcome == "no_change"
     assert state.etag == 0x01020304
@@ -147,7 +147,7 @@ def test_valid_partial_never_sends_0x70_and_uses_uncompressed_0x76(monkeypatch):
     monkeypatch.setattr(device._channel, "write", capture_write)
     monkeypatch.setattr(device._channel, "read", read_response)
 
-    outcome = asyncio.run(device._maybe_upload_partial(new, state, None))
+    outcome = asyncio.run(device._uploader.maybe_upload_partial(new, state, None))
 
     opcodes = [int.from_bytes(w[:2], "big") for w in writes]
     assert outcome == "success"
@@ -171,7 +171,7 @@ def test_empty_state_falls_back_to_full(monkeypatch):
         refresh_modes.append(refresh_mode)
         return True  # etag committed (END-with-etag sent)
 
-    monkeypatch.setattr(device, "_execute_upload", execute_upload)
+    monkeypatch.setattr(device._uploader, "execute_upload", execute_upload)
 
     asyncio.run(
         device.upload_prepared_image((b"\x00" * 16, None, _image()), refresh_mode=RefreshMode.PARTIAL, state=state)
@@ -192,7 +192,7 @@ def test_auto_completed_full_upload_does_not_commit_etag(monkeypatch):
     async def execute_upload(image_data, refresh_mode, **kwargs) -> bool:
         return False  # firmware auto-completed; etag not committed
 
-    monkeypatch.setattr(device, "_execute_upload", execute_upload)
+    monkeypatch.setattr(device._uploader, "execute_upload", execute_upload)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, _image()), state=state))
 
@@ -220,7 +220,7 @@ def test_etag_mismatch_clears_state_and_retries_full_once(monkeypatch):
 
     monkeypatch.setattr(device._channel, "write", capture_write)
     monkeypatch.setattr(device._channel, "read", read_response)
-    monkeypatch.setattr(device, "_execute_upload", execute_upload)
+    monkeypatch.setattr(device._uploader, "execute_upload", execute_upload)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, _image(changed=True)), state=state))
 
@@ -252,7 +252,7 @@ def test_non_etag_start_nack_falls_back_to_full(monkeypatch):
 
     monkeypatch.setattr(device._channel, "write", capture_write)
     monkeypatch.setattr(device._channel, "read", read_response)
-    monkeypatch.setattr(device, "_execute_upload", execute_upload)
+    monkeypatch.setattr(device._uploader, "execute_upload", execute_upload)
 
     # Must not raise; must fall back to a single full upload.
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, _image(changed=True)), state=state))
@@ -406,7 +406,7 @@ def test_partial_request_uses_partial_even_when_full_compressed_is_smaller(monke
     device._attach(ScriptedConn([]))  # supplies max_frame for chunk sizing
     monkeypatch.setattr(device._channel, "write", capture_write)
     monkeypatch.setattr(device._channel, "read", read_response)
-    monkeypatch.setattr(device, "_execute_upload", fail_full_upload)
+    monkeypatch.setattr(device._uploader, "execute_upload", fail_full_upload)
 
     asyncio.run(
         device.upload_prepared_image((b"\xff" * 16, b"\x01", new), refresh_mode=RefreshMode.PARTIAL, state=state)
@@ -571,7 +571,7 @@ def test_pipe_partial_mid_stream_nack_falls_back_to_full(monkeypatch):
         full_uploads += 1
         return True
 
-    monkeypatch.setattr(device, "_execute_upload", execute_upload)
+    monkeypatch.setattr(device._uploader, "execute_upload", execute_upload)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
@@ -607,7 +607,7 @@ def test_pipe_partial_ack_no_bit1_falls_back_to_0x76():
 
     assert any(w[:2] == b"\x00\x80" for w in conn.written)
     assert any(w[:2] == b"\x00\x76" for w in conn.written)  # fell back to legacy partial
-    assert device._pipe_partial_supported is False  # cached negative
+    assert device._uploader.pipe_partial_supported is False  # cached negative
 
 
 def test_pipe_partial_nack_05_skips_0x76_goes_full(monkeypatch):
@@ -623,7 +623,7 @@ def test_pipe_partial_nack_05_skips_0x76_goes_full(monkeypatch):
         full_uploads += 1
         return True
 
-    monkeypatch.setattr(device, "_execute_upload", execute_upload)
+    monkeypatch.setattr(device._uploader, "execute_upload", execute_upload)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
@@ -644,13 +644,13 @@ def test_pipe_partial_nack_06_negative_cache_skips_0x76(monkeypatch):
         full_uploads += 1
         return True
 
-    monkeypatch.setattr(device, "_execute_upload", execute_upload)
+    monkeypatch.setattr(device._uploader, "execute_upload", execute_upload)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
     assert full_uploads == 1
     assert all(w[:2] != b"\x00\x76" for w in conn.written)
-    assert device._pipe_partial_supported is False  # 0x06 caches negative
+    assert device._uploader.pipe_partial_supported is False  # 0x06 caches negative
 
 
 def test_pipe_partial_compressed_02_retry_then_0x76():
@@ -674,7 +674,7 @@ def test_pipe_partial_compressed_02_retry_then_0x76():
     assert len(starts) == 2
     assert starts[0][3] == 0x03  # compressed + partial
     assert starts[1][3] == 0x02  # uncompressed, still partial
-    assert device._pipe_partial_supported is False
+    assert device._uploader.pipe_partial_supported is False
     assert any(w[:2] == b"\x00\x76" for w in conn.written)
 
 
@@ -688,16 +688,16 @@ def test_pipe_partial_silence_falls_back_to_0x76():
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
     assert any(w[:2] == b"\x00\x76" for w in conn.written)
-    assert device._pipe_supported is False
+    assert device._uploader.pipe_supported is False
 
 
 def test_pipe_partial_negative_cache_skips_second_probe():
     device = _pipe_device(_config(transmission_modes=0x10), width=16, height=8)
-    device._pipe_partial_supported = False  # negative cached this connection
     new = _image(changed=True)
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([b"\x00\x76", b"\x00\x72", b"\x00\x73"])
     device._attach(conn)
+    device._uploader.pipe_partial_supported = False  # negative cached this connection
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
@@ -831,7 +831,7 @@ def test_pipe_partial_encrypted_0x76_fallback_respects_budget():
 
     asyncio.run(device.upload_prepared_image((b"\x00" * (128 * 8), None, new), state=state))
 
-    assert device._pipe_partial_supported is False
+    assert device._uploader.pipe_partial_supported is False
     start76 = next(w for w in conn.written if w[:2] == b"\x00\x76")
     cmd, payload = decrypt_response(device._channel.session.session_key, start76)
     assert cmd == 0x0076
