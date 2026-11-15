@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from rich.console import Console
 
-from opendisplay.cli import _build_info_tree, _info_to_json, _InfoContext
+from opendisplay.cli_info import _build_info_tree, _info_to_json, _InfoContext
 from opendisplay.models.config import (
     DataBus,
     DataExtended,
