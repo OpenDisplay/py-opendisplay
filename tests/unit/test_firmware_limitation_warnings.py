@@ -6,7 +6,7 @@ import logging
 
 import pytest
 
-from opendisplay.device.facade import _warn_firmware_upload_limitations
+from opendisplay.device.imaging import _warn_firmware_upload_limitations
 from opendisplay.models.enums import ColorScheme
 
 

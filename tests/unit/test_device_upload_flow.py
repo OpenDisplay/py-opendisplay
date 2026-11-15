@@ -686,7 +686,7 @@ def test_display_ppi_unknown_without_physical_size(width_mm: int, height_mm: int
 def test_resolve_dbs_true_uses_panel_ppi() -> None:
     from epaper_dithering import DbsParams
 
-    from opendisplay.device.facade import _resolve_dbs
+    from opendisplay.device.imaging import _resolve_dbs
 
     params = _resolve_dbs(True, _display())
     assert isinstance(params, DbsParams)
@@ -700,7 +700,7 @@ def test_resolve_dbs_true_uses_panel_ppi() -> None:
 def test_resolve_dbs_true_without_physical_size_uses_library_defaults(display: str | None) -> None:
     from epaper_dithering import DbsParams
 
-    from opendisplay.device.facade import _resolve_dbs
+    from opendisplay.device.imaging import _resolve_dbs
 
     cfg = _display(width_mm=0, height_mm=0) if display == "no-size" else None
     assert _resolve_dbs(True, cfg) == DbsParams()
@@ -710,7 +710,7 @@ def test_resolve_dbs_passes_explicit_params_through() -> None:
     """Caller-supplied parameters win, even when the panel's ppi is known."""
     from epaper_dithering import DbsParams
 
-    from opendisplay.device.facade import _resolve_dbs
+    from opendisplay.device.imaging import _resolve_dbs
 
     explicit = DbsParams(viewing_distance_cm=150.0, ppi=200.0, max_passes=3)
     assert _resolve_dbs(explicit, _display()) is explicit
@@ -718,7 +718,7 @@ def test_resolve_dbs_passes_explicit_params_through() -> None:
 
 @pytest.mark.parametrize("off", [None, False])
 def test_resolve_dbs_off(off: bool | None) -> None:
-    from opendisplay.device.facade import _resolve_dbs
+    from opendisplay.device.imaging import _resolve_dbs
 
     assert _resolve_dbs(off, _display()) is None
 
@@ -727,7 +727,7 @@ def test_prepare_image_forwards_resolved_dbs_to_dither_image(monkeypatch: pytest
     from epaper_dithering import DbsParams
     from PIL import Image
 
-    import opendisplay.device.facade as device_module
+    import opendisplay.device.imaging as device_module
 
     config = _make_config(width=8, height=8)
     config = GlobalConfig(**{**config.__dict__, "displays": [_display(width=8, height=8, width_mm=2, height_mm=2)]})
@@ -749,7 +749,7 @@ def test_prepare_image_forwards_resolved_dbs_to_dither_image(monkeypatch: pytest
 def test_prepare_image_dbs_defaults_off(monkeypatch: pytest.MonkeyPatch) -> None:
     from PIL import Image
 
-    import opendisplay.device.facade as device_module
+    import opendisplay.device.imaging as device_module
 
     captured: dict[str, object] = {}
     real = device_module.dither_image
