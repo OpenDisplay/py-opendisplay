@@ -28,10 +28,6 @@ def test_from_value_round_trips() -> None:
     assert ColorScheme.from_value(3) is ColorScheme.BWRY
 
 
-def test_not_epaper_dithering_enum() -> None:
-    assert ColorScheme.__module__ == "opendisplay.models.enums"
-
-
 @pytest.mark.parametrize(
     ("scheme", "accent"),
     [

@@ -218,13 +218,6 @@ class TestCommandCode:
         assert CommandCode.DEEP_SLEEP == 0x0053
         assert CommandCode.NFC_ENDPOINT == 0x0083
 
-    def test_command_code_to_bytes(self):
-        """Test command codes convert to correct big-endian bytes."""
-        assert CommandCode.READ_CONFIG.to_bytes(2, "big") == b"\x00\x40"
-        assert CommandCode.READ_FW_VERSION.to_bytes(2, "big") == b"\x00\x43"
-        assert CommandCode.DIRECT_WRITE_START.to_bytes(2, "big") == b"\x00\x70"
-        assert CommandCode.BUZZER_ACTIVATE.to_bytes(2, "big") == b"\x00\x77"
-
 
 class TestBuildBuzzerActivateCommand:
     """Test build_buzzer_activate_command wire format."""

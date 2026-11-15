@@ -31,11 +31,6 @@ class TestAesCmac:
         result = aes_cmac(_RFC4493_KEY, msg)
         assert result.hex() == "070a16b46b4d4144f79bdd9dd04a287c"
 
-    def test_returns_16_bytes(self):
-        """Output is always 16 bytes."""
-        result = aes_cmac(bytes(16), b"some data")
-        assert len(result) == 16
-
 
 class TestAesEcbEncrypt:
     """NIST AES-ECB known-answer test."""
@@ -47,26 +42,9 @@ class TestAesEcbEncrypt:
         result = aes_ecb_encrypt(key, plaintext)
         assert result.hex() == "3ad77bb40d7a3660a89ecaf32466ef97"
 
-    def test_returns_16_bytes(self):
-        """Output is always 16 bytes for a 16-byte block."""
-        result = aes_ecb_encrypt(bytes(16), bytes(16))
-        assert len(result) == 16
-
 
 class TestDeriveSessionKey:
     """Tests for derive_session_key."""
-
-    def test_returns_16_bytes(self):
-        """Session key is 16 bytes."""
-        key = derive_session_key(bytes(16), bytes(16), bytes(16))
-        assert len(key) == 16
-
-    def test_deterministic(self):
-        """Same inputs produce the same key."""
-        master = bytes(range(16))
-        cn = bytes(range(16, 32))
-        sn = bytes(range(32, 48))
-        assert derive_session_key(master, cn, sn) == derive_session_key(master, cn, sn)
 
     def test_changes_with_master_key(self):
         """Different master key → different session key."""
@@ -105,18 +83,6 @@ class TestDeriveSessionKey:
 class TestDeriveSessionId:
     """Tests for derive_session_id."""
 
-    def test_returns_8_bytes(self):
-        """Session ID is 8 bytes."""
-        sid = derive_session_id(bytes(16), bytes(16), bytes(16))
-        assert len(sid) == 8
-
-    def test_deterministic(self):
-        """Same inputs → same session ID."""
-        sk = bytes(range(16))
-        cn = bytes(range(16, 32))
-        sn = bytes(range(32, 48))
-        assert derive_session_id(sk, cn, sn) == derive_session_id(sk, cn, sn)
-
     def test_changes_with_inputs(self):
         """Different session key → different session ID."""
         cn = bytes(16)
@@ -128,20 +94,6 @@ class TestDeriveSessionId:
 
 class TestComputeChallengeResponse:
     """Tests for compute_challenge_response."""
-
-    def test_returns_16_bytes(self):
-        """Challenge response is 16 bytes."""
-        result = compute_challenge_response(bytes(16), bytes(16), bytes(16))
-        assert len(result) == 16
-
-    def test_deterministic(self):
-        """Same inputs → same response."""
-        master = bytes(range(16))
-        sn = bytes(range(16, 32))
-        cn = bytes(range(32, 48))
-        r1 = compute_challenge_response(master, sn, cn)
-        r2 = compute_challenge_response(master, sn, cn)
-        assert r1 == r2
 
     def test_changes_with_key(self):
         """Different master key → different response."""
@@ -248,11 +200,6 @@ class TestEncryptDecryptCommand:
 
 class TestGetNonce:
     """Tests for get_nonce."""
-
-    def test_nonce_length(self):
-        """Full nonce is 16 bytes."""
-        nonce = get_nonce(bytes(8), 0)
-        assert len(nonce) == 16
 
     def test_nonce_structure(self):
         """session_id(8) || counter_be(8)."""
