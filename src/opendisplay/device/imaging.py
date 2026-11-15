@@ -7,7 +7,13 @@ import logging
 from epaper_dithering import DbsParams, DitherMode, DitherOptions, dither_image
 from PIL import Image
 
-from ..display_palettes import PANELS_4GRAY, get_bwry_codes, get_gray4_codes, get_palette_for_display
+from ..display_palettes import (
+    BWRY_DUAL_INTERLEAVED_PANELS,
+    PANELS_4GRAY,
+    get_bwry_codes,
+    get_gray4_codes,
+    get_palette_for_display,
+)
 from ..encoding import (
     FIRMWARE_ZLIB_WINDOW_BITS,
     compress_image_data,
@@ -17,6 +23,7 @@ from ..encoding import (
     encode_image,
     fit_image,
     normalize_source_image,
+    reorder_dual_interleaved,
 )
 from ..models.capabilities import DeviceCapabilities
 from ..models.config import DisplayConfig, GlobalConfig
@@ -257,6 +264,8 @@ def prepare_image(
         # yellow/red swapped relative to the dither palette; apply the per-panel
         # code table so the firmware's raw-nibble direct write shows the right color.
         image_data = encode_2bpp(dithered, codes=get_bwry_codes(panel_ic_type))
+        if panel_ic_type in BWRY_DUAL_INTERLEAVED_PANELS:
+            image_data = reorder_dual_interleaved(image_data, dithered.width, dithered.height)
     else:
         image_data = encode_image(dithered, color_scheme)
 

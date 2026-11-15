@@ -238,6 +238,35 @@ def encode_2bpp(image: Image.Image, codes: tuple[int, int, int, int] | None = No
     return packed.astype(np.uint8).tobytes()
 
 
+def reorder_dual_interleaved(data: bytes, width: int, height: int, bits_per_pixel: int = 2) -> bytes:
+    """Reorder a row-major frame for a dual-controller panel.
+
+    Output: the right half (all its rows) then the left half, each half with its
+    rows in the order 0, H-1, 1, H-2, ... Used for BWRY panels whose master
+    controller drives the right half and whose controllers take interleaved rows
+    (``BWRY_DUAL_INTERLEAVED_PANELS``).
+
+    Args:
+        data: Row-major packed frame, ``height`` rows of ``width * bits_per_pixel / 8`` bytes
+        width: Frame width in pixels; each half must be a whole number of bytes
+        height: Frame height in pixels (even)
+        bits_per_pixel: Packed pixel size
+
+    Returns:
+        Reordered bytes, same length as ``data``
+    """
+    row_bytes = width * bits_per_pixel // 8
+    half = row_bytes // 2
+    if width * bits_per_pixel % 16 or height % 2 or len(data) != row_bytes * height:
+        raise ValueError(f"Cannot split a {width}x{height} frame of {len(data)} bytes into two interleaved halves")
+    rows = np.frombuffer(data, dtype=np.uint8).reshape(height, row_bytes)
+    order = np.empty(height, dtype=np.intp)
+    order[0::2] = np.arange(height // 2)
+    order[1::2] = np.arange(height - 1, height // 2 - 1, -1)
+    rows = rows[order]
+    return rows[:, half:].tobytes() + rows[:, :half].tobytes()
+
+
 def encode_4bpp(
     image: Image.Image,
     bwgbry_mapping: bool = False,

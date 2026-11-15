@@ -42,3 +42,62 @@ def test_gray4_v2_table_includes_ep368() -> None:
 
 def test_panels_4gray_includes_new_ids() -> None:
     assert {0x0043, 0x0044, 0x0046, 0x0048, 0x004C} <= PANELS_4GRAY
+
+
+def test_reorder_dual_interleaved_matches_el058_hardware_order() -> None:
+    from opendisplay.encoding.images import reorder_dual_interleaved
+
+    # 16x4 at 2bpp: 4 bytes per row, 2 per half. Byte value = row * 16 + column byte.
+    width, height = 16, 4
+    data = bytes(r * 16 + c for r in range(height) for c in range(4))
+    out = reorder_dual_interleaved(data, width, height)
+
+    right = [r * 16 + c for r in (0, 3, 1, 2) for c in (2, 3)]
+    left = [r * 16 + c for r in (0, 3, 1, 2) for c in (0, 1)]
+    assert out == bytes(right + left)
+
+
+def test_reorder_dual_interleaved_matches_reference_el058() -> None:
+    import random
+
+    from opendisplay.encoding.images import reorder_dual_interleaved
+
+    def reference(data: bytes, width: int, height: int) -> bytes:
+        row = width // 4
+        half = row // 2
+        out = bytearray()
+        for offset in (half, 0):
+            for k in range(height // 2):
+                for r in (k, height - 1 - k):
+                    out += data[r * row + offset : r * row + offset + half]
+        return bytes(out)
+
+    data = random.Random(0).randbytes(792 * 272 // 4)
+    assert reorder_dual_interleaved(data, 792, 272) == reference(data, 792, 272)
+
+
+def test_reorder_dual_interleaved_rejects_odd_geometry() -> None:
+    import pytest
+
+    from opendisplay.encoding.images import reorder_dual_interleaved
+
+    with pytest.raises(ValueError):
+        reorder_dual_interleaved(bytes(3 * 4), 12, 4)  # 3-byte rows cannot split
+    with pytest.raises(ValueError):
+        reorder_dual_interleaved(bytes(4 * 3), 16, 3)  # odd height
+
+
+def test_prepare_image_reorders_dual_interleaved_panel() -> None:
+    from opendisplay.device import prepare_image
+    from opendisplay.encoding.images import reorder_dual_interleaved
+    from opendisplay.models.capabilities import DeviceCapabilities
+    from opendisplay.models.enums import ColorScheme
+
+    caps = DeviceCapabilities(width=16, height=4, color_scheme=ColorScheme.BWRY)
+    img = Image.new("RGB", (16, 4), "white")
+    img.putpixel((15, 0), (255, 0, 0))
+
+    plain, _, _ = prepare_image(img, capabilities=caps, panel_ic_type=0x0040, compress=False)
+    dual, _, _ = prepare_image(img, capabilities=caps, panel_ic_type=0xF003, compress=False)
+    assert dual == reorder_dual_interleaved(plain, 16, 4)
+    assert dual != plain

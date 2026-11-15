@@ -9,7 +9,15 @@ from .compression import (
     decompress_image_data,
     zlib_window_bits,
 )
-from .images import encode_1bpp, encode_2bpp, encode_4bpp, encode_image, fit_image, normalize_source_image
+from .images import (
+    encode_1bpp,
+    encode_2bpp,
+    encode_4bpp,
+    encode_image,
+    fit_image,
+    normalize_source_image,
+    reorder_dual_interleaved,
+)
 
 __all__ = [
     "fit_image",
@@ -20,6 +28,7 @@ __all__ = [
     "encode_4bpp",
     "encode_bitplanes",
     "encode_gray4_bitplanes",
+    "reorder_dual_interleaved",
     "DEFAULT_ZLIB_WINDOW_BITS",
     "FIRMWARE_ZLIB_WINDOW_BITS",
     "ZIPXL_ZLIB_WINDOW_BITS",

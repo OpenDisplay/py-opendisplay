@@ -74,6 +74,18 @@ def get_bwry_codes(panel_ic_type: int | None) -> tuple[int, int, int, int]:
     return _BWRY_CODES_BY_PANEL.get(panel_ic_type, _BWRY_CODES_DEFAULT)
 
 
+# BWRY panels made of two cascaded controllers on one CS (A2 master/slave select).
+# The firmware streams host bytes untouched and gives each controller one
+# IMAGE_SLICE, so the frame must already be in controller order: the master
+# (right) half first, then the slave (left) half, each with its rows in the
+# order 0, H-1, 1, H-2, ...
+BWRY_DUAL_INTERLEAVED_PANELS: frozenset[int] = frozenset(
+    {
+        0xF003,  # EP585YR_792x272, SoluM EL058F5W4C (provisional id)
+    }
+)
+
+
 # Idealised palette per colour scheme.
 IDEAL_PALETTE_FILES: dict[ColorScheme, str] = {
     ColorScheme.MONO: "ideal_mono.json",
