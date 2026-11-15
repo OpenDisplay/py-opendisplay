@@ -627,9 +627,9 @@ def test_sht40_reading_from_advertisement() -> None:
 
 def test_sht40_reading_defaults_to_firmware_slot() -> None:
     """The default start byte matches the firmware's own default of 7."""
-    payload = _v1_payload(_dynamic_with_sht40(bytes.fromhex("d7c109"), start_byte=7))
-
-    assert parse_advertisement(payload).sht40_reading() is not None
+    adv = parse_advertisement(_v1_payload(_dynamic_with_sht40(bytes.fromhex("d7c109"), start_byte=7)))
+    assert adv.sht40_reading() is not None
+    assert adv.sht40_reading() == adv.sht40_reading(7)
 
 
 def test_sht40_reading_at_relocated_offset() -> None:

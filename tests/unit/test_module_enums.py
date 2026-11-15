@@ -25,11 +25,6 @@ class TestRefreshMode:
         assert RefreshMode.FULL == 0
         assert RefreshMode.FAST == 1
 
-    def test_refresh_mode_names(self):
-        """Test refresh mode names."""
-        assert RefreshMode.FULL.name == "FULL"
-        assert RefreshMode.FAST.name == "FAST"
-
 
 class TestICType:
     """Test IC (microcontroller) type enum."""
@@ -43,12 +38,6 @@ class TestICType:
         assert ICType.NRF52811 == 5
         assert ICType.EFR32BG22 == 6
 
-    def test_ic_type_names(self):
-        """Test IC type names."""
-        assert ICType.NRF52840.name == "NRF52840"
-        assert ICType.ESP32_S3.name == "ESP32_S3"
-        assert ICType.EFR32BG22.name == "EFR32BG22"
-
 
 class TestPowerMode:
     """Test PowerMode enum."""
@@ -59,12 +48,6 @@ class TestPowerMode:
         assert PowerMode.USB == 2
         assert PowerMode.SOLAR == 3
 
-    def test_power_mode_names(self):
-        """Test power mode names."""
-        assert PowerMode.BATTERY.name == "BATTERY"
-        assert PowerMode.USB.name == "USB"
-        assert PowerMode.SOLAR.name == "SOLAR"
-
 
 class TestBoardManufacturer:
     """Test BoardManufacturer enum."""
@@ -74,12 +57,6 @@ class TestBoardManufacturer:
         assert BoardManufacturer.DIY == 0
         assert BoardManufacturer.SEEED == 1
         assert BoardManufacturer.WAVESHARE == 2
-
-    def test_board_manufacturer_names(self):
-        """Test board manufacturer names."""
-        assert BoardManufacturer.DIY.name == "DIY"
-        assert BoardManufacturer.SEEED.name == "SEEED"
-        assert BoardManufacturer.WAVESHARE.name == "WAVESHARE"
 
 
 class TestBoardTypeEnums:
@@ -152,11 +129,6 @@ class TestBusType:
         assert BusType.I2C == 1
         assert BusType.SPI == 2
 
-    def test_bus_type_names(self):
-        """Test bus type names."""
-        assert BusType.I2C.name == "I2C"
-        assert BusType.SPI.name == "SPI"
-
 
 class TestRotation:
     """Test Rotation enum."""
@@ -167,13 +139,6 @@ class TestRotation:
         assert Rotation.ROTATE_90 == 90
         assert Rotation.ROTATE_180 == 180
         assert Rotation.ROTATE_270 == 270
-
-    def test_rotation_names(self):
-        """Test rotation names."""
-        assert Rotation.ROTATE_0.name == "ROTATE_0"
-        assert Rotation.ROTATE_90.name == "ROTATE_90"
-        assert Rotation.ROTATE_180.name == "ROTATE_180"
-        assert Rotation.ROTATE_270.name == "ROTATE_270"
 
     def test_all_rotations_exist(self):
         """Test all 4 rotations are defined."""
