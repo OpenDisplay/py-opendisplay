@@ -223,7 +223,7 @@ async def test_device_clear_gatt_cache_delegates_to_connection() -> None:
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake_conn = MagicMock()
     fake_conn.clear_cache = AsyncMock(return_value=True)
-    device._connection = fake_conn
+    device._attach(fake_conn)
 
     assert await device.clear_gatt_cache() is True
     fake_conn.clear_cache.assert_awaited_once_with()
@@ -235,10 +235,11 @@ async def test_trigger_dfu_bootloader_tolerates_write_error() -> None:
     (e.g. a GATT 133 over a Bluetooth proxy) is expected and tolerated, not raised —
     whether DFU was entered is determined by the subsequent scan for the DFU device."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
-    device._write = AsyncMock(side_effect=BLEConnectionError("Write failed: ... error=133"))
+    device._attach(MagicMock())
+    device._channel.write = AsyncMock(side_effect=BLEConnectionError("Write failed: ... error=133"))
 
     await device.trigger_dfu_bootloader()  # must not raise
-    device._write.assert_awaited_once()
+    device._channel.write.assert_awaited_once()
 
 
 @pytest.mark.asyncio

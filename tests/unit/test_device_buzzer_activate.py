@@ -33,7 +33,7 @@ async def test_activate_buzzer_sends_0077_and_validates_ack() -> None:
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     config = BuzzerActivateConfig.single_tone(frequency_hz=1000, duration_ms=100)
     fake = _FakeConnection(response=b"\x00\x77\x00\x00")
-    device._connection = fake
+    device._attach(fake)
 
     response = await device.activate_buzzer(buzzer_instance=0, config=config)
 
@@ -49,7 +49,7 @@ async def test_activate_buzzer_custom_timeout() -> None:
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     config = BuzzerActivateConfig.single_tone(frequency_hz=440, duration_ms=500)
     fake = _FakeConnection(response=b"\x80\x77")
-    device._connection = fake
+    device._attach(fake)
 
     await device.activate_buzzer(buzzer_instance=1, config=config, timeout=5.0)
 

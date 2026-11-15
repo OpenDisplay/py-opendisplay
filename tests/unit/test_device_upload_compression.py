@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from PIL import Image
 
@@ -83,7 +85,9 @@ def _config(transmission_modes: int = 0x02, width: int = 2, height: int = 2) -> 
 
 def _make_device(config: GlobalConfig | None = None) -> OpenDisplayDevice:
     caps = DeviceCapabilities(width=2, height=2, color_scheme=ColorScheme.MONO)
-    return OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config, capabilities=caps)
+    device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", config=config, capabilities=caps)
+    device._attach(SimpleNamespace(max_frame=244))  # inert link: these tests stop before any I/O
+    return device
 
 
 class TestUploadImageCompressionDecision:
@@ -107,7 +111,7 @@ class TestUploadImageCompressionDecision:
         raw, compressed = b"\x01" * 100, b"\x02" * 10
         monkeypatch.setattr(device, "_prepare_image", self._fake_prepare(raw, compressed))
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_image(Image.new("RGB", (2, 2)))
 
@@ -125,7 +129,7 @@ class TestUploadImageCompressionDecision:
         raw, compressed = b"\x01" * 100, b"\x02" * 10
         monkeypatch.setattr(device, "_prepare_image", self._fake_prepare(raw, compressed))
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_image(Image.new("RGB", (2, 2)))
 
@@ -137,7 +141,7 @@ class TestUploadImageCompressionDecision:
         raw, compressed = b"\x01" * 100, b"\x02" * 10
         monkeypatch.setattr(device, "_prepare_image", self._fake_prepare(raw, compressed))
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_image(Image.new("RGB", (2, 2)))
 
@@ -149,7 +153,7 @@ class TestUploadImageCompressionDecision:
         raw = b"\x01" * 100
         monkeypatch.setattr(device, "_prepare_image", self._fake_prepare(raw, None))
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_image(Image.new("RGB", (2, 2)), compress=False)
 
@@ -162,7 +166,7 @@ class TestUploadImageCompressionDecision:
         compressed = b"\x02" * (MAX_COMPRESSED_SIZE + 1)
         monkeypatch.setattr(device, "_prepare_image", self._fake_prepare(raw, compressed))
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_image(Image.new("RGB", (2, 2)))
 
@@ -175,7 +179,7 @@ class TestUploadImageCompressionDecision:
         raw, compressed = b"\x01" * 100, b"\x02" * 10
         monkeypatch.setattr(device, "_prepare_image", self._fake_prepare(raw, compressed))
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_image(Image.new("RGB", (2, 2)))
 
@@ -201,7 +205,7 @@ class TestUploadPreparedImageCompressionDecision:
         device = _make_device(config=_config(transmission_modes=0x02))
         prepared = self._prepared(compressed=b"\x02" * 10)
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_prepared_image(prepared)
 
@@ -212,7 +216,7 @@ class TestUploadPreparedImageCompressionDecision:
         device = _make_device(config=_config(transmission_modes=0x00))
         prepared = self._prepared(compressed=b"\x02" * 10)
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_prepared_image(prepared)
 
@@ -223,7 +227,7 @@ class TestUploadPreparedImageCompressionDecision:
         device = _make_device(config=_config(transmission_modes=0x02))
         prepared = self._prepared(compressed=b"\x02" * 10)
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_prepared_image(prepared, compress=False)
 
@@ -234,7 +238,7 @@ class TestUploadPreparedImageCompressionDecision:
         device = _make_device(config=_config(transmission_modes=0x02))
         prepared = self._prepared(compressed=b"\x02" * (MAX_COMPRESSED_SIZE + 1))
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_prepared_image(prepared)
 
@@ -246,7 +250,7 @@ class TestUploadPreparedImageCompressionDecision:
         device = _make_device(config=None)
         prepared = self._prepared(compressed=b"\x02" * 10)
         captured, fake_execute = self._capture_execute()
-        monkeypatch.setattr(device, "_execute_upload", fake_execute)
+        monkeypatch.setattr(device._uploader, "execute_upload", fake_execute)
 
         await device.upload_prepared_image(prepared)
 

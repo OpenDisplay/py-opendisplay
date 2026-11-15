@@ -51,7 +51,7 @@ def test_interrogate_reports_no_config_error_frame() -> None:
         mac_address="AA:BB:CC:DD:EE:FF",
         capabilities=DeviceCapabilities(width=2, height=2, color_scheme=ColorScheme.MONO),
     )
-    device._connection = _FakeConn([b"\xff\x40\x00\x00"])  # type: ignore[assignment]
+    device._attach(_FakeConn([b"\xff\x40\x00\x00"]))  # type: ignore[arg-type]
 
     with pytest.raises(ProtocolError, match="no stored configuration"):
         asyncio.run(device.interrogate())
@@ -88,7 +88,7 @@ _FIRST_CHUNK = b"\x00\x40" + b"\x00\x00" + (100).to_bytes(2, "little") + b"\x01"
 def test_interrogate_raises_on_config_read_timeout() -> None:
     """A chunk read timing out mid-transfer raises TruncatedConfigError, not a hang."""
     device = _make_device()
-    device._connection = _ScriptedConn([_FIRST_CHUNK, BLETimeoutError()])  # type: ignore[assignment]
+    device._attach(_ScriptedConn([_FIRST_CHUNK, BLETimeoutError()]))  # type: ignore[arg-type]
 
     with pytest.raises(TruncatedConfigError, match="truncated"):
         asyncio.run(device.interrogate())
@@ -99,7 +99,7 @@ def test_interrogate_raises_on_stalled_empty_chunk() -> None:
     device = _make_device()
     # Second chunk carries only the echo + chunk number, no payload -> no progress.
     empty_chunk = b"\x00\x40" + b"\x00\x01"
-    device._connection = _ScriptedConn([_FIRST_CHUNK, empty_chunk])  # type: ignore[assignment]
+    device._attach(_ScriptedConn([_FIRST_CHUNK, empty_chunk]))  # type: ignore[arg-type]
 
     with pytest.raises(TruncatedConfigError, match="stalled"):
         asyncio.run(device.interrogate())
@@ -114,7 +114,7 @@ def test_interrogate_ignores_stray_frame_from_another_command(caplog: pytest.Log
     # 90 payload bytes still owed after the first chunk's 10.
     stray = b"\x00\x43\x01\x00\x28" + b"\xaa" * 20  # firmware-version reply, wrong exchange
     real_chunk = b"\x00\x40" + b"\x00\x01" + b"\x02" * 90
-    device._connection = _ScriptedConn([_FIRST_CHUNK, stray, real_chunk])  # type: ignore[assignment]
+    device._attach(_ScriptedConn([_FIRST_CHUNK, stray, real_chunk]))  # type: ignore[arg-type]
 
     with caplog.at_level(logging.WARNING, logger="opendisplay.device"), pytest.raises(ConfigParseError):
         asyncio.run(device.interrogate())
@@ -131,7 +131,7 @@ def test_interrogate_gives_up_after_too_many_stray_frames() -> None:
     device = _make_device()
     stray = b"\x00\x43\x01\x00\x28"
     strays: list[bytes | Exception] = [stray] * (OpenDisplayDevice.MAX_STRAY_CONFIG_FRAMES + 1)
-    device._connection = _ScriptedConn([_FIRST_CHUNK, *strays])  # type: ignore[assignment]
+    device._attach(_ScriptedConn([_FIRST_CHUNK, *strays]))  # type: ignore[arg-type]
 
     with pytest.raises(ProtocolError, match="frames from other commands"):
         asyncio.run(device.interrogate())
@@ -142,7 +142,7 @@ def test_interrogate_still_reports_error_frame_after_a_stray() -> None:
     caller rather than skipped as a foreign frame."""
     device = _make_device()
     stray = b"\x00\x43\x01\x00\x28"
-    device._connection = _ScriptedConn([stray, b"\xff\x40\x00\x00"])  # type: ignore[assignment]
+    device._attach(_ScriptedConn([stray, b"\xff\x40\x00\x00"]))  # type: ignore[arg-type]
 
     with pytest.raises(ProtocolError, match="no stored configuration"):
         asyncio.run(device.interrogate())
