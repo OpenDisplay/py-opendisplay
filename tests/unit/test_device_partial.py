@@ -98,11 +98,13 @@ def _config(
 
 
 def _device(config: GlobalConfig | None = None) -> OpenDisplayDevice:
-    return OpenDisplayDevice(
+    device = OpenDisplayDevice(
         mac_address="AA:BB:CC:DD:EE:FF",
         config=config or _config(),
         capabilities=DeviceCapabilities(width=16, height=8, color_scheme=ColorScheme.MONO),
     )
+    device._attach(ScriptedConn([]))  # the tests replace the channel's read and write
+    return device
 
 
 def _image(changed: bool = False) -> Image.Image:
@@ -119,7 +121,7 @@ def test_no_change_image_skips_transfer(monkeypatch):
     async def fail_write(data: bytes) -> None:
         raise AssertionError(f"unexpected write: {data!r}")
 
-    monkeypatch.setattr(device, "_write", fail_write)
+    monkeypatch.setattr(device._channel, "write", fail_write)
 
     outcome = asyncio.run(device._maybe_upload_partial(_image(), state, None))
 
@@ -141,9 +143,9 @@ def test_valid_partial_never_sends_0x70_and_uses_uncompressed_0x76(monkeypatch):
     async def read_response(timeout: float) -> bytes:
         return responses.pop(0)
 
-    device._connection = ScriptedConn([])  # supplies max_frame for chunk sizing
-    monkeypatch.setattr(device, "_write", capture_write)
-    monkeypatch.setattr(device, "_read", read_response)
+    device._attach(ScriptedConn([]))  # supplies max_frame for chunk sizing
+    monkeypatch.setattr(device._channel, "write", capture_write)
+    monkeypatch.setattr(device._channel, "read", read_response)
 
     outcome = asyncio.run(device._maybe_upload_partial(new, state, None))
 
@@ -216,8 +218,8 @@ def test_etag_mismatch_clears_state_and_retries_full_once(monkeypatch):
         refresh_modes.append(refresh_mode)
         return True  # etag committed (END-with-etag sent)
 
-    monkeypatch.setattr(device, "_write", capture_write)
-    monkeypatch.setattr(device, "_read", read_response)
+    monkeypatch.setattr(device._channel, "write", capture_write)
+    monkeypatch.setattr(device._channel, "read", read_response)
     monkeypatch.setattr(device, "_execute_upload", execute_upload)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, _image(changed=True)), state=state))
@@ -248,8 +250,8 @@ def test_non_etag_start_nack_falls_back_to_full(monkeypatch):
         full_uploads += 1
         return True
 
-    monkeypatch.setattr(device, "_write", capture_write)
-    monkeypatch.setattr(device, "_read", read_response)
+    monkeypatch.setattr(device._channel, "write", capture_write)
+    monkeypatch.setattr(device._channel, "read", read_response)
     monkeypatch.setattr(device, "_execute_upload", execute_upload)
 
     # Must not raise; must fall back to a single full upload.
@@ -262,7 +264,7 @@ def test_unchanged_image_uploads_nothing():
     device = _device()
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, _image()), state=state))
 
@@ -276,7 +278,7 @@ def test_unacknowledged_partial_start_falls_back_to_full():
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     # 0x76 START goes unanswered; the full upload (0x70, one 0x71 chunk, 0x72, refresh) then succeeds.
     conn = ScriptedConn([BLETimeoutError, b"\x00\x70", b"\x00\x71", b"\x00\x72", b"\x00\x73"])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
@@ -302,7 +304,7 @@ def test_partial_chunk_nack_falls_back_to_full():
             b"\x00\x73",
         ]
     )
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\xff" * 256, None, new), state=state))
 
@@ -332,7 +334,7 @@ def test_full_upload_with_state_uses_the_requested_refresh_mode(requested: Refre
     new = _image(changed=True)
     state = PartialState()
     conn = ScriptedConn([b"\x00\x70", b"\x00\x71", b"\x00\x72", b"\x00\x73"])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), refresh_mode=requested, state=state))
 
@@ -348,7 +350,7 @@ def test_partial_update_ignores_the_requested_refresh_mode():
     device = _device()
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([b"\x00\x76", b"\x00\x72", b"\x00\x73"])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(
         device.upload_prepared_image(
@@ -401,9 +403,9 @@ def test_partial_request_uses_partial_even_when_full_compressed_is_smaller(monke
     async def fail_full_upload(*args, **kwargs) -> None:
         raise AssertionError("partial request unexpectedly fell back to full upload")
 
-    device._connection = ScriptedConn([])  # supplies max_frame for chunk sizing
-    monkeypatch.setattr(device, "_write", capture_write)
-    monkeypatch.setattr(device, "_read", read_response)
+    device._attach(ScriptedConn([]))  # supplies max_frame for chunk sizing
+    monkeypatch.setattr(device._channel, "write", capture_write)
+    monkeypatch.setattr(device._channel, "read", read_response)
     monkeypatch.setattr(device, "_execute_upload", fail_full_upload)
 
     asyncio.run(
@@ -510,7 +512,7 @@ def test_pipe_partial_happy_path_uncompressed():
     new = _image(changed=True)
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([start_ack(flags=0x03), data_ack({0}), END_ACK, REFRESH_COMPLETE])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), refresh_mode=RefreshMode.PARTIAL, state=state))
 
@@ -542,7 +544,7 @@ def test_pipe_partial_happy_path_compressed_zlib_window9():
     new.putpixel((10, 10), 1)
     state = PartialState(etag=0x0A0B0C0D, last_image=_mono(64, 64).tobytes(), width=64, height=64, bytes_per_pixel=1)
     conn = ScriptedConn([start_ack(flags=0x03), data_ack({0}), END_ACK, REFRESH_COMPLETE])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(
         device.upload_prepared_image((b"\x00" * (64 * 64), None, new), refresh_mode=RefreshMode.PARTIAL, state=state)
@@ -561,7 +563,7 @@ def test_pipe_partial_mid_stream_nack_falls_back_to_full(monkeypatch):
     new = _image(changed=True)
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([start_ack(flags=0x03), data_nack(0x03, 0, 0x0)])
-    device._connection = conn
+    device._attach(conn)
     full_uploads = 0
 
     async def execute_upload(image_data, refresh_mode, **kwargs) -> bool:
@@ -587,7 +589,7 @@ def test_pipe_partial_refresh_timeout_reraises():
     new = _image(changed=True)
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([start_ack(flags=0x03), data_ack({0}), END_ACK, REFRESH_TIMEOUT])
-    device._connection = conn
+    device._attach(conn)
 
     with pytest.raises(RefreshTimeoutError, match="refresh timed out"):
         asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
@@ -599,7 +601,7 @@ def test_pipe_partial_ack_no_bit1_falls_back_to_0x76():
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     # ACK without the partial bit → None → legacy 0x76 flow.
     conn = ScriptedConn([start_ack(flags=0x01), b"\x00\x76", b"\x00\x72", b"\x00\x73"])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
@@ -613,7 +615,7 @@ def test_pipe_partial_nack_05_skips_0x76_goes_full(monkeypatch):
     new = _image(changed=True)
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([start_nack(0x05)])
-    device._connection = conn
+    device._attach(conn)
     full_uploads = 0
 
     async def execute_upload(image_data, refresh_mode, **kwargs) -> bool:
@@ -634,7 +636,7 @@ def test_pipe_partial_nack_06_negative_cache_skips_0x76(monkeypatch):
     new = _image(changed=True)
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([start_nack(0x06)])
-    device._connection = conn
+    device._attach(conn)
     full_uploads = 0
 
     async def execute_upload(image_data, refresh_mode, **kwargs) -> bool:
@@ -664,7 +666,7 @@ def test_pipe_partial_compressed_02_retry_then_0x76():
     state = PartialState(etag=0x0A0B0C0D, last_image=_mono(64, 64).tobytes(), width=64, height=64, bytes_per_pixel=1)
     # compressed 0x02 → uncompressed-still-partial 0x02 → give up → legacy 0x76.
     conn = ScriptedConn([start_nack(0x02), start_nack(0x02), b"\x00\x76", b"\x00\x72", b"\x00\x73"])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * (64 * 64), None, new), state=state))
 
@@ -681,7 +683,7 @@ def test_pipe_partial_silence_falls_back_to_0x76():
     new = _image(changed=True)
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([BLETimeoutError, b"\x00\x76", b"\x00\x72", b"\x00\x73"])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
@@ -695,7 +697,7 @@ def test_pipe_partial_negative_cache_skips_second_probe():
     new = _image(changed=True)
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([b"\x00\x76", b"\x00\x72", b"\x00\x73"])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
@@ -712,7 +714,7 @@ def test_gate_no_pipe_write_bit_skips_0x0080():
     new = _image(changed=True)
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([b"\x00\x76", b"\x00\x72", b"\x00\x73"])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
@@ -725,7 +727,7 @@ def test_gate_max_queue_size_one_skips_0x0080():
     new = _image(changed=True)
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([b"\x00\x76", b"\x00\x72", b"\x00\x73"])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
@@ -740,7 +742,7 @@ def test_gate_lan_transport_skips_0x0080():
     state = PartialState(etag=0x01020304, last_image=_image().tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([b"\x00\x76", b"\x00\x72", b"\x00\x73"])
     conn.max_frame = 4094
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), state=state))
 
@@ -761,7 +763,7 @@ def test_gate_full_frame_whole_panel_rect_and_total_size():
     new.putpixel((3, 3), 1)
     state = PartialState(etag=0x01020304, last_image=_mono(16, 8).tobytes(), width=16, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([start_ack(flags=0x03), data_ack({0}), END_ACK, REFRESH_COMPLETE])
-    device._connection = conn
+    device._attach(conn)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * 16, None, new), refresh_mode=RefreshMode.PARTIAL, state=state))
 
@@ -784,13 +786,13 @@ def test_pipe_partial_encrypted_session_happy_path():
         pixel_height=64,
     )
     device = _pipe_device(cfg, width=128, height=64)
-    _make_session(device)
     new = _mono(128, 64)
     new.putpixel((10, 10), 1)
     state = PartialState(etag=0x0A0B0C0D, last_image=_mono(128, 64).tobytes(), width=128, height=64, bytes_per_pixel=1)
     # 2048 / 212 = 10 chunks (indexes 0..9), all inside one W=16 window.
     conn = ScriptedConn([start_ack(flags=0x03), data_ack(set(range(10))), END_ACK, REFRESH_COMPLETE])
-    device._connection = conn
+    device._attach(conn)
+    _make_session(device)
 
     asyncio.run(
         device.upload_prepared_image((b"\x00" * (128 * 64), None, new), refresh_mode=RefreshMode.PARTIAL, state=state)
@@ -798,19 +800,19 @@ def test_pipe_partial_encrypted_session_happy_path():
 
     # Extended 0x0080 request rides as a single encrypted frame; 24 B plaintext.
     start_frame = next(w for w in conn.written if w[:2] == b"\x00\x80")
-    cmd, payload = decrypt_response(device._session_key, start_frame)
+    cmd, payload = decrypt_response(device._channel.session.session_key, start_frame)
     assert cmd == 0x0080
     assert len(payload) == 22  # 2 opcode + 22 = 24 B plaintext
     assert 2 + len(payload) <= 154  # ENCRYPTED_CHUNK_SIZE budget, single frame
     # 0x0081 partial data frames are sized 212 B at frame 244 (encrypted).
     data_sizes = []
     for f in (w for w in conn.written if w[:2] == b"\x00\x81"):
-        _c, p = decrypt_response(device._session_key, f)
+        _c, p = decrypt_response(device._channel.session.session_key, f)
         data_sizes.append(len(p) - 1)  # minus the seq byte
     assert max(data_sizes) == 212
     # Encrypted END carries the REFRESH_PARTIAL selector + new etag.
     end_frame = next(w for w in conn.written if w[:2] == b"\x00\x82")
-    _c, ep = decrypt_response(device._session_key, end_frame)
+    _c, ep = decrypt_response(device._channel.session.session_key, end_frame)
     assert ep[0] == 2
     assert int.from_bytes(ep[1:5], "big") == state.etag
 
@@ -820,18 +822,18 @@ def test_pipe_partial_encrypted_0x76_fallback_respects_budget():
     # then the encrypted 0x76 rung must cap its inline payload at the encrypted budget.
     cfg = _config(transmission_modes=0x10, pixel_width=128, pixel_height=8)
     device = _pipe_device(cfg, width=128, height=8)
-    _make_session(device)
     old = _mono(128, 8, 0)
     new = _mono(128, 8, 1)  # whole panel changes → 256-byte logical stream
     state = PartialState(etag=0x01020304, last_image=old.tobytes(), width=128, height=8, bytes_per_pixel=1)
     conn = ScriptedConn([start_nack(0x02), b"\x00\x76", b"\x00\x71", b"\x00\x72", b"\x00\x73"])
-    device._connection = conn
+    device._attach(conn)
+    _make_session(device)
 
     asyncio.run(device.upload_prepared_image((b"\x00" * (128 * 8), None, new), state=state))
 
     assert device._pipe_partial_supported is False
     start76 = next(w for w in conn.written if w[:2] == b"\x00\x76")
-    cmd, payload = decrypt_response(device._session_key, start76)
+    cmd, payload = decrypt_response(device._channel.session.session_key, start76)
     assert cmd == 0x0076
     assert 2 + len(payload) <= 154  # capped at ENCRYPTED_CHUNK_SIZE
     assert any(w[:2] == b"\x00\x71" for w in conn.written)  # budget forced a follow-up chunk

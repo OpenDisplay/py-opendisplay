@@ -204,7 +204,7 @@ def make_device(
         max_queue_size=max_queue_size,
     )
     conn = ScriptedConn(responses)
-    dev._connection = conn
+    dev._attach(conn)
     return dev, conn
 
 

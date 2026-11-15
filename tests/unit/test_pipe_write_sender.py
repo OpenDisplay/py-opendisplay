@@ -21,6 +21,7 @@ from test_pipe_write import (
 )
 
 from opendisplay.crypto import decrypt_response, derive_session_id, derive_session_key
+from opendisplay.device.channel import LegacySession
 from opendisplay.exceptions import BLETimeoutError, ProtocolError
 from opendisplay.models.enums import RefreshMode
 from opendisplay.protocol import PipeParams
@@ -523,9 +524,11 @@ async def test_probe_write_uses_default_drain_stale_true() -> None:
 def _make_session(dev) -> None:
     key = b"\x11" * 16
     cn, sn, did = b"\x01" * 16, b"\x02" * 16, b"\x00\x00\x00\x01"
-    dev._session_key = derive_session_key(key, cn, sn, did)
-    dev._session_id = derive_session_id(dev._session_key, cn, sn)
-    dev._nonce_counter = 0
+    dev._channel.session = LegacySession(
+        session_key=derive_session_key(key, cn, sn, did),
+        session_id=derive_session_id(derive_session_key(key, cn, sn, did), cn, sn),
+        nonce_counter=0,
+    )
 
 
 @pytest.mark.asyncio
@@ -533,16 +536,16 @@ async def test_encrypted_frames_and_fresh_nonce_on_retransmit() -> None:
     dev, conn = make_device([data_ack({0, 2}), data_ack({0, 1, 2})], max_queue_size=4)
     _make_session(dev)
     chunks = [b"a", b"b", b"c"]
-    start_nonce = dev._nonce_counter
+    start_nonce = dev._channel.session.nonce_counter
     await dev._send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
     frames = _data_frames(conn)
     # Every data frame is a full CCM envelope (>= 31 bytes).
     for f in frames:
         assert len(f) >= 31
     # 3 initial sends + 1 retransmit of chunk 1 = 4 encryptions → nonce advanced 4x.
-    assert dev._nonce_counter == start_nonce + 4
+    assert dev._channel.session.nonce_counter == start_nonce + 4
     # The retransmit carries a higher nonce than the original send of chunk 1.
-    seq1_frames = [f for f in frames if decrypt_response(dev._session_key, f)[1][0] == 1]
+    seq1_frames = [f for f in frames if decrypt_response(dev._channel.session.session_key, f)[1][0] == 1]
     assert len(seq1_frames) == 2
     n0 = int.from_bytes(seq1_frames[0][2:18], "big")
     n1 = int.from_bytes(seq1_frames[1][2:18], "big")
@@ -556,7 +559,7 @@ async def test_encrypted_seq_is_first_plaintext_byte() -> None:
     chunks = [b"AA", b"BB", b"CC", b"DD"]
     await dev._send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
     for expected_seq, f in enumerate(_data_frames(conn)):
-        _cmd, payload = decrypt_response(dev._session_key, f)
+        _cmd, payload = decrypt_response(dev._channel.session.session_key, f)
         assert payload[0] == expected_seq  # seq is the first plaintext byte
         assert payload[1:] == chunks[expected_seq]  # then the chunk
 
@@ -565,13 +568,13 @@ async def test_encrypted_seq_is_first_plaintext_byte() -> None:
 async def test_encrypted_data_size_212_at_244() -> None:
     dev, _ = make_device([], max_queue_size=4)
     _make_session(dev)
-    assert dev._pipe_data_size(244) == 212  # 244 - 31 - 1
+    assert dev._channel.pipe_data_size(244) == 212  # 244 - 31 - 1
 
 
 @pytest.mark.asyncio
 async def test_plaintext_data_size_241_at_244() -> None:
     dev, _ = make_device([], max_queue_size=4)
-    assert dev._pipe_data_size(244) == 241  # 244 - 3
+    assert dev._channel.pipe_data_size(244) == 241  # 244 - 3
 
 
 @pytest.mark.asyncio
@@ -585,9 +588,11 @@ async def test_encrypted_ack_decrypts_and_classifies() -> None:
     # Firmware would encrypt {0x00,0x81,hs,mask} via sendResponse: cmd=0x0081,
     # payload=[hs,mask:4]. Reproduce that envelope and confirm _read yields the ACK.
     ack_plain = data_ack({0, 1, 2})
-    env = encrypt_command(dev._session_key, dev._session_id, 0, ack_plain[:2], ack_plain[2:])
+    env = encrypt_command(
+        dev._channel.session.session_key, dev._channel.session.session_id, 0, ack_plain[:2], ack_plain[2:]
+    )
     conn._responses = [env]
-    decoded = await dev._read(timeout=5.0)
+    decoded = await dev._channel.read(timeout=5.0)
     assert classify_pipe_frame(decoded) == PIPE_FRAME_ACK
     assert decoded == ack_plain
 
@@ -601,7 +606,9 @@ async def test_encrypted_nack_decrypts_and_aborts() -> None:
     dev, conn = make_device([], max_queue_size=4)
     _make_session(dev)
     nack_plain = data_nack(0x03, 1, 0x1)  # {0xFF,0x81,err,hs,mask}
-    env = encrypt_command(dev._session_key, dev._session_id, 0, nack_plain[:2], nack_plain[2:])
+    env = encrypt_command(
+        dev._channel.session.session_key, dev._channel.session.session_id, 0, nack_plain[:2], nack_plain[2:]
+    )
     assert len(env) >= 31  # genuinely encrypted envelope
     conn._responses = [env]
     with pytest.raises(ProtocolError, match="NACK"):
@@ -627,7 +634,9 @@ async def test_encrypted_full_pipe_end_to_end_through_execute_upload() -> None:
 
     def enc(plain: bytes, ctr: int) -> bytes:
         # Device→host responses use the same CCM envelope as commands.
-        return encrypt_command(dev._session_key, dev._session_id, ctr, plain[:2], plain[2:])
+        return encrypt_command(
+            dev._channel.session.session_key, dev._channel.session.session_id, ctr, plain[:2], plain[2:]
+        )
 
     # start_ack (8 B), data ack for chunk 0, unsolicited auto-complete END_ACK
     # (2-byte plaintext → 31-byte envelope, the exact decrypt-floor boundary),
@@ -642,7 +651,7 @@ async def test_encrypted_full_pipe_end_to_end_through_execute_upload() -> None:
     plaintexts = []
     for w in conn.written:
         assert len(w) >= 31
-        cmd_code, payload = decrypt_response(dev._session_key, w)
+        cmd_code, payload = decrypt_response(dev._channel.session.session_key, w)
         plaintexts.append(cmd_code.to_bytes(2, "big") + payload)
     assert plaintexts[0][:2] == b"\x00\x80"
     assert len(plaintexts[0]) == 12  # full-frame START: no partial extension

@@ -17,6 +17,7 @@ import pytest
 from epaper_dithering import DitherOptions, Palette
 
 from opendisplay import OpenDisplayDevice
+from opendisplay.device.channel import LegacySession
 from opendisplay.exceptions import (
     AuthenticationRequiredError,
     ImageEncodingError,
@@ -132,9 +133,9 @@ def _make_device(transmission_modes: int = 0x02, width: int = 4, height: int = 4
 async def test_read_short_frame_passthrough_during_session() -> None:
     """Direct-write ACKs (2 bytes) are sent unencrypted even in authenticated sessions."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
-    device._session_key = b"\x00" * 16
-    device._connection = _FakeConnection([ACK_START])
-    result = await device._read(timeout=5.0)
+    device._attach(_FakeConnection([ACK_START]))
+    device._channel.session = LegacySession(session_key=b"\x00" * 16, session_id=b"\x00" * 8)
+    result = await device._channel.read(timeout=5.0)
     assert result == ACK_START
 
 
@@ -142,9 +143,9 @@ async def test_read_short_frame_passthrough_during_session() -> None:
 async def test_read_error_frame_passthrough_during_session() -> None:
     """0xFF,0xFF error frame is 2 bytes and must not trigger a decryption attempt."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
-    device._session_key = b"\x00" * 16
-    device._connection = _FakeConnection([ERR_FRAME])
-    result = await device._read(timeout=5.0)
+    device._attach(_FakeConnection([ERR_FRAME]))
+    device._channel.session = LegacySession(session_key=b"\x00" * 16, session_id=b"\x00" * 8)
+    result = await device._channel.read(timeout=5.0)
     assert result == ERR_FRAME
 
 
@@ -152,31 +153,31 @@ async def test_read_error_frame_passthrough_during_session() -> None:
 async def test_read_3byte_0xfe_raises_authentication_required() -> None:
     """3-byte response ending in 0xFE signals authentication required."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
-    device._connection = _FakeConnection([b"\x00\x43\xfe"])
+    device._attach(_FakeConnection([b"\x00\x43\xfe"]))
     with pytest.raises(AuthenticationRequiredError):
-        await device._read(timeout=5.0)
+        await device._channel.read(timeout=5.0)
 
 
 @pytest.mark.asyncio
 async def test_read_3byte_0xff_raises_integrity_check() -> None:
     """3-byte {0x00, cmd, 0xFF} decrypt/integrity-failure frame must not pass as an ACK."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
-    device._session_key = b"\x00" * 16
     # {0x00, 0x71, 0xFF}: echoes the DATA command but signals integrity failure.
-    device._connection = _FakeConnection([b"\x00\x71\xff"])
+    device._attach(_FakeConnection([b"\x00\x71\xff"]))
+    device._channel.session = LegacySession(session_key=b"\x00" * 16, session_id=b"\x00" * 8)
     with pytest.raises(IntegrityCheckError):
-        await device._read(timeout=5.0)
+        await device._channel.read(timeout=5.0)
 
 
 @pytest.mark.asyncio
 async def test_read_long_frame_decrypted_during_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """Frames ≥31 bytes are decrypted; result is reconstructed as cmd + payload."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
-    device._session_key = b"\xab" * 16
     long_frame = b"\x00" * 31  # len >= _ENCRYPTED_RESPONSE_MIN_LEN
-    device._connection = _FakeConnection([long_frame])
-    monkeypatch.setattr("opendisplay.device.facade.decrypt_response", lambda key, raw: (0x0070, b""))
-    result = await device._read(timeout=5.0)
+    device._attach(_FakeConnection([long_frame]))
+    device._channel.session = LegacySession(session_key=b"\xab" * 16, session_id=b"\x00" * 8)
+    monkeypatch.setattr("opendisplay.device.channel.decrypt_response", lambda key, raw: (0x0070, b""))
+    result = await device._channel.read(timeout=5.0)
     assert result == ACK_START
 
 
@@ -189,7 +190,7 @@ async def test_uncompressed_data_chunks_use_90s_timeout() -> None:
     image_data = b"\x00" * 10
     device = _make_device()
     fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     await device._execute_upload(image_data, RefreshMode.FULL, use_compression=False)
     assert fake.timeouts[0] == device.TIMEOUT_FIRST_CHUNK
     assert fake.timeouts[1] == device.TIMEOUT_DIRECT_WRITE_DATA_ACK
@@ -204,7 +205,7 @@ async def test_uncompressed_auto_completed_skips_end_write() -> None:
     device = _make_device()
     # Device replies with ACK_END to the DATA chunk (buffer full → auto-refresh)
     fake = _FakeConnection([ACK_START, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     await device._execute_upload(image_data, RefreshMode.FULL, use_compression=False)
     # Only START write + 1 DATA write; no END write
     assert len(fake.written) == 2
@@ -218,7 +219,7 @@ async def test_uncompressed_full_sequence() -> None:
     image_data = b"\x00" * 10
     device = _make_device()
     fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     await device._execute_upload(image_data, RefreshMode.FULL, use_compression=False)
     assert len(fake.written) == 3
     assert fake.written[0][:2] == b"\x00\x70"  # START
@@ -238,7 +239,7 @@ async def test_compressed_end_ack_uses_90s_timeout() -> None:
     compressed = b"\xff" * 5  # Tiny — fits entirely in START payload
     device = _make_device()
     fake = _FakeConnection([ACK_START, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     await device._execute_upload(
         image_data,
         RefreshMode.FULL,
@@ -265,7 +266,7 @@ async def test_compressed_data_chunk_acks_use_same_timeout_as_uncompressed() -> 
     compressed = b"\xff" * 300
     device = _make_device()
     fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     await device._execute_upload(
         image_data,
         RefreshMode.FULL,
@@ -287,10 +288,13 @@ async def test_compressed_start_payload_capped_at_encrypted_chunk_size_during_se
     image_data = b"\x00" * 500
     compressed = b"\xff" * 190
     device = _make_device()
-    device._session_key = b"\x00" * 16
-    monkeypatch.setattr("opendisplay.device.facade.encrypt_command", lambda key, data: data)
+    monkeypatch.setattr(
+        "opendisplay.device.channel.encrypt_command",
+        lambda key, session_id, counter, cmd, payload: cmd + payload,
+    )
     fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
+    device._channel.session = LegacySession(session_key=b"\x00" * 16, session_id=b"\x00" * 8)
     await device._execute_upload(
         image_data,
         RefreshMode.FULL,
@@ -313,7 +317,7 @@ async def test_compressed_full_sequence_small_payload() -> None:
     compressed = b"\xff" * 5
     device = _make_device()
     fake = _FakeConnection([ACK_START, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     await device._execute_upload(
         image_data,
         RefreshMode.FULL,
@@ -337,7 +341,7 @@ async def test_compressed_start_rejected_retries_uncompressed() -> None:
     device = _make_device()
     # Device rejects compressed START, then accepts bare START
     fake = _FakeConnection([ERR_FRAME, ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     await device._execute_upload(
         image_data,
         RefreshMode.FULL,
@@ -360,7 +364,7 @@ async def test_compressed_start_rejected_spec_frame_retries_uncompressed() -> No
     device = _make_device()
     spec_err_frame = b"\xff\x70"  # {0xFF, <DIRECT_WRITE_START low byte>}
     fake = _FakeConnection([spec_err_frame, ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     await device._execute_upload(
         image_data,
         RefreshMode.FULL,
@@ -381,7 +385,7 @@ async def test_after_fallback_data_chunks_use_uncompressed_timeout() -> None:
     compressed = b"\xff" * 5
     device = _make_device()
     fake = _FakeConnection([ERR_FRAME, ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     await device._execute_upload(
         image_data,
         RefreshMode.FULL,
@@ -480,7 +484,7 @@ async def test_dispatch_zip_only_lazy_compression_uses_9bit_window(
 async def test_execute_upload_raises_valueerror_when_compression_args_missing() -> None:
     """use_compression=True without compressed_data/uncompressed_size must raise ValueError."""
     device = _make_device()
-    device._connection = _FakeConnection([])
+    device._attach(_FakeConnection([]))
     with pytest.raises(ValueError, match="uncompressed_size and compressed_data are required"):
         await device._execute_upload(b"\x00" * 10, RefreshMode.FULL, use_compression=True)
 
@@ -491,7 +495,7 @@ async def test_execute_upload_reraises_when_uncompressed_start_rejected() -> Non
     from opendisplay.exceptions import InvalidResponseError
 
     device = _make_device()
-    device._connection = _FakeConnection([ERR_FRAME])
+    device._attach(_FakeConnection([ERR_FRAME]))
     with pytest.raises(InvalidResponseError):
         await device._execute_upload(b"\x00" * 10, RefreshMode.FULL, use_compression=False)
 
@@ -505,7 +509,7 @@ async def test_execute_upload_raises_on_refresh_timeout_response() -> None:
     device = _make_device()
     # Minimal sequence up to the refresh wait, then device sends 0x74
     fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, b"\x00\x74"])
-    device._connection = fake
+    device._attach(fake)
     with pytest.raises(ProtocolError, match="refresh timed out"):
         await device._execute_upload(image_data, RefreshMode.FULL, use_compression=False)
 
@@ -518,7 +522,7 @@ async def test_execute_upload_raises_on_unexpected_refresh_response() -> None:
     image_data = b"\x00" * 10
     device = _make_device()
     fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, b"\x00\x43"])  # READ_FW_VERSION echo
-    device._connection = fake
+    device._attach(fake)
     with pytest.raises(ProtocolError, match="Unexpected response"):
         await device._execute_upload(image_data, RefreshMode.FULL, use_compression=False)
 
@@ -618,7 +622,7 @@ async def test_gray4_uncompressed_dispatch_uses_uncompressed_protocol() -> None:
     """4-gray with compress=False streams the split planes via the bare-0x70 protocol."""
     device = _make_gray4_device()
     fake = _FakeConnection([ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     # compress=False forces the uncompressed branch; the two planes stream as 0x71 chunks.
     await device._dispatch_upload(b"\x00" * 16, RefreshMode.FULL, False, None, None)
     assert fake.written[0][:2] == b"\x00\x70"  # bare START (no size header)
@@ -632,7 +636,7 @@ async def test_gray4_compressed_start_rejected_falls_back_to_uncompressed() -> N
     device = _make_gray4_device()
     # Reject compressed START, then accept the uncompressed retry.
     fake = _FakeConnection([ERR_FRAME, ACK_START, ACK_DATA, ACK_END, ACK_REFRESH])
-    device._connection = fake
+    device._attach(fake)
     await device._execute_upload(
         b"\x00" * 16,
         RefreshMode.FULL,

@@ -26,7 +26,7 @@ def _device(transport: object) -> OpenDisplayDevice:
         transport=transport,  # type: ignore[arg-type]
         capabilities=DeviceCapabilities(width=8, height=8, color_scheme=ColorScheme.MONO),
     )
-    device._connection = transport  # type: ignore[assignment]
+    device._attach(transport)  # type: ignore[arg-type]
     return device
 
 

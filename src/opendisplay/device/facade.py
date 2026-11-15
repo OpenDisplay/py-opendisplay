@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import hmac
 import logging
 import math
-import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, TypeVar, cast
@@ -18,13 +16,6 @@ from PIL import Image
 
 from ..crypto import (
     aes_cmac,
-    compute_challenge_response,
-    compute_server_proof,
-    decrypt_response,
-    derive_session_id,
-    derive_session_key,
-    encrypt_command,
-    generate_client_nonce,
 )
 from ..encoding import (
     FIRMWARE_ZLIB_WINDOW_BITS,
@@ -33,9 +24,6 @@ from ..encoding import (
 )
 from ..exceptions import (
     AuthenticationError,
-    AuthenticationFailedError,
-    AuthenticationRequiredError,
-    AuthenticationSessionExistsError,
     BLEConnectionError,
     ImageEncodingError,
     IntegrityCheckError,
@@ -66,7 +54,6 @@ from ..partial import (
     parse_nack,
 )
 from ..protocol import (
-    CHUNK_SIZE,
     DEFAULT_MAX_FRAME,
     ENCRYPTED_CHUNK_SIZE,
     MAX_COMPRESSED_SIZE,
@@ -77,15 +64,12 @@ from ..protocol import (
     NFC_WRITE_MAX_TOTAL,
     OD_LAN_TCP_PORT,
     PIPE_FLAG_PARTIAL,
-    PIPE_FRAME_OVERHEAD,
     PIPE_MAX_RETX_FRACTION,
     PIPE_RETX_ACK_SPACING,
     TIMEOUT_PIPE_START,
     CommandCode,
     PipeParams,
     PipePartialRequest,
-    build_authenticate_step1,
-    build_authenticate_step2,
     build_buzzer_activate_command,
     build_deep_sleep_command,
     build_direct_write_data_command,
@@ -132,11 +116,8 @@ from ..protocol.responses import (
     PIPE_START_NACK_RECT_INVALID,
     check_response_type,
     describe_command_code,
-    is_authenticate_challenge_frame,
     is_compressed_failure_frame,
     matches_command_echo,
-    parse_authenticate_challenge,
-    parse_authenticate_success,
     parse_read_msd,
     strip_command_echo,
     unpack_command_code,
@@ -144,6 +125,7 @@ from ..protocol.responses import (
 )
 from ..sensors import SensorReading, read_sensor_values
 from ..transport import BLEConnection, TcpTransport, Transport
+from .channel import MAX_STRAY_AUTH_FRAMES, SecureChannel
 from .imaging import _capabilities_from_config, prepare_image
 
 if TYPE_CHECKING:
@@ -219,15 +201,13 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             await device.upload_image(image)
     """
 
-    _ENCRYPTED_RESPONSE_MIN_LEN = 31  # cmd(2) + nonce(16) + payload(1) + tag(12)
-
     # Foreign frames tolerated while waiting for a config chunk before giving up.
     # Bounded so a device streaming unrelated frames fails with a clear error
     # instead of renewing the read timeout indefinitely.
     MAX_STRAY_CONFIG_FRAMES = 8
 
     # Step-1 challenge frames tolerated while waiting for the step-2 auth response.
-    MAX_STRAY_AUTH_FRAMES = 4
+    MAX_STRAY_AUTH_FRAMES = MAX_STRAY_AUTH_FRAMES
 
     # BLE operation timeouts (seconds)
     TIMEOUT_FIRST_CHUNK = 10.0  # First chunk may take longer
@@ -352,10 +332,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         # Encryption session state (populated by authenticate())
         self._encryption_key = encryption_key
-        self._session_key: bytes | None = None
-        self._session_id: bytes | None = None
-        self._nonce_counter: int = 0
-        self._auth_time: float | None = None  # monotonic timestamp of last successful auth
+        self._attached_channel: SecureChannel | None = None  # created with the transport, in _attach()
 
         # Serializes command round-trips (see _serialized / _transaction).
         self._command_lock = asyncio.Lock()
@@ -402,7 +379,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # Transport selection (mutually exclusive, validated in __init__):
         # explicit transport= > host=/port= (TCP) > BLE address (default).
         if self._transport_param is not None:
-            self._connection = self._transport_param
+            transport: Transport = self._transport_param
         elif self._host is not None:
             # The TLS-PSK key is NOT the master key: firmware deriveTlsPsk() uses
             # AES-CMAC(master_key, "opendisplay-tls-psk") so the TLS channel never
@@ -412,7 +389,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             psk = self._psk
             if psk is None and self._tls and self._encryption_key:
                 psk = aes_cmac(self._encryption_key, b"opendisplay-tls-psk")
-            self._connection = TcpTransport(
+            transport = TcpTransport(
                 self._host,
                 self._port,
                 timeout=self._timeout,
@@ -420,7 +397,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 psk=psk,
             )
         else:
-            self._connection = BLEConnection(
+            transport = BLEConnection(
                 self.mac_address,
                 self._ble_device,
                 self._timeout,
@@ -429,6 +406,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 disconnected_callback=self._on_disconnect,
             )
 
+        self._attach(transport)
         await self._conn.connect()
 
         # Over TCP the device gates AES-CCM decrypt on origin: TLS frames are
@@ -460,7 +438,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         except BaseException:
             with suppress(Exception):
                 await self._conn.disconnect()
-            self._clear_session()
+            self._channel.reset()
             raise
 
         return self
@@ -475,7 +453,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         if self._connection is not None:
             await self._conn.disconnect()
         # Forget the session so a reused device object re-authenticates cleanly.
-        self._clear_session()
+        if self._attached_channel is not None:
+            self._attached_channel.reset()
 
     @property
     def _conn(self) -> Transport:
@@ -483,6 +462,28 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         if self._connection is None:
             raise RuntimeError("Device not connected")
         return self._connection
+
+    def _attach(self, transport: Transport) -> None:
+        """Adopt ``transport`` as this device's link and build the channel on top of it."""
+        self._connection = transport
+        self._attached_channel = SecureChannel(
+            transport,
+            reauth_key=self._encryption_key,
+            session_timeout=self._session_timeout_seconds,
+        )
+
+    @property
+    def _channel(self) -> SecureChannel:
+        """Return the secure channel, raising RuntimeError if not connected."""
+        if self._attached_channel is None:
+            raise RuntimeError("Device not connected")
+        return self._attached_channel
+
+    def _session_timeout_seconds(self) -> int:
+        """The device's session timeout from its config, or 0 when unknown or disabled."""
+        if self._config is None or self._config.security_config is None:
+            return 0
+        return self._config.security_config.session_timeout_seconds
 
     @asynccontextmanager
     async def _transaction(self) -> AsyncIterator[None]:
@@ -503,126 +504,22 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             finally:
                 self._lock_owner = None
 
-    def _clear_session(self) -> None:
-        """Drop any encryption session state.
-
-        Called on disconnect so a reused device object does not encrypt against
-        a session the firmware has already torn down.
-        """
-        self._session_key = None
-        self._session_id = None
-        self._nonce_counter = 0
-        self._auth_time = None
-
     def _on_disconnect(self) -> None:
         """Handle an unexpected link drop: forget the (now-dead) session and pipe state."""
         _LOGGER.debug("Link to %s dropped; clearing session state", self.mac_address)
-        self._clear_session()
+        if self._attached_channel is not None:
+            self._attached_channel.reset()
         # All pipe negotiation/capability state is per-connection (Part 1 §1.1).
         self._pipe_probed = False
         self._pipe_supported = False
         self._pipe_partial_supported = None
-
-    def _encrypt_frame(self, data: bytes) -> bytes:
-        """Encrypt one plaintext command frame under the active session.
-
-        Advances the nonce counter by one so every transmission — including a
-        PIPE_WRITE retransmission — carries a fresh, higher nonce. Returns ``data``
-        unchanged when no session is active. Does NOT re-authenticate (callers
-        handle re-auth once before a stream, never mid-stream).
-        """
-        if self._session_key is not None and self._session_id is not None:
-            cmd = data[:2]
-            payload = data[2:]
-            frame = encrypt_command(self._session_key, self._session_id, self._nonce_counter, cmd, payload)
-            self._nonce_counter += 1
-            return frame
-        return data
-
-    async def _write(self, data: bytes, response: bool = True) -> None:
-        """Write a command, encrypting it if an active session exists.
-
-        Args:
-            data: Plaintext command frame (opcode + payload).
-            response: Passed through to the transport. False requests a BLE Write
-                Without Response (used for 0x71 data chunks); applies whether or not
-                the frame is encrypted.
-        """
-        if self._session_key is not None and self._session_id is not None:
-            await self._reauthenticate_if_needed()
-            await self._conn.write_command(self._encrypt_frame(data), response=response)
-        else:
-            await self._conn.write_command(data, response=response)
-
-    async def _write_pipe_frame(self, data: bytes, *, response: bool) -> None:
-        """Encrypt (no re-auth) and write a live PIPE_WRITE stream frame.
-
-        Passes ``drain_stale=False`` so queued sliding-window ACKs are preserved.
-        Used for every 0x0081 DATA frame (response=False) and the 0x0082 END
-        (response=True). Re-authentication is intentionally skipped: it runs once
-        before 0x0080 and never mid-stream (Part 1 §1.6).
-        """
-        await self._conn.write_command(self._encrypt_frame(data), response=response, drain_stale=False)
-
-    async def _reauthenticate_if_needed(self) -> None:
-        """Re-authenticate proactively at 90% of session_timeout_seconds."""
-        if self._encryption_key is None or self._auth_time is None:
-            return
-        if self._config is None or self._config.security_config is None:
-            return
-        timeout = self._config.security_config.session_timeout_seconds
-        if timeout == 0:
-            return
-        elapsed = time.monotonic() - self._auth_time
-        if elapsed >= timeout * 0.9:
-            _LOGGER.info(
-                "Session approaching timeout (%.0fs / %ds), re-authenticating",
-                elapsed,
-                timeout,
-            )
-            await self.authenticate(self._encryption_key)
-
-    async def _read(self, timeout: float) -> bytes:
-        """Read a response, decrypting it if an active session exists.
-
-        Raises:
-            AuthenticationRequiredError: If device returns 0xFE (encryption required, no active session)
-            IntegrityCheckError: If device returns 0xFF (decrypt/integrity check failed, command not executed)
-        """
-        raw = await self._conn.read_response(timeout=timeout)
-        if self._session_key is not None:
-            # Encrypted packets are at least cmd(2)+nonce(16)+payload(1)+tag(12)=31 bytes.
-            # Shorter responses are sent unencrypted by the firmware even during a session:
-            # direct-write ACKs (0x0070-0x0073) are always 2-byte plaintext; error frames
-            # like {0xFF, 0xFF} (compressed buffer unavailable) are also unencrypted.
-            if len(raw) >= self._ENCRYPTED_RESPONSE_MIN_LEN:
-                cmd_code, payload = decrypt_response(self._session_key, raw)
-                return cmd_code.to_bytes(2, "big") + payload
-        # Firmware returns [cmd_high, cmd_low, 0xFE] (3 bytes) when a command
-        # requires authentication but no session is active.
-        if len(raw) == 3 and raw[2] == 0xFE:
-            raise AuthenticationRequiredError(
-                "Device requires an encryption key — pass encryption_key=bytes.fromhex('...') to OpenDisplayDevice"
-            )
-        # Firmware returns [cmd_high, cmd_low, 0xFF] (3 bytes) when an encrypted
-        # command fails AES-GCM decryption / tag verification. The command was
-        # NOT executed, so it must not be treated as an ACK — the 2-byte echo
-        # otherwise matches the expected command code and passes validation.
-        # Distinct from the 2-byte {0xFF, 0xFF} compressed-failure frame and
-        # 4-byte NACK frames, which have different lengths.
-        if len(raw) == 3 and raw[2] == 0xFF:
-            raise IntegrityCheckError(
-                f"Device rejected command 0x{unpack_command_code(raw):04x}: "
-                "decryption/integrity check failed (command not executed) — likely a dropped or corrupted packet"
-            )
-        return raw
 
     @_serialized
     async def authenticate(self, key: bytes) -> None:
         """Perform two-step challenge-response authentication with the device.
 
         After successful authentication, all subsequent commands and responses
-        are transparently encrypted/decrypted via _write() and _read().
+        are transparently encrypted/decrypted by the secure channel.
 
         Args:
             key: 16-byte AES-128 master key
@@ -632,65 +529,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             InvalidResponseError: If device sends malformed response
         """
         _LOGGER.debug("Authenticating with device %s", self.mac_address)
-
-        # Step 1: Request server nonce (retry once if device reports existing session)
-        for attempt in range(2):
-            await self._conn.write_command(build_authenticate_step1())
-            challenge_data = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
-            try:
-                server_nonce, device_id = parse_authenticate_challenge(challenge_data)
-                break
-            except AuthenticationSessionExistsError:
-                if attempt == 1:
-                    raise
-                _LOGGER.debug("Device has active session, retrying for fresh challenge")
-
-        # Step 2: Prove key knowledge, receive server proof
-        client_nonce = generate_client_nonce()
-        challenge = compute_challenge_response(key, server_nonce, client_nonce, device_id)
-        await self._conn.write_command(build_authenticate_step2(client_nonce, challenge))
-        server_proof = parse_authenticate_success(await self._read_auth_step2())  # raises on wrong key / error
-
-        # Derive session key and ID
-        session_key = derive_session_key(key, client_nonce, server_nonce, device_id)
-
-        # Verify the device's mutual-auth proof so we authenticate the device, not
-        # just the other way around. A device (or MITM) that returns status OK
-        # without knowing the master key cannot produce this CMAC. Constant-time
-        # compare to avoid leaking a timing side channel.
-        expected_proof = compute_server_proof(session_key, server_nonce, client_nonce, device_id)
-        if not hmac.compare_digest(server_proof, expected_proof):
-            raise AuthenticationFailedError("Device failed mutual authentication (server proof mismatch)")
-
-        self._session_key = session_key
-        self._session_id = derive_session_id(self._session_key, client_nonce, server_nonce)
-        self._nonce_counter = 0
-        self._auth_time = time.monotonic()
-
-        _LOGGER.info("Authentication successful, session established")
-
-    async def _read_auth_step2(self) -> bytes:
-        """Read the step-2 AUTHENTICATE response, skipping repeated step-1 challenges.
-
-        A challenge and a step-2 success share status 0x00 and differ only in
-        length. A challenge frame that arrives twice (the notification queue has
-        no request/response correlation) would otherwise be taken for the
-        success, its server nonce for the proof, and the handshake would fail
-        with a misleading server-proof mismatch.
-
-        Raises:
-            ProtocolError: If more than ``MAX_STRAY_AUTH_FRAMES`` challenge
-                frames arrive instead of the step-2 response
-        """
-        for _ in range(self.MAX_STRAY_AUTH_FRAMES + 1):
-            response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
-            if not is_authenticate_challenge_frame(response):
-                return response
-            _LOGGER.warning("Ignoring a repeated auth challenge frame while waiting for the step-2 response")
-        raise ProtocolError(
-            f"Authentication aborted: more than {self.MAX_STRAY_AUTH_FRAMES} challenge frames "
-            "arrived instead of the step-2 response"
-        )
+        await self._channel.authenticate(key)
 
     def _ensure_capabilities(self) -> DeviceCapabilities:
         """Ensure device capabilities are available.
@@ -887,7 +726,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 arrive while waiting for this chunk
         """
         for _ in range(self.MAX_STRAY_CONFIG_FRAMES + 1):
-            response = await self._read(timeout)
+            response = await self._channel.read(timeout)
             if matches_command_echo(response, CommandCode.READ_CONFIG):
                 return response
             # NACK form of the same command: {0xFF, <cmd low byte>, ...}
@@ -921,7 +760,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         # Send read config command
         cmd = build_read_config_command()
-        await self._write(cmd)
+        await self._channel.write(cmd)
 
         # Read first chunk
         response = await self._read_config_frame(self.TIMEOUT_FIRST_CHUNK)
@@ -1030,8 +869,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         """
         _LOGGER.debug("Reading MSD from device %s", self.mac_address)
 
-        await self._write(build_read_msd_command())
-        response = await self._read(self.TIMEOUT_ACK)
+        await self._channel.write(build_read_msd_command())
+        response = await self._channel.read(self.TIMEOUT_ACK)
 
         return parse_advertisement(parse_read_msd(response))
 
@@ -1070,7 +909,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         # Build and send reboot command
         cmd = build_reboot_command()
-        await self._write(cmd)
+        await self._channel.write(cmd)
 
         # Device will reset immediately - no ACK expected
         _LOGGER.info("Reboot command sent to %s - device will reset (connection will drop)", self.mac_address)
@@ -1110,7 +949,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         _LOGGER.debug("Sending deep sleep command (0x0053) to device %s", self.mac_address)
 
         try:
-            await self._write(build_deep_sleep_command(duration_seconds))
+            await self._channel.write(build_deep_sleep_command(duration_seconds))
         except OpenDisplayConnectionError as exc:
             # An ESP32 without a power latch tears down BLE synchronously as it
             # enters deep sleep, so the write-with-response confirmation can fail
@@ -1128,7 +967,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # command replies with the 0xFF53 error frame (protocol: 0xFF [command_low]).
         # A disconnect or timeout here means the device slept without acking.
         try:
-            response = await self._read(self.TIMEOUT_ACK)
+            response = await self._channel.read(self.TIMEOUT_ACK)
         except (OpenDisplayConnectionError, OpenDisplayTimeoutError) as exc:
             _LOGGER.debug(
                 "No deep sleep ACK (expected — device dropped the link or sleeps silently): %s",
@@ -1163,7 +1002,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         _LOGGER.debug("Sending power off command (0x0052) to device %s", self.mac_address)
 
         try:
-            await self._write(build_power_off_command())
+            await self._channel.write(build_power_off_command())
         except OpenDisplayConnectionError as exc:
             _LOGGER.debug(
                 "Power off write did not confirm (expected — device powers off before responding): %s",
@@ -1173,7 +1012,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             return
 
         try:
-            response = await self._read(self.TIMEOUT_ACK)
+            response = await self._channel.read(self.TIMEOUT_ACK)
         except (OpenDisplayConnectionError, OpenDisplayTimeoutError) as exc:
             _LOGGER.debug(
                 "No power off ACK (expected — device dropped the link): %s",
@@ -1208,7 +1047,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         """
         _LOGGER.debug("Triggering DFU bootloader on device %s", self.mac_address)
         try:
-            await self._write(build_enter_dfu_command())
+            await self._channel.write(build_enter_dfu_command())
         except OpenDisplayConnectionError as exc:
             # The firmware resets before it can ACK this command — it has no time
             # to send a write response — so the confirmation never arrives. With a
@@ -1289,10 +1128,10 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             led_instance=led_instance,
             flash_config=flash_config,
         )
-        await self._write(cmd)
+        await self._channel.write(cmd)
 
         response_timeout = self.TIMEOUT_REFRESH if timeout is None else timeout
-        response = await self._read(response_timeout)
+        response = await self._channel.read(response_timeout)
 
         # Firmware LED errors use 0xFF73 + error code payload.
         if len(response) >= 2 and unpack_command_code(response) == 0xFF73:
@@ -1330,10 +1169,10 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             raise RuntimeError("Device not connected")
 
         cmd = build_buzzer_activate_command(buzzer_instance=buzzer_instance, config=config)
-        await self._write(cmd)
+        await self._channel.write(cmd)
 
         response_timeout = self.TIMEOUT_REFRESH if timeout is None else timeout
-        response = await self._read(response_timeout)
+        response = await self._channel.read(response_timeout)
         validate_ack_response(response, CommandCode.BUZZER_ACTIVATE)
         return response
 
@@ -1381,7 +1220,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         async def _read_nfc(read_timeout: float) -> bytes:
             nonlocal first_read
             try:
-                response = await self._read(read_timeout)
+                response = await self._channel.read(read_timeout)
             except OpenDisplayTimeoutError:
                 if first_read:
                     raise NfcNotSupportedError() from None
@@ -1391,22 +1230,22 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             return response
 
         if len(payload) <= NFC_INLINE_MAX:
-            await self._write(build_nfc_write_inline_command(int(rec_type), payload))
+            await self._channel.write(build_nfc_write_inline_command(int(rec_type), payload))
             response = await _read_nfc(commit_timeout)
             validate_nfc_response(response, NFC_STATUS_WRITE_OK)
             return
 
-        await self._write(build_nfc_write_start_command(int(rec_type), len(payload)))
+        await self._channel.write(build_nfc_write_start_command(int(rec_type), len(payload)))
         response = await _read_nfc(self.TIMEOUT_ACK)
         validate_nfc_response(response, NFC_STATUS_CHUNK_ACK)
 
         for offset in range(0, len(payload), NFC_CHUNK_SIZE):
             chunk = payload[offset : offset + NFC_CHUNK_SIZE]
-            await self._write(build_nfc_write_data_command(chunk))
+            await self._channel.write(build_nfc_write_data_command(chunk))
             response = await _read_nfc(self.TIMEOUT_ACK)
             validate_nfc_response(response, NFC_STATUS_CHUNK_ACK)
 
-        await self._write(build_nfc_write_end_command())
+        await self._channel.write(build_nfc_write_end_command())
         response = await _read_nfc(commit_timeout)
         validate_nfc_response(response, NFC_STATUS_WRITE_OK)
 
@@ -1513,19 +1352,19 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         # Send first command
         _LOGGER.debug("Sending first config chunk (%d bytes)", len(first_cmd))
-        await self._write(first_cmd)
+        await self._channel.write(first_cmd)
 
         # Wait for ACK
-        response = await self._read(self.TIMEOUT_ACK)
+        response = await self._channel.read(self.TIMEOUT_ACK)
         validate_ack_response(response, CommandCode.WRITE_CONFIG)
 
         # Send remaining chunks if needed
         for i, chunk_cmd in enumerate(chunk_cmds, start=1):
             _LOGGER.debug("Sending config chunk %d/%d (%d bytes)", i, len(chunk_cmds), len(chunk_cmd))
-            await self._write(chunk_cmd)
+            await self._channel.write(chunk_cmd)
 
             # Wait for ACK after each chunk
-            response = await self._read(self.TIMEOUT_ACK)
+            response = await self._channel.read(self.TIMEOUT_ACK)
             validate_ack_response(response, CommandCode.WRITE_CONFIG_CHUNK)
 
         _LOGGER.info("Config written successfully to %s", self.mac_address)
@@ -1854,21 +1693,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         palette_image = processed_image.convert("P") if processed_image.mode != "P" else processed_image
         state.commit(etag, palette_image.tobytes(), *processed_image.size)
 
-    def _direct_write_chunk_size(self) -> int:
-        """Data bytes per 0x71 DIRECT_WRITE chunk for the current transport.
-
-        Encrypted BLE session -> ENCRYPTED_CHUNK_SIZE (154); plain BLE ->
-        CHUNK_SIZE (230); a large-frame LAN transport -> ``max_frame - 2`` (the
-        2-byte opcode header), e.g. 4092 for a 4094-byte payload / 4096-byte
-        wire frame.
-        """
-        if self._session_key is not None:
-            return ENCRYPTED_CHUNK_SIZE
-        max_frame = self._conn.max_frame
-        if max_frame > DEFAULT_MAX_FRAME:
-            return max_frame - 2
-        return CHUNK_SIZE
-
     async def _send_partial_chunks(
         self,
         remaining: bytes,
@@ -1882,15 +1706,15 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         before the refresh started (firmware aborts the partial on such a NACK,
         so a subsequent full upload is safe).
         """
-        chunk_size = self._direct_write_chunk_size()
+        chunk_size = self._channel.direct_chunk_size()
         total_stream_bytes = len(stream_bytes)
         bytes_sent = total_stream_bytes - len(remaining)
         offset = 0
         while offset < len(remaining):
             chunk = remaining[offset : offset + chunk_size]
             # Write Without Response; the per-chunk ACK read below keeps flow control.
-            await self._write(build_direct_write_data_command(chunk, max_data_len=chunk_size), response=False)
-            ack = await self._read(self.TIMEOUT_ACK)
+            await self._channel.write(build_direct_write_data_command(chunk, max_data_len=chunk_size), response=False)
+            ack = await self._channel.read(self.TIMEOUT_ACK)
             nack = parse_nack(ack)
             if nack is not None:
                 opcode, err = nack
@@ -2034,7 +1858,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         # Start partial upload (0x76), stream remaining 0x71 chunks, and finish
         # with partial refresh.
-        max_start = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else MAX_START_PAYLOAD
+        max_start = ENCRYPTED_CHUNK_SIZE if self._channel.session is not None else MAX_START_PAYLOAD
         start_pkt, remaining = build_direct_write_partial_start(
             old_etag=state.etag,
             new_etag=new_etag,
@@ -2046,9 +1870,9 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             stream_bytes=stream_bytes,
             max_start_payload=max_start,
         )
-        await self._write(start_pkt)
+        await self._channel.write(start_pkt)
         try:
-            response = await self._read(self.TIMEOUT_ACK)
+            response = await self._channel.read(self.TIMEOUT_ACK)
             nack = parse_nack(response)
             if nack is not None:
                 opcode, err = nack
@@ -2071,8 +1895,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         if await self._send_partial_chunks(remaining, stream_bytes, state, progress_callback) == "fallback_full":
             return "fallback_full"
 
-        await self._write(build_direct_write_end_command(RefreshMode.PARTIAL.value))
-        response = await self._read(self.TIMEOUT_ACK)
+        await self._channel.write(build_direct_write_end_command(RefreshMode.PARTIAL.value))
+        response = await self._channel.read(self.TIMEOUT_ACK)
         validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
         await self._await_refresh_complete()
 
@@ -2131,7 +1955,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         if use_compression:
             if uncompressed_size is None or compressed_data is None:
                 raise ValueError("uncompressed_size and compressed_data are required when use_compression=True")
-            max_start = ENCRYPTED_CHUNK_SIZE if self._session_key is not None else MAX_START_PAYLOAD
+            max_start = ENCRYPTED_CHUNK_SIZE if self._channel.session is not None else MAX_START_PAYLOAD
             start_cmd, remaining_compressed = build_direct_write_start_compressed(
                 uncompressed_size, compressed_data, max_start_payload=max_start
             )
@@ -2139,10 +1963,10 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             start_cmd = build_direct_write_start_uncompressed()
             remaining_compressed = None
 
-        await self._write(start_cmd)
+        await self._channel.write(start_cmd)
 
         # 2. Wait for START ACK — firmware initializes display hardware here, which can be slow
-        response = await self._read(self.TIMEOUT_FIRST_CHUNK)
+        response = await self._channel.read(self.TIMEOUT_FIRST_CHUNK)
         try:
             validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
         except InvalidResponseError:
@@ -2166,8 +1990,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 )
             use_compression = False
             start_cmd = build_direct_write_start_uncompressed()
-            await self._write(start_cmd)
-            response = await self._read(self.TIMEOUT_FIRST_CHUNK)
+            await self._channel.write(start_cmd)
+            response = await self._channel.read(self.TIMEOUT_FIRST_CHUNK)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
 
         # 3. Send data chunks: whatever the compressed START could not carry, or
@@ -2184,12 +2008,12 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 if new_etag is not None
                 else build_direct_write_end_command(refresh_mode.value)
             )
-            await self._write(end_cmd)
+            await self._channel.write(end_cmd)
 
             # END triggers the SPI write and/or refresh on device before the ACK is sent.
             # Both paths can block up to ~60s on slow displays (Spectra/ACeP).
             end_ack_timeout = self.TIMEOUT_COMPRESSED_END_ACK if use_compression else self.TIMEOUT_UNCOMPRESSED_END_ACK
-            response = await self._read(end_ack_timeout)
+            response = await self._channel.read(end_ack_timeout)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_END)
         await self._await_refresh_complete()
 
@@ -2205,7 +2029,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             ProtocolError: If any other frame arrives instead
         """
         _LOGGER.debug("Display refresh started, waiting for completion...")
-        response = await self._read(self.TIMEOUT_REFRESH)
+        response = await self._channel.read(self.TIMEOUT_REFRESH)
         command, _ = check_response_type(response)
         if command == CommandCode.DIRECT_WRITE_REFRESH_TIMEOUT:
             raise RefreshTimeoutError("Display refresh timed out (device sent 0x74)")
@@ -2237,21 +2061,23 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         bytes_sent = 0
         chunks_sent = 0
 
-        chunk_size = self._direct_write_chunk_size()
+        chunk_size = self._channel.direct_chunk_size()
         while bytes_sent < len(image_data):
             chunk_data = image_data[bytes_sent : bytes_sent + chunk_size]
 
             # Send the data chunk without waiting for the ATT write confirmation
             # (Write Without Response). Flow control is preserved by the per-chunk
             # application ACK read below, so only one write is ever in flight.
-            await self._write(build_direct_write_data_command(chunk_data, max_data_len=chunk_size), response=False)
+            await self._channel.write(
+                build_direct_write_data_command(chunk_data, max_data_len=chunk_size), response=False
+            )
             bytes_sent += len(chunk_data)
             chunks_sent += 1
 
             if progress_callback is not None:
                 progress_callback(bytes_sent, len(image_data))
 
-            response = await self._read(self.TIMEOUT_DIRECT_WRITE_DATA_ACK)
+            response = await self._channel.read(self.TIMEOUT_DIRECT_WRITE_DATA_ACK)
             command, _ = check_response_type(response)
 
             if command == CommandCode.DIRECT_WRITE_END:
@@ -2299,13 +2125,13 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         req_frame = self._conn.max_frame  # transport frame ceiling; our client_max_frame (BLE=244)
         # The 0x0080 is the single pre-stream write; _write re-authenticates here
         # (once, never again mid-stream).
-        await self._write(
+        await self._channel.write(
             build_pipe_write_start_command(
                 compressed, self._max_queue_size, self._blocks_per_ack, req_frame, total_size
             )
         )
         try:
-            resp = await self._read(TIMEOUT_PIPE_START)
+            resp = await self._channel.read(TIMEOUT_PIPE_START)
         except OpenDisplayTimeoutError:
             _LOGGER.debug("No 0x0080 response within %.1fs; firmware lacks PIPE_WRITE", TIMEOUT_PIPE_START)
             return None
@@ -2377,7 +2203,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         partial = PipePartialRequest(old_etag=old_etag, x=region.rx, y=region.ry, w=region.rw, h=region.rh)
         # The 0x0080 is the single pre-stream write; _write re-authenticates here
         # (once, never again mid-stream).
-        await self._write(
+        await self._channel.write(
             build_pipe_write_start_command(
                 compressed,
                 self._max_queue_size,
@@ -2388,7 +2214,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             )
         )
         try:
-            resp = await self._read(TIMEOUT_PIPE_START)
+            resp = await self._channel.read(TIMEOUT_PIPE_START)
         except OpenDisplayTimeoutError:
             _LOGGER.debug("No 0x0080 partial response within %.1fs; firmware lacks PIPE_WRITE", TIMEOUT_PIPE_START)
             self._pipe_probed = True
@@ -2445,16 +2271,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         self._pipe_partial_supported = True
         return self._effective_pipe_params(ack, compressed, partial=True)
 
-    def _pipe_data_size(self, frame_eff: int) -> int:
-        """Chunk data capacity for a pipe frame at ``frame_eff`` bytes.
-
-        Encrypted: frame_eff - CCM envelope (31) - seq (1) = 212 @ 244.
-        Plaintext: frame_eff - PIPE_FRAME_OVERHEAD (cmd 2 + seq 1) = 241 @ 244.
-        """
-        if self._session_key is not None:
-            return frame_eff - 31 - 1
-        return frame_eff - PIPE_FRAME_OVERHEAD
-
     async def _run_pipe_upload(
         self,
         payload: bytes,
@@ -2468,7 +2284,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         Returns True if ``new_etag`` was committed via END-with-etag, False if the
         firmware auto-completed the upload (no etag committed).
         """
-        size = self._pipe_data_size(params.max_frame)
+        size = self._channel.pipe_data_size(params.max_frame)
         if size < 1:
             raise ProtocolError(f"Negotiated pipe frame {params.max_frame} too small for a data byte")
         # Always keep at least one frame so the receiver's total check + END
@@ -2557,7 +2373,9 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         bytes_sent_hw = 0
 
         async def _send(idx: int) -> None:
-            await self._write_pipe_frame(build_pipe_write_data_command(idx % 256, chunks[idx]), response=False)
+            await self._channel.write_stream_frame(
+                build_pipe_write_data_command(idx % 256, chunks[idx]), response=False
+            )
 
         while True:
             # 1. Send new chunks while span-tokens are available.
@@ -2587,7 +2405,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             )
             read_timeout = self.TIMEOUT_PIPE_TAIL_FLUSH if tail_flush else chunk_timeout
             try:
-                resp = await self._read(read_timeout)
+                resp = await self._channel.read(read_timeout)
             except OpenDisplayTimeoutError:
                 if window_base >= n:
                     # Uncompressed with everything acked: firmware owes the
@@ -2698,12 +2516,12 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         recovers).
         """
         end_cmd = build_pipe_write_end_command(refresh_mode.value, new_etag)
-        await self._write_pipe_frame(end_cmd, response=True)
+        await self._channel.write_stream_frame(end_cmd, response=True)
 
         end_timeout = self.TIMEOUT_COMPRESSED_END_ACK if params.compressed else self.TIMEOUT_UNCOMPRESSED_END_ACK
         stray_acks = 0
         while True:
-            resp = await self._read(end_timeout)
+            resp = await self._channel.read(end_timeout)
             kind = classify_pipe_frame(resp)
             if kind == PIPE_FRAME_END_ACK:
                 return
