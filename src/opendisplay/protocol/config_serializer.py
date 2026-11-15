@@ -669,6 +669,11 @@ def serialize_config(config: GlobalConfig) -> bytes:
         packet_data += bytes([i, PACKET_TYPE_NFC_CONFIG])
         packet_data += serialize_nfc_config(nfc)
 
+    # FindMy (0x2D) is the last id of the legacy range and is not modelled: it goes back
+    # whole, after every other legacy packet and before the length-prefixed range.
+    if config.findmy_config_raw is not None:
+        packet_data += config.findmy_config_raw
+
     # Length-prefixed packets (0x80+) go back verbatim. Writers must place them
     # after every legacy packet: a legacy reader stops at the first id it does not
     # know, so with these last it still sees the whole config it understands.

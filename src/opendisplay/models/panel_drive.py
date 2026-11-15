@@ -20,8 +20,9 @@ because the firmware executes them and the host has no use for their contents.
 These are read-only views. The bytes that are written back to a device are the
 packets themselves (``GlobalConfig.length_prefixed_packets``), untouched.
 
-Layout source: ``include/opendisplay_structs.h`` in OpenDisplay/Firmware_Silabs
-(branch ``feat/od-epd-driver``, structs 2.2).
+Layout source: ``shared/protocol/opendisplay_structs.h`` in OpenDisplay/Firmware_Unified.
+The same range also carries ``0xB2`` action_table and ``0xB3`` display_controller, which this
+library keeps raw (see ``GlobalConfig.action_table`` and ``GlobalConfig.display_controllers``).
 """
 
 from __future__ import annotations
@@ -36,6 +37,8 @@ PACKET_TYPE_DISPLAY_MODE = 0xAE
 PACKET_TYPE_DISPLAY_LUT = 0xAF
 PACKET_TYPE_DISPLAY_CALIBRATION = 0xB0
 PACKET_TYPE_DISPLAY_PANEL = 0xB1
+PACKET_TYPE_ACTION_TABLE = 0xB2
+PACKET_TYPE_DISPLAY_CONTROLLER = 0xB3
 
 #: First packet type of the length-prefixed range.
 LENGTH_PREFIXED_MIN_TYPE = 0x80
@@ -193,7 +196,8 @@ class DisplayCalibration:
     entries: tuple[CalibrationEntry, ...]
 
     _HEAD: ClassVar[struct.Struct] = struct.Struct("<BBBB")
-    _ENTRY: ClassVar[struct.Struct] = struct.Struct("<Hhhh")
+    # codes and L* are unsigned; a* and b* are signed (two's complement), all x100 except codes.
+    _ENTRY: ClassVar[struct.Struct] = struct.Struct("<HHhh")
     _FLAG_MEASURED: ClassVar[int] = 0x01
 
     @property

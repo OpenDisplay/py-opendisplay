@@ -27,7 +27,7 @@ from opendisplay.models.panel_drive import (
     _crc16_ccitt_false,
 )
 from opendisplay.protocol.config_parser import parse_config_response
-from opendisplay.protocol.config_serializer import serialize_config
+from opendisplay.protocol.config_serializer import calculate_config_crc, serialize_config
 
 # ─── Packet bodies, built field by field from the firmware struct layouts ────
 
@@ -242,3 +242,66 @@ def test_a_config_without_panel_drive_data_has_empty_views() -> None:
     config = _config(packets=[])
 
     assert config.display_modes == config.display_luts == config.display_calibrations == config.display_panels == []
+
+
+# ─── Corrections against the Firmware_Unified header ─────────────────────────
+
+
+def test_calibration_lightness_is_unsigned() -> None:
+    """lab_l is an unsigned 16-bit field (L* x100); only a* and b* are signed."""
+    body = struct.pack("<BBBB", 0, 1, 0x01, 1) + struct.pack("<HHhh", 0x0002, 40000, -1546, 774)
+
+    entry = DisplayCalibration.from_body(body).entries[0]
+
+    assert (entry.lab_l, entry.lab_a, entry.lab_b) == (400.0, -15.46, 7.74)
+
+
+_FINDMY_BODY = bytes(range(128))
+
+
+def _with_findmy(config: GlobalConfig) -> bytes:
+    """Serialize ``config`` and splice a FindMy packet (0x2D, 128 bytes) in before the 0x80+ packets."""
+    raw = serialize_config(config)
+    first_lp = raw.index(config.length_prefixed_packets[0].to_bytes())
+    spliced = raw[:first_lp] + bytes([0, 0x2D]) + _FINDMY_BODY + raw[first_lp:-2]
+    return spliced + calculate_config_crc(spliced).to_bytes(2, "little")
+
+
+def test_findmy_packet_does_not_hide_the_packets_after_it() -> None:
+    raw = _with_findmy(_config())
+
+    config = parse_config_response(raw)
+
+    assert config.unparsed_tail == b""
+    assert config.findmy_config_raw == bytes([0, 0x2D]) + _FINDMY_BODY
+    assert [m.name for m in config.display_modes] == ["colour16"]  # the mode declared after the FindMy packet
+
+
+def test_findmy_packet_is_written_back_before_the_length_prefixed_packets() -> None:
+    raw = _with_findmy(_config())
+
+    assert serialize_config(parse_config_response(raw)) == raw
+
+
+def test_findmy_packet_survives_a_json_round_trip() -> None:
+    config = parse_config_response(_with_findmy(_config()))
+
+    restored = config_from_json(json.loads(json.dumps(config_to_json(config))))
+
+    assert restored.findmy_config_raw == config.findmy_config_raw
+
+
+def test_action_table_and_display_controllers_are_exposed_raw() -> None:
+    action = LengthPrefixedPacket(0, 0xB2, b"\x01\x02\x03")
+    controllers = [LengthPrefixedPacket(0, 0xB3, bytes(12)), LengthPrefixedPacket(1, 0xB3, bytes(range(12)))]
+    config = _reparse(_config([*_PACKETS, action, *controllers]))
+
+    assert config.action_table == action
+    assert config.display_controllers == controllers
+
+
+def test_config_without_action_table_or_controller_has_none() -> None:
+    config = _reparse(_config())
+
+    assert config.action_table is None
+    assert config.display_controllers == []

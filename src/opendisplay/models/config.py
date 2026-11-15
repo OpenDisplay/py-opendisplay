@@ -40,7 +40,9 @@ from .enums import (
     get_manufacturer_name,
 )
 from .panel_drive import (
+    PACKET_TYPE_ACTION_TABLE,
     PACKET_TYPE_DISPLAY_CALIBRATION,
+    PACKET_TYPE_DISPLAY_CONTROLLER,
     PACKET_TYPE_DISPLAY_LUT,
     PACKET_TYPE_DISPLAY_MODE,
     PACKET_TYPE_DISPLAY_PANEL,
@@ -1323,6 +1325,10 @@ class GlobalConfig:
     flash_configs: list[FlashConfig] = field(default_factory=list)
     data_extended: DataExtended | None = None
 
+    # The FindMy packet (legacy type 0x2D), which this library does not model: the whole
+    # packet, [number][0x2D] header included (130 bytes), written back as it was read.
+    findmy_config_raw: bytes | None = None
+
     # Packets from the length-prefixed range (types 0x80-0xFF), verbatim and in
     # device order. They are written back as they were read; the display_* views
     # below decode the ones this library models.
@@ -1349,6 +1355,16 @@ class GlobalConfig:
             except ValueError as err:
                 _LOGGER.warning("Ignoring malformed config packet 0x%02x: %s", packet_type, err)
         return decoded
+
+    @property
+    def action_table(self) -> LengthPrefixedPacket | None:
+        """The action table (packet 0xB2), raw. A config has at most one; the first wins."""
+        return next((p for p in self.length_prefixed_packets if p.packet_type == PACKET_TYPE_ACTION_TABLE), None)
+
+    @property
+    def display_controllers(self) -> list[LengthPrefixedPacket]:
+        """Built-in controller driver selections (packet 0xB3, ESP32 only), raw."""
+        return [p for p in self.length_prefixed_packets if p.packet_type == PACKET_TYPE_DISPLAY_CONTROLLER]
 
     @property
     def display_modes(self) -> list[DisplayMode]:

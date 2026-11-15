@@ -77,6 +77,20 @@ def _parse_unparsed_tail(value: object) -> bytes:
         raise ValueError(f"unparsed_tail is not a hex string: {text[:32]!r}") from err
 
 
+def _parse_findmy_raw(value: object) -> bytes | None:
+    """Decode the exported ``findmy_config_raw`` hex string; absent means the config has no FindMy packet."""
+    if value is None:
+        return None
+    text = str(value).removeprefix("0x")
+    try:
+        raw = bytes.fromhex(text)
+    except ValueError as err:
+        raise ValueError(f"findmy_config_raw is not a hex string: {text[:32]!r}") from err
+    if len(raw) != 130 or raw[1] != 0x2D:
+        raise ValueError("findmy_config_raw must be a whole 130-byte FindMy packet ([number][0x2d][128 bytes])")
+    return raw
+
+
 def _parse_length_prefixed_packets(value: object) -> list[LengthPrefixedPacket]:
     """Decode the exported ``length_prefixed_packets`` list; absent means the config has none."""
     if value is None:
@@ -478,6 +492,9 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
             {"number": packet.number, "id": str(packet.packet_type), "body": _hex_bytes(packet.body)}
             for packet in config.length_prefixed_packets
         ]
+    if config.findmy_config_raw is not None:
+        # The FindMy packet (0x2D), whole and verbatim: the library does not model it.
+        exported["findmy_config_raw"] = _hex_bytes(config.findmy_config_raw)
     if config.unparsed_tail:
         # Packets this library does not recognise, verbatim. Without them an
         # export -> import -> write would delete them from the device.
@@ -800,6 +817,7 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
         data_extended=data_extended,
+        findmy_config_raw=_parse_findmy_raw(data.get("findmy_config_raw")),
         length_prefixed_packets=_parse_length_prefixed_packets(data.get("length_prefixed_packets")),
         unparsed_tail=_parse_unparsed_tail(data.get("unparsed_tail")),
         version=version,

@@ -45,6 +45,8 @@ PACKET_TYPE_PASSIVE_BUZZER = 0x29
 PACKET_TYPE_NFC_CONFIG = 0x2A
 PACKET_TYPE_FLASH_CONFIG = 0x2B
 PACKET_TYPE_DATA_EXTENDED = 0x2C
+PACKET_TYPE_FINDMY = 0x2D  # the last legacy-range id; kept raw
+FINDMY_CONFIG_SIZE = 128
 
 WIFI_CONFIG_SIZE = 160
 WIFI_CONFIG_LEGACY_SIZE = 65
@@ -216,8 +218,9 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     nfc_configs = []
     flash_configs = []
     data_extended = None
+    findmy_config_raw: bytes | None = None
 
-    for (packet_type, _number), packet_data in packets.items():
+    for (packet_type, number), packet_data in packets.items():
         if packet_type == PACKET_TYPE_SYSTEM:
             system = _parse_system_config(packet_data)
         elif packet_type == PACKET_TYPE_MANUFACTURER:
@@ -248,6 +251,9 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
             flash_configs.append(FlashConfig.from_bytes(packet_data))
         elif packet_type == PACKET_TYPE_DATA_EXTENDED:
             data_extended = DataExtended.from_bytes(packet_data)
+        elif packet_type == PACKET_TYPE_FINDMY and findmy_config_raw is None:
+            # Not modelled: kept whole, header included, so it is written back as it was read.
+            findmy_config_raw = bytes([number, packet_type]) + packet_data
 
     missing_required = [
         name
@@ -282,6 +288,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
         data_extended=data_extended,
+        findmy_config_raw=findmy_config_raw,
         length_prefixed_packets=length_prefixed_packets,
         unparsed_tail=unparsed_tail,
         version=version,  # From firmware wrapper
@@ -315,6 +322,7 @@ def _get_packet_size(packet_type: int) -> int | None:
         PACKET_TYPE_NFC_CONFIG: 32,
         PACKET_TYPE_FLASH_CONFIG: 32,
         PACKET_TYPE_DATA_EXTENDED: DataExtended.SIZE,
+        PACKET_TYPE_FINDMY: FINDMY_CONFIG_SIZE,
     }
     return sizes.get(packet_type)
 

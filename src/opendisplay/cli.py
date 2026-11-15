@@ -1342,12 +1342,16 @@ def _cmd_write_config(args: argparse.Namespace) -> None:
 
 
 def _carried_packet_bytes(config: GlobalConfig) -> int:
-    """Bytes of packets a config carries verbatim: length-prefixed ones plus the unparsed tail.
+    """Bytes of packets a config carries verbatim: length-prefixed ones, FindMy and the unparsed tail.
 
     These are the packets a JSON file loses when it passes through a tool that
     does not know the fields holding them.
     """
-    return sum(len(packet.to_bytes()) for packet in config.length_prefixed_packets) + len(config.unparsed_tail)
+    return (
+        sum(len(packet.to_bytes()) for packet in config.length_prefixed_packets)
+        + len(config.findmy_config_raw or b"")
+        + len(config.unparsed_tail)
+    )
 
 
 _UNKNOWN_PACKETS_REFUSAL = (
@@ -1386,6 +1390,7 @@ async def _write_config(device_kwargs: dict[str, Any], input_path: str, unknown_
                         config = replace(
                             config,
                             length_prefixed_packets=list(on_device.length_prefixed_packets),
+                            findmy_config_raw=on_device.findmy_config_raw,
                             unparsed_tail=on_device.unparsed_tail,
                         )
                         kept = at_risk
