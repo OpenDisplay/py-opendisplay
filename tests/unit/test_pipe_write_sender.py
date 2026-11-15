@@ -21,6 +21,7 @@ from test_pipe_write import (
 )
 
 from opendisplay.crypto import decrypt_response, derive_session_id, derive_session_key
+from opendisplay.device.channel import LegacySession
 from opendisplay.exceptions import BLETimeoutError, ProtocolError
 from opendisplay.models.enums import RefreshMode
 from opendisplay.protocol import PipeParams
@@ -58,7 +59,7 @@ def _seqs(conn: ScriptedConn) -> list[int]:
 async def test_send_all_within_one_window() -> None:
     dev, conn = make_device([data_ack({0, 1, 2, 3})], max_queue_size=4)
     chunks = [b"a", b"b", b"c", b"d"]
-    auto = await dev._send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
+    auto = await dev._uploader.send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
     assert auto is False
     assert _seqs(conn) == [0, 1, 2, 3]
     assert all(r is False for r in conn.write_responses)  # data frames are WNR
@@ -69,7 +70,7 @@ async def test_span_window_invariant_multi_window() -> None:
     """With W=3 and 6 chunks, exactly W frames go out before each ACK refunds."""
     dev, conn = make_device([data_ack({0, 1, 2}), data_ack({0, 1, 2, 3, 4, 5})], max_queue_size=3)
     chunks = [bytes([i]) for i in range(6)]
-    await dev._send_pipe_chunks(chunks, _params(window=3), chunk_timeout=5.0)
+    await dev._uploader.send_pipe_chunks(chunks, _params(window=3), chunk_timeout=5.0)
     # writes_at_read snapshots the cumulative write count at each blocking read.
     assert conn.writes_at_read[0] == 3  # only W sent before the first ACK
     assert conn.writes_at_read[1] == 6  # next window refunded → remaining 3
@@ -94,7 +95,7 @@ async def test_seq_wraps_past_255() -> None:
     # describes the in-flight range.
     dev, conn = make_device(_cumulative_acks(n, 32), max_queue_size=32)
     chunks = [bytes([i % 251]) for i in range(n)]
-    await dev._send_pipe_chunks(chunks, _params(window=32), chunk_timeout=5.0)
+    await dev._uploader.send_pipe_chunks(chunks, _params(window=32), chunk_timeout=5.0)
     seqs = _seqs(conn)
     assert len(seqs) == n  # each chunk sent exactly once (no loss)
     assert seqs[255] == 255
@@ -110,7 +111,7 @@ async def test_ack_cadence_multiple_acks() -> None:
         max_queue_size=4,
     )
     chunks = [bytes([i]) for i in range(6)]
-    auto = await dev._send_pipe_chunks(chunks, _params(window=4, ack_every=2), chunk_timeout=5.0)
+    auto = await dev._uploader.send_pipe_chunks(chunks, _params(window=4, ack_every=2), chunk_timeout=5.0)
     assert auto is False
     assert sorted(_seqs(conn)) == [0, 1, 2, 3, 4, 5]
 
@@ -122,7 +123,7 @@ async def test_ack_cadence_multiple_acks() -> None:
 async def test_auto_complete_end_ack_is_terminal() -> None:
     """An unsolicited END_ACK during send → terminal success, no explicit END."""
     dev, conn = make_device([END_ACK], max_queue_size=8)
-    auto = await dev._send_pipe_chunks([b"x", b"y"], _params(window=8), chunk_timeout=5.0)
+    auto = await dev._uploader.send_pipe_chunks([b"x", b"y"], _params(window=8), chunk_timeout=5.0)
     assert auto is True
     # Data frames were sent, but the sender returns before emitting any 0x82 END.
     assert _seqs(conn) == [0, 1]
@@ -132,7 +133,7 @@ async def test_auto_complete_end_ack_is_terminal() -> None:
 async def test_fatal_data_nack_aborts() -> None:
     dev, conn = make_device([data_nack(0x03, 1, 0x3)], max_queue_size=4)
     with pytest.raises(ProtocolError, match="NACK"):
-        await dev._send_pipe_chunks([b"a", b"b"], _params(window=4), chunk_timeout=5.0)
+        await dev._uploader.send_pipe_chunks([b"a", b"b"], _params(window=4), chunk_timeout=5.0)
 
 
 # ─── Loss recovery (selective repeat, bit0 set) ──────────────────────────────
@@ -147,7 +148,7 @@ async def test_selective_repeat_only_missing_chunk() -> None:
     ack2 = data_ack({0, 1, 2, 3})
     dev, conn = make_device([ack1, ack2], max_queue_size=4)
     chunks = [b"a", b"b", b"c", b"d"]
-    await dev._send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
+    await dev._uploader.send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
     seqs = _seqs(conn)
     # Initial send 0,1,2,3 then exactly ONE retransmit of seq 1.
     assert seqs == [0, 1, 2, 3, 1]
@@ -165,7 +166,7 @@ async def test_window_freezes_at_hole() -> None:
     ack2 = data_ack({0, 1, 2, 3, 4, 5})
     dev, conn = make_device([ack1, ack2], max_queue_size=3)
     chunks = [bytes([i]) for i in range(6)]
-    await dev._send_pipe_chunks(chunks, _params(window=3), chunk_timeout=5.0)
+    await dev._uploader.send_pipe_chunks(chunks, _params(window=3), chunk_timeout=5.0)
     # After first window (0,1,2) and ack {0,2}: window_base=0 (1 missing), so no
     # new chunks; retransmit 1. writes at first read = 3.
     assert conn.writes_at_read[0] == 3
@@ -180,7 +181,7 @@ async def test_rewind_fallback_when_bit0_clear() -> None:
     ack2 = data_ack({0, 1, 2, 3})
     dev, conn = make_device([ack1, ack2], max_queue_size=4)
     chunks = [b"a", b"b", b"c", b"d"]
-    await dev._send_pipe_chunks(chunks, _params(window=4, selective=False), chunk_timeout=5.0)
+    await dev._uploader.send_pipe_chunks(chunks, _params(window=4, selective=False), chunk_timeout=5.0)
     seqs = _seqs(conn)
     # Rewind sets next_to_send=window_base(=1) → chunks 1,2,3 resent.
     assert seqs[:4] == [0, 1, 2, 3]
@@ -198,7 +199,7 @@ async def test_retransmit_repaced_per_new_ack() -> None:
     ack4 = data_ack({0, 1, 2, 3})
     dev, conn = make_device([ack1, ack2, ack3, ack4], max_queue_size=4)
     chunks = [b"a", b"b", b"c", b"d"]
-    await dev._send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
+    await dev._uploader.send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
     seqs = _seqs(conn)
     # Initial 0,1,2,3 + retx on ack1 + retx on ack3 = chunk 1 sent 3x.
     assert seqs.count(1) == 3
@@ -211,7 +212,7 @@ async def test_lost_ack_superseded_no_spurious_retransmit() -> None:
     # deliver the cumulative ACK for all four. No hole exists → no retransmit.
     dev, conn = make_device([data_ack({0, 1, 2, 3})], max_queue_size=4)
     chunks = [b"a", b"b", b"c", b"d"]
-    await dev._send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
+    await dev._uploader.send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
     seqs = _seqs(conn)
     assert seqs == [0, 1, 2, 3]  # each sent exactly once
 
@@ -224,7 +225,7 @@ async def test_pto_probe_then_recover() -> None:
     """A read timeout triggers a PTO probe (resend oldest unacked), then recovers."""
     dev, conn = make_device([BLETimeoutError, data_ack({0, 1})], max_queue_size=4)
     chunks = [b"a", b"b"]
-    await dev._send_pipe_chunks(chunks, _params(window=4), chunk_timeout=1.0)
+    await dev._uploader.send_pipe_chunks(chunks, _params(window=4), chunk_timeout=1.0)
     seqs = _seqs(conn)
     # 0,1 sent; timeout → resend oldest unacked (0); then ACK completes.
     assert seqs == [0, 1, 0]
@@ -234,7 +235,7 @@ async def test_pto_probe_then_recover() -> None:
 async def test_max_pto_aborts() -> None:
     dev, conn = make_device([BLETimeoutError, BLETimeoutError, BLETimeoutError], max_queue_size=4)
     with pytest.raises(ProtocolError, match="PTO"):
-        await dev._send_pipe_chunks([b"a"], _params(window=4), chunk_timeout=0.5)
+        await dev._uploader.send_pipe_chunks([b"a"], _params(window=4), chunk_timeout=0.5)
 
 
 @pytest.mark.asyncio
@@ -245,7 +246,7 @@ async def test_max_retx_aborts() -> None:
     dev, conn = make_device(acks, max_queue_size=2)
     chunks = [b"a", b"b", b"c"]
     with pytest.raises(ProtocolError, match="MAX_RETX"):
-        await dev._send_pipe_chunks(chunks, _params(window=2), chunk_timeout=5.0)
+        await dev._uploader.send_pipe_chunks(chunks, _params(window=2), chunk_timeout=5.0)
 
 
 def test_max_retx_budget_scales_with_chunk_count() -> None:
@@ -277,7 +278,9 @@ async def test_compressed_tail_stall_short_timeout_and_dup_probe() -> None:
         max_queue_size=4,
     )
     chunks = [b"a", b"b", b"c"]
-    auto = await dev._send_pipe_chunks(chunks, _params(window=4, ack_every=2, compressed=True), chunk_timeout=5.0)
+    auto = await dev._uploader.send_pipe_chunks(
+        chunks, _params(window=4, ack_every=2, compressed=True), chunk_timeout=5.0
+    )
     assert auto is False  # compressed → caller still sends the explicit END
     # First read (cadence ACK owed: 3 unacked >= N) used the full chunk timeout;
     # the tail waits (< N unacked, no holes) used the short flush timeout.
@@ -294,7 +297,7 @@ async def test_compressed_tail_flush_not_used_while_cadence_ack_owed() -> None:
     """With unacked >= N the firmware still owes a cadence ACK → full timeout."""
     # 4 chunks, N=2: after sending all, 4 unacked >= N → no tail-flush shortcut.
     dev, conn = make_device([data_ack({0, 1, 2, 3})], max_queue_size=4)
-    await dev._send_pipe_chunks(
+    await dev._uploader.send_pipe_chunks(
         [b"a", b"b", b"c", b"d"], _params(window=4, ack_every=2, compressed=True), chunk_timeout=5.0
     )
     assert conn.timeouts == [pytest.approx(5.0)]
@@ -306,7 +309,9 @@ async def test_compressed_tail_flush_not_used_with_known_hole() -> None:
     # 3 chunks, N=2. ACK {0,2}: hole at 1 → next read must use chunk_timeout
     # (retransmit pacing path), not the short tail-flush timeout.
     dev, conn = make_device([data_ack({0, 2}), data_ack({0, 1, 2})], max_queue_size=4)
-    await dev._send_pipe_chunks([b"a", b"b", b"c"], _params(window=4, ack_every=2, compressed=True), chunk_timeout=5.0)
+    await dev._uploader.send_pipe_chunks(
+        [b"a", b"b", b"c"], _params(window=4, ack_every=2, compressed=True), chunk_timeout=5.0
+    )
     assert conn.timeouts[1] == pytest.approx(5.0)  # hole known → full timeout
 
 
@@ -319,7 +324,7 @@ async def test_uncompressed_waits_for_unsolicited_end_ack() -> None:
     {0x00,0x82}. The sender must NOT stop at the flush-ACK — it keeps reading
     until the END_ACK and reports auto-complete."""
     dev, conn = make_device([data_ack({0, 1}), END_ACK], max_queue_size=4)
-    auto = await dev._send_pipe_chunks([b"a", b"b"], _params(window=4, compressed=False), chunk_timeout=90.0)
+    auto = await dev._uploader.send_pipe_chunks([b"a", b"b"], _params(window=4, compressed=False), chunk_timeout=90.0)
     assert auto is True
     # No explicit END is ever written on the uncompressed path.
     assert all(w[:2] != b"\x00\x82" for w in conn.written)
@@ -331,7 +336,7 @@ async def test_uncompressed_missing_end_ack_aborts() -> None:
     loudly (nothing left to probe), not a spurious END."""
     dev, conn = make_device([data_ack({0}), BLETimeoutError], max_queue_size=8)
     with pytest.raises(ProtocolError, match="auto-complete"):
-        await dev._send_pipe_chunks([b"z"], _params(window=8, compressed=False), chunk_timeout=0.5)
+        await dev._uploader.send_pipe_chunks([b"z"], _params(window=8, compressed=False), chunk_timeout=0.5)
     assert all(w[:2] != b"\x00\x82" for w in conn.written)
 
 
@@ -344,7 +349,7 @@ async def test_uncompressed_partial_returns_false_after_all_acked() -> None:
     sender breaks and returns False (caller sends the explicit END) — it must NOT
     keep reading for an unsolicited END_ACK the way full-frame uncompressed does."""
     dev, conn = make_device([data_ack({0, 1})], max_queue_size=4)
-    auto = await dev._send_pipe_chunks(
+    auto = await dev._uploader.send_pipe_chunks(
         [b"a", b"b"], _params(window=4, compressed=False, partial=True), chunk_timeout=5.0
     )
     assert auto is False  # explicit-END contract → caller sends END
@@ -359,7 +364,7 @@ async def test_uncompressed_partial_tail_flush_dup_probe() -> None:
         [data_ack({0, 1}), BLETimeoutError, data_ack({0, 1, 2})],
         max_queue_size=4,
     )
-    auto = await dev._send_pipe_chunks(
+    auto = await dev._uploader.send_pipe_chunks(
         [b"a", b"b", b"c"], _params(window=4, ack_every=2, compressed=False, partial=True), chunk_timeout=5.0
     )
     assert auto is False
@@ -372,7 +377,9 @@ async def test_uncompressed_partial_tail_flush_dup_probe() -> None:
 @pytest.mark.asyncio
 async def test_single_chunk_partial_completes() -> None:
     dev, conn = make_device([data_ack({0})], max_queue_size=8)
-    auto = await dev._send_pipe_chunks([b"z"], _params(window=8, compressed=False, partial=True), chunk_timeout=5.0)
+    auto = await dev._uploader.send_pipe_chunks(
+        [b"z"], _params(window=8, compressed=False, partial=True), chunk_timeout=5.0
+    )
     assert auto is False
     assert _seqs(conn) == [0]
 
@@ -383,7 +390,7 @@ async def test_run_pipe_upload_partial_auto_complete_is_contract_violation() -> 
     raise (an unsolicited END_ACK would have refreshed FULL with no committed etag)."""
     dev, conn = make_device([END_ACK], max_queue_size=8)
     with pytest.raises(ProtocolError, match="auto-completed unexpectedly"):
-        await dev._run_pipe_upload(
+        await dev._uploader.run_pipe_upload(
             b"z",
             _params(window=8, compressed=False, partial=True),
             RefreshMode.PARTIAL,
@@ -396,7 +403,7 @@ async def test_run_pipe_upload_partial_auto_complete_is_contract_violation() -> 
 async def test_run_pipe_upload_partial_sends_explicit_end_selector_2() -> None:
     """Partial upload always sends END = [0x02][new_etag BE]."""
     dev, conn = make_device([data_ack({0}), END_ACK, REFRESH_COMPLETE], max_queue_size=8)
-    committed = await dev._run_pipe_upload(
+    committed = await dev._uploader.run_pipe_upload(
         b"z",
         _params(window=8, compressed=False, partial=True),
         RefreshMode.PARTIAL,
@@ -419,7 +426,7 @@ async def test_run_pipe_upload_compressed_full_flow_with_etag() -> None:
         [data_ack({0}), END_ACK, REFRESH_COMPLETE],
         max_queue_size=8,
     )
-    committed = await dev._run_pipe_upload(
+    committed = await dev._uploader.run_pipe_upload(
         b"hello",
         _params(window=8, compressed=True),
         RefreshMode.FULL,
@@ -439,7 +446,7 @@ async def test_run_pipe_upload_uncompressed_auto_completes_no_end_no_etag() -> N
     report the etag as committed (firmware auto-complete stores no etag; a
     recorded phantom etag would poison every subsequent partial update)."""
     dev, conn = make_device([data_ack({0}), END_ACK, REFRESH_COMPLETE], max_queue_size=8)
-    committed = await dev._run_pipe_upload(
+    committed = await dev._uploader.run_pipe_upload(
         b"z",
         _params(window=8, compressed=False),
         RefreshMode.FULL,
@@ -453,7 +460,7 @@ async def test_run_pipe_upload_uncompressed_auto_completes_no_end_no_etag() -> N
 @pytest.mark.asyncio
 async def test_run_pipe_upload_no_etag_returns_false() -> None:
     dev, conn = make_device([data_ack({0}), END_ACK, REFRESH_COMPLETE], max_queue_size=8)
-    committed = await dev._run_pipe_upload(
+    committed = await dev._uploader.run_pipe_upload(
         b"z", _params(window=8), RefreshMode.FULL, progress_callback=None, new_etag=None
     )
     assert committed is False  # no etag committed
@@ -463,7 +470,7 @@ async def test_run_pipe_upload_no_etag_returns_false() -> None:
 async def test_run_pipe_upload_auto_complete_skips_end() -> None:
     """Firmware auto-completes (END_ACK mid-send) → no explicit 0x82 END written."""
     dev, conn = make_device([END_ACK, REFRESH_COMPLETE], max_queue_size=8)
-    committed = await dev._run_pipe_upload(
+    committed = await dev._uploader.run_pipe_upload(
         b"z", _params(window=8), RefreshMode.FULL, progress_callback=None, new_etag=0xAB
     )
     assert committed is False  # auto-completed → etag never committed
@@ -474,7 +481,9 @@ async def test_run_pipe_upload_auto_complete_skips_end() -> None:
 async def test_await_end_ack_skips_tail_flush_ack() -> None:
     # A trailing PIPE_ACK precedes the END_ACK — must be ignored.
     dev, conn = make_device([data_ack({0, 1}), data_ack({0, 1}), END_ACK, REFRESH_COMPLETE], max_queue_size=8)
-    await dev._run_pipe_upload(b"ab", _params(window=8), RefreshMode.FULL, progress_callback=None, new_etag=None)
+    await dev._uploader.run_pipe_upload(
+        b"ab", _params(window=8), RefreshMode.FULL, progress_callback=None, new_etag=None
+    )
     # Completed without error.
     assert any(w[:2] == b"\x00\x82" for w in conn.written)
 
@@ -483,14 +492,18 @@ async def test_await_end_ack_skips_tail_flush_ack() -> None:
 async def test_await_end_nack_aborts() -> None:
     dev, conn = make_device([data_ack({0}), END_NACK], max_queue_size=8)
     with pytest.raises(ProtocolError, match="END NACK"):
-        await dev._run_pipe_upload(b"z", _params(window=8), RefreshMode.FULL, progress_callback=None, new_etag=None)
+        await dev._uploader.run_pipe_upload(
+            b"z", _params(window=8), RefreshMode.FULL, progress_callback=None, new_etag=None
+        )
 
 
 @pytest.mark.asyncio
 async def test_refresh_timeout_raises() -> None:
     dev, conn = make_device([data_ack({0}), END_ACK, b"\x00\x74"], max_queue_size=8)
     with pytest.raises(ProtocolError, match="refresh timed out"):
-        await dev._run_pipe_upload(b"z", _params(window=8), RefreshMode.FULL, progress_callback=None, new_etag=None)
+        await dev._uploader.run_pipe_upload(
+            b"z", _params(window=8), RefreshMode.FULL, progress_callback=None, new_etag=None
+        )
 
 
 # ─── drain_stale enforcement ─────────────────────────────────────────────────
@@ -499,7 +512,9 @@ async def test_refresh_timeout_raises() -> None:
 @pytest.mark.asyncio
 async def test_all_in_stream_writes_pass_drain_stale_false() -> None:
     dev, conn = make_device([data_ack({0, 1}), END_ACK, REFRESH_COMPLETE], max_queue_size=8)
-    await dev._run_pipe_upload(b"ab", _params(window=8), RefreshMode.FULL, progress_callback=None, new_etag=None)
+    await dev._uploader.run_pipe_upload(
+        b"ab", _params(window=8), RefreshMode.FULL, progress_callback=None, new_etag=None
+    )
     # Data (0x81) and END (0x82) writes → drain_stale False.
     for frame, drain in zip(conn.written, conn.drain_flags):
         if frame[:2] in (b"\x00\x81", b"\x00\x82"):
@@ -511,7 +526,7 @@ async def test_probe_write_uses_default_drain_stale_true() -> None:
     dev, conn = make_device(
         [BLETimeoutError, b"\x00\x70", b"\x00\x71", b"\x00\x72", REFRESH_COMPLETE], max_queue_size=8
     )
-    await dev._execute_upload(b"AB", RefreshMode.FULL, use_compression=False)
+    await dev._uploader.execute_upload(b"AB", RefreshMode.FULL, use_compression=False)
     # The 0x0080 probe went through _write → default drain_stale True.
     probe_idx = next(i for i, w in enumerate(conn.written) if w[:2] == b"\x00\x80")
     assert conn.drain_flags[probe_idx] is True
@@ -523,9 +538,11 @@ async def test_probe_write_uses_default_drain_stale_true() -> None:
 def _make_session(dev) -> None:
     key = b"\x11" * 16
     cn, sn, did = b"\x01" * 16, b"\x02" * 16, b"\x00\x00\x00\x01"
-    dev._session_key = derive_session_key(key, cn, sn, did)
-    dev._session_id = derive_session_id(dev._session_key, cn, sn)
-    dev._nonce_counter = 0
+    dev._channel.session = LegacySession(
+        session_key=derive_session_key(key, cn, sn, did),
+        session_id=derive_session_id(derive_session_key(key, cn, sn, did), cn, sn),
+        nonce_counter=0,
+    )
 
 
 @pytest.mark.asyncio
@@ -533,16 +550,16 @@ async def test_encrypted_frames_and_fresh_nonce_on_retransmit() -> None:
     dev, conn = make_device([data_ack({0, 2}), data_ack({0, 1, 2})], max_queue_size=4)
     _make_session(dev)
     chunks = [b"a", b"b", b"c"]
-    start_nonce = dev._nonce_counter
-    await dev._send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
+    start_nonce = dev._channel.session.nonce_counter
+    await dev._uploader.send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
     frames = _data_frames(conn)
     # Every data frame is a full CCM envelope (>= 31 bytes).
     for f in frames:
         assert len(f) >= 31
     # 3 initial sends + 1 retransmit of chunk 1 = 4 encryptions → nonce advanced 4x.
-    assert dev._nonce_counter == start_nonce + 4
+    assert dev._channel.session.nonce_counter == start_nonce + 4
     # The retransmit carries a higher nonce than the original send of chunk 1.
-    seq1_frames = [f for f in frames if decrypt_response(dev._session_key, f)[1][0] == 1]
+    seq1_frames = [f for f in frames if decrypt_response(dev._channel.session.session_key, f)[1][0] == 1]
     assert len(seq1_frames) == 2
     n0 = int.from_bytes(seq1_frames[0][2:18], "big")
     n1 = int.from_bytes(seq1_frames[1][2:18], "big")
@@ -554,9 +571,9 @@ async def test_encrypted_seq_is_first_plaintext_byte() -> None:
     dev, conn = make_device([data_ack({0, 1, 2, 3})], max_queue_size=4)
     _make_session(dev)
     chunks = [b"AA", b"BB", b"CC", b"DD"]
-    await dev._send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
+    await dev._uploader.send_pipe_chunks(chunks, _params(window=4), chunk_timeout=5.0)
     for expected_seq, f in enumerate(_data_frames(conn)):
-        _cmd, payload = decrypt_response(dev._session_key, f)
+        _cmd, payload = decrypt_response(dev._channel.session.session_key, f)
         assert payload[0] == expected_seq  # seq is the first plaintext byte
         assert payload[1:] == chunks[expected_seq]  # then the chunk
 
@@ -565,13 +582,13 @@ async def test_encrypted_seq_is_first_plaintext_byte() -> None:
 async def test_encrypted_data_size_212_at_244() -> None:
     dev, _ = make_device([], max_queue_size=4)
     _make_session(dev)
-    assert dev._pipe_data_size(244) == 212  # 244 - 31 - 1
+    assert dev._channel.pipe_data_size(244) == 212  # 244 - 31 - 1
 
 
 @pytest.mark.asyncio
 async def test_plaintext_data_size_241_at_244() -> None:
     dev, _ = make_device([], max_queue_size=4)
-    assert dev._pipe_data_size(244) == 241  # 244 - 3
+    assert dev._channel.pipe_data_size(244) == 241  # 244 - 3
 
 
 @pytest.mark.asyncio
@@ -585,9 +602,11 @@ async def test_encrypted_ack_decrypts_and_classifies() -> None:
     # Firmware would encrypt {0x00,0x81,hs,mask} via sendResponse: cmd=0x0081,
     # payload=[hs,mask:4]. Reproduce that envelope and confirm _read yields the ACK.
     ack_plain = data_ack({0, 1, 2})
-    env = encrypt_command(dev._session_key, dev._session_id, 0, ack_plain[:2], ack_plain[2:])
+    env = encrypt_command(
+        dev._channel.session.session_key, dev._channel.session.session_id, 0, ack_plain[:2], ack_plain[2:]
+    )
     conn._responses = [env]
-    decoded = await dev._read(timeout=5.0)
+    decoded = await dev._channel.read(timeout=5.0)
     assert classify_pipe_frame(decoded) == PIPE_FRAME_ACK
     assert decoded == ack_plain
 
@@ -601,11 +620,13 @@ async def test_encrypted_nack_decrypts_and_aborts() -> None:
     dev, conn = make_device([], max_queue_size=4)
     _make_session(dev)
     nack_plain = data_nack(0x03, 1, 0x1)  # {0xFF,0x81,err,hs,mask}
-    env = encrypt_command(dev._session_key, dev._session_id, 0, nack_plain[:2], nack_plain[2:])
+    env = encrypt_command(
+        dev._channel.session.session_key, dev._channel.session.session_id, 0, nack_plain[:2], nack_plain[2:]
+    )
     assert len(env) >= 31  # genuinely encrypted envelope
     conn._responses = [env]
     with pytest.raises(ProtocolError, match="NACK"):
-        await dev._send_pipe_chunks([b"a", b"b"], _params(window=4), chunk_timeout=5.0)
+        await dev._uploader.send_pipe_chunks([b"a", b"b"], _params(window=4), chunk_timeout=5.0)
 
 
 def test_encrypted_chunk_capacity_beats_legacy() -> None:
@@ -627,7 +648,9 @@ async def test_encrypted_full_pipe_end_to_end_through_execute_upload() -> None:
 
     def enc(plain: bytes, ctr: int) -> bytes:
         # Device→host responses use the same CCM envelope as commands.
-        return encrypt_command(dev._session_key, dev._session_id, ctr, plain[:2], plain[2:])
+        return encrypt_command(
+            dev._channel.session.session_key, dev._channel.session.session_id, ctr, plain[:2], plain[2:]
+        )
 
     # start_ack (8 B), data ack for chunk 0, unsolicited auto-complete END_ACK
     # (2-byte plaintext → 31-byte envelope, the exact decrypt-floor boundary),
@@ -635,14 +658,14 @@ async def test_encrypted_full_pipe_end_to_end_through_execute_upload() -> None:
     conn._responses = [enc(start_ack(), 0), enc(data_ack({0}), 1), enc(END_ACK, 2), enc(REFRESH_COMPLETE, 3)]
     assert len(conn._responses[2]) == 31  # END_ACK rides the >=31 decrypt boundary
 
-    committed = await dev._execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False, new_etag=0x1234)
+    committed = await dev._uploader.execute_upload(b"ABCD", RefreshMode.FULL, use_compression=False, new_etag=0x1234)
 
     assert committed is False  # auto-complete never commits an etag
     # Every write is encrypted: valid envelope, no plaintext opcode on the wire.
     plaintexts = []
     for w in conn.written:
         assert len(w) >= 31
-        cmd_code, payload = decrypt_response(dev._session_key, w)
+        cmd_code, payload = decrypt_response(dev._channel.session.session_key, w)
         plaintexts.append(cmd_code.to_bytes(2, "big") + payload)
     assert plaintexts[0][:2] == b"\x00\x80"
     assert len(plaintexts[0]) == 12  # full-frame START: no partial extension

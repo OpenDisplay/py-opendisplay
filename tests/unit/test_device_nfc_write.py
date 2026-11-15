@@ -6,6 +6,7 @@ import pytest
 
 from opendisplay import OpenDisplayDevice
 from opendisplay.crypto import encrypt_command
+from opendisplay.device.channel import LegacySession
 from opendisplay.exceptions import BLETimeoutError, InvalidResponseError, NfcNotSupportedError, NfcWriteError
 from opendisplay.models.enums import NfcRecordType
 
@@ -39,7 +40,7 @@ async def test_write_nfc_inline_happy_path() -> None:
     """A short payload should be sent as a single inline write frame."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x83\x81")
-    device._connection = fake
+    device._attach(fake)
 
     await device.write_nfc(NfcRecordType.TEXT, b"hello")
 
@@ -54,7 +55,7 @@ async def test_write_nfc_chunked_121_bytes_exact_frame_sequence() -> None:
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     payload = bytes(range(121))
     fake = _FakeConnection(response=[b"\x00\x83\x82", b"\x00\x83\x82", b"\x00\x83\x82", b"\x00\x83\x81"])
-    device._connection = fake
+    device._attach(fake)
 
     await device.write_nfc(NfcRecordType.URI, payload)
 
@@ -80,7 +81,7 @@ async def test_write_nfc_512_bytes_accepted() -> None:
     payload = bytes(512)
     responses = [b"\x00\x83\x82"] * 6 + [b"\x00\x83\x81"]
     fake = _FakeConnection(response=responses)
-    device._connection = fake
+    device._attach(fake)
 
     await device.write_nfc(NfcRecordType.TEXT, payload)
 
@@ -93,7 +94,7 @@ async def test_write_nfc_513_bytes_rejected() -> None:
     """A payload larger than NFC_WRITE_MAX_TOTAL should raise ValueError."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x83\x81")
-    device._connection = fake
+    device._attach(fake)
 
     with pytest.raises(ValueError):
         await device.write_nfc(NfcRecordType.TEXT, bytes(513))
@@ -104,7 +105,7 @@ async def test_write_nfc_empty_payload_rejected() -> None:
     """An empty payload should raise ValueError."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x83\x81")
-    device._connection = fake
+    device._attach(fake)
 
     with pytest.raises(ValueError):
         await device.write_nfc(NfcRecordType.TEXT, b"")
@@ -115,7 +116,7 @@ async def test_write_nfc_error_frame_raises_nfc_write_error() -> None:
     """A firmware error frame should raise NfcWriteError with the error code."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\xff\x83\xff\x03")
-    device._connection = fake
+    device._attach(fake)
 
     with pytest.raises(NfcWriteError) as exc_info:
         await device.write_nfc(NfcRecordType.TEXT, b"hello")
@@ -128,7 +129,7 @@ async def test_write_nfc_mid_stream_chunk_nack_aborts() -> None:
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     payload = bytes(range(121))
     fake = _FakeConnection(response=[b"\x00\x83\x82", b"\xff\x83\xff\x08"])
-    device._connection = fake
+    device._attach(fake)
 
     with pytest.raises(NfcWriteError) as exc_info:
         await device.write_nfc(NfcRecordType.URI, payload)
@@ -142,7 +143,7 @@ async def test_write_nfc_stage_ack_where_ok_expected_raises() -> None:
     """A chunk-ack status where the final OK status is expected should raise InvalidResponseError."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x83\x82")
-    device._connection = fake
+    device._attach(fake)
 
     with pytest.raises(InvalidResponseError):
         await device.write_nfc(NfcRecordType.TEXT, b"hello")
@@ -153,7 +154,7 @@ async def test_write_nfc_read_timeout_on_first_read_raises_not_supported() -> No
     """A BLE read timeout on the first read of a write sequence should map to NfcNotSupportedError."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x83\x81", timeout_on=1)
-    device._connection = fake
+    device._attach(fake)
 
     with pytest.raises(NfcNotSupportedError):
         await device.write_nfc(NfcRecordType.TEXT, b"hello")
@@ -165,7 +166,7 @@ async def test_write_nfc_read_timeout_on_later_read_propagates() -> None:
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     payload = bytes(range(121))
     fake = _FakeConnection(response=[b"\x00\x83\x82", b"\x00\x83\x82"], timeout_on=3)
-    device._connection = fake
+    device._attach(fake)
 
     with pytest.raises(BLETimeoutError):
         await device.write_nfc(NfcRecordType.URI, payload)
@@ -176,7 +177,7 @@ async def test_write_nfc_url_encodes_utf8_and_uses_uri_record_type() -> None:
     """write_nfc_url should send the URL verbatim as UTF-8 with record type URI."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x83\x81")
-    device._connection = fake
+    device._attach(fake)
 
     await device.write_nfc_url("https://example.com")
 
@@ -190,7 +191,7 @@ async def test_write_nfc_text_encodes_utf8_and_uses_text_record_type() -> None:
     """write_nfc_text should send the text verbatim as UTF-8 with record type TEXT."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x83\x81")
-    device._connection = fake
+    device._attach(fake)
 
     await device.write_nfc_text("hello world")
 
@@ -204,7 +205,7 @@ async def test_write_nfc_mime_builds_length_prefixed_payload() -> None:
     """write_nfc_mime should prefix the payload with a one-byte MIME type length."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x83\x81")
-    device._connection = fake
+    device._attach(fake)
 
     await device.write_nfc_mime("text/vcard", b"BEGIN:VCARD")
 
@@ -219,7 +220,7 @@ async def test_write_nfc_mime_type_too_long_rejected() -> None:
     """A MIME type longer than 255 bytes should raise ValueError."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x83\x81")
-    device._connection = fake
+    device._attach(fake)
 
     with pytest.raises(ValueError):
         await device.write_nfc_mime("x" * 256, b"body")
@@ -236,9 +237,6 @@ async def test_write_nfc_inline_happy_path_encrypted_session() -> None:
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     session_key = bytes(range(16))
     session_id = bytes(range(8))
-    device._session_key = session_key
-    device._session_id = session_id
-    device._nonce_counter = 0
 
     # Build a genuinely encrypted device-to-host OK response using the library's own
     # encrypt routine. The wire format (cmd(2) + nonce(16) + ciphertext + tag(12)) is
@@ -247,7 +245,8 @@ async def test_write_nfc_inline_happy_path_encrypted_session() -> None:
     encrypted_ok = encrypt_command(session_key, session_id, counter=1, cmd=b"\x00\x83", payload=b"\x81")
 
     fake = _FakeConnection(response=encrypted_ok)
-    device._connection = fake
+    device._attach(fake)
+    device._channel.session = LegacySession(session_key=session_key, session_id=session_id, nonce_counter=0)
 
     await device.write_nfc(NfcRecordType.TEXT, b"hello")
 
@@ -266,12 +265,10 @@ async def test_write_nfc_error_frame_plaintext_during_encrypted_session() -> Non
     and _read() must not attempt to decrypt them.
     """
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
-    device._session_key = bytes(range(16))
-    device._session_id = bytes(range(8))
-    device._nonce_counter = 0
 
     fake = _FakeConnection(response=b"\xff\x83\xff\x03")
-    device._connection = fake
+    device._attach(fake)
+    device._channel.session = LegacySession(session_key=bytes(range(16)), session_id=bytes(range(8)), nonce_counter=0)
 
     with pytest.raises(NfcWriteError) as exc_info:
         await device.write_nfc(NfcRecordType.TEXT, b"hello")

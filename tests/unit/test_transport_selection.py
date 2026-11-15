@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-import opendisplay.device as device_mod
+import opendisplay.device.facade as device_mod
 from opendisplay import OpenDisplayDevice
 from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.enums import ColorScheme
@@ -148,7 +148,7 @@ async def test_tcp_with_key_does_not_authenticate(monkeypatch: pytest.MonkeyPatc
         # The app-layer challenge/response must not run over TCP (TLS gates it).
         assert calls == []
         assert all(w[:2] != b"\x00\x50" for w in conn.written)
-        assert connected._session_key is None
+        assert connected._channel.session is None
 
 
 async def test_ble_with_key_authenticates(monkeypatch: pytest.MonkeyPatch) -> None:

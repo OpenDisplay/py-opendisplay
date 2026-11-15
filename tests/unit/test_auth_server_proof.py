@@ -35,7 +35,7 @@ def _device(success_proof: bytes) -> OpenDisplayDevice:
     )
     challenge = b"\x00\x50\x00" + _SERVER_NONCE  # old format -> default device_id
     success = b"\x00\x50\x00" + success_proof  # status OK + 16-byte proof
-    dev._connection = _FakeConn([challenge, success])  # type: ignore[assignment]
+    dev._attach(_FakeConn([challenge, success]))  # type: ignore[arg-type]
     return dev
 
 
@@ -45,22 +45,22 @@ def _good_proof() -> bytes:
 
 
 def test_authenticate_accepts_valid_server_proof(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("opendisplay.device.generate_client_nonce", lambda: _CLIENT_NONCE)
+    monkeypatch.setattr("opendisplay.device.channel.generate_client_nonce", lambda: _CLIENT_NONCE)
     device = _device(_good_proof())
 
     asyncio.run(device.authenticate(_KEY))
 
-    assert device._session_key is not None
+    assert device._channel.session is not None
 
 
 def test_authenticate_rejects_wrong_server_proof(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("opendisplay.device.generate_client_nonce", lambda: _CLIENT_NONCE)
+    monkeypatch.setattr("opendisplay.device.channel.generate_client_nonce", lambda: _CLIENT_NONCE)
     device = _device(b"\xff" * 16)  # bogus proof a MITM would send
 
     with pytest.raises(AuthenticationFailedError, match="mutual authentication"):
         asyncio.run(device.authenticate(_KEY))
 
-    assert device._session_key is None
+    assert device._channel.session is None
 
 
 # ─── Stray step-1 challenge frames at step 2 (#141) ──────────────────────────
@@ -73,7 +73,7 @@ def _device_with_responses(responses: list[bytes]) -> OpenDisplayDevice:
         mac_address="AA:BB:CC:DD:EE:FF",
         capabilities=DeviceCapabilities(width=2, height=2, color_scheme=ColorScheme.MONO),
     )
-    dev._connection = _FakeConn(responses)  # type: ignore[assignment]
+    dev._attach(_FakeConn(responses))  # type: ignore[arg-type]
     return dev
 
 
@@ -83,21 +83,21 @@ def test_authenticate_skips_a_duplicated_challenge_frame(monkeypatch: pytest.Mon
     Both frames carry status 0x00, so the duplicate used to parse as "success" with
     the server nonce as the proof, failing with a misleading proof mismatch.
     """
-    monkeypatch.setattr("opendisplay.device.generate_client_nonce", lambda: _CLIENT_NONCE)
+    monkeypatch.setattr("opendisplay.device.channel.generate_client_nonce", lambda: _CLIENT_NONCE)
     success = b"\x00\x50\x00" + _good_proof()
     device = _device_with_responses([_CHALLENGE_FRAME, _CHALLENGE_FRAME, success])
 
     asyncio.run(device.authenticate(_KEY))
 
-    assert device._session_key is not None
+    assert device._channel.session is not None
 
 
 def test_authenticate_gives_up_on_a_stream_of_challenge_frames(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("opendisplay.device.generate_client_nonce", lambda: _CLIENT_NONCE)
+    monkeypatch.setattr("opendisplay.device.channel.generate_client_nonce", lambda: _CLIENT_NONCE)
     strays = OpenDisplayDevice.MAX_STRAY_AUTH_FRAMES + 1
     device = _device_with_responses([_CHALLENGE_FRAME] * (1 + strays))
 
     with pytest.raises(ProtocolError, match="challenge"):
         asyncio.run(device.authenticate(_KEY))
 
-    assert device._session_key is None
+    assert device._channel.session is None

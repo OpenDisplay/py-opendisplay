@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from opendisplay import OpenDisplayDevice
+from opendisplay.device.channel import LegacySession
 from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.enums import ColorScheme
 from opendisplay.transport.connection import BLEConnection
@@ -49,30 +50,26 @@ async def test_transaction_is_reentrant_within_a_task() -> None:
     assert await asyncio.wait_for(nested(), timeout=1.0) == "ok"
 
 
-def test_clear_session_resets_all_session_state() -> None:
+def test_channel_reset_drops_the_session() -> None:
     device = _make_device()
-    device._session_key = b"k" * 16
-    device._session_id = b"i" * 8
-    device._nonce_counter = 5
-    device._auth_time = 123.0
+    device._attach(MagicMock())
+    device._channel.session = LegacySession(
+        session_key=b"k" * 16, session_id=b"i" * 8, nonce_counter=5, established_at=123.0
+    )
 
-    device._clear_session()
+    device._channel.reset()
 
-    assert device._session_key is None
-    assert device._session_id is None
-    assert device._nonce_counter == 0
-    assert device._auth_time is None
+    assert device._channel.session is None
 
 
 def test_on_disconnect_clears_session() -> None:
     device = _make_device()
-    device._session_key = b"k" * 16
-    device._nonce_counter = 9
+    device._attach(MagicMock())
+    device._channel.session = LegacySession(session_key=b"k" * 16, session_id=b"i" * 8, nonce_counter=9)
 
     device._on_disconnect()
 
-    assert device._session_key is None
-    assert device._nonce_counter == 0
+    assert device._channel.session is None
 
 
 def test_connection_disconnect_callback_is_invoked() -> None:

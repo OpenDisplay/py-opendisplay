@@ -133,9 +133,8 @@ class TestValidateAckResponse:
 
     def test_validate_ack_real_firmware_response(self, real_firmware_response):
         """Test validating real firmware ACK response."""
-        if real_firmware_response and len(real_firmware_response) >= 2:
-            # Should not raise
-            validate_ack_response(real_firmware_response, CommandCode.READ_FW_VERSION)
+        assert len(real_firmware_response) >= 2  # the captured frame must be there, or this checks nothing
+        validate_ack_response(real_firmware_response, CommandCode.READ_FW_VERSION)
 
 
 class TestParseFirmwareVersion:

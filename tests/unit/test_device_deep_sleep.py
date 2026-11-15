@@ -67,7 +67,7 @@ async def test_deep_sleep_sends_0053_and_accepts_silabs_ack() -> None:
     """Silabs Flex replies with the 2-byte 0x0053 ACK before sleeping."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x53")
-    device._connection = fake
+    device._attach(fake)
 
     await device.deep_sleep()  # must not raise
 
@@ -80,7 +80,7 @@ async def test_deep_sleep_accepts_esp32_power_latch_ack() -> None:
     """ESP32 with a power latch replies with the 4-byte 0x0053 0x0000 ACK."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x53\x00\x00")
-    device._connection = fake
+    device._attach(fake)
 
     await device.deep_sleep()  # must not raise
 
@@ -92,7 +92,7 @@ async def test_deep_sleep_sends_optional_duration() -> None:
     """An explicit wake-timer duration is appended as a big-endian u16."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x53")
-    device._connection = fake
+    device._attach(fake)
 
     await device.deep_sleep(duration_seconds=90)  # must not raise
 
@@ -104,7 +104,7 @@ async def test_deep_sleep_raises_on_not_supported_nack() -> None:
     """A 0xFF53 error frame surfaces as ProtocolError (deep sleep not supported)."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\xff\x53")
-    device._connection = fake
+    device._attach(fake)
 
     with pytest.raises(ProtocolError, match="not supported"):
         await device.deep_sleep()
@@ -116,7 +116,7 @@ async def test_deep_sleep_tolerates_write_drop() -> None:
     that disconnect is expected and must not raise."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(write_error=BLEConnectionError("Write failed: ... error=133"))
-    device._connection = fake
+    device._attach(fake)
 
     await device.deep_sleep()  # must not raise
 
@@ -130,7 +130,7 @@ async def test_deep_sleep_tolerates_read_timeout() -> None:
     that is expected and must not raise."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(read_error=BLETimeoutError("No response received within 5s"))
-    device._connection = fake
+    device._attach(fake)
 
     await device.deep_sleep()  # must not raise
 
@@ -144,7 +144,7 @@ async def test_deep_sleep_tolerates_read_disconnect() -> None:
     connection error; that is expected and must not raise."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(read_error=BLEConnectionError("Not connected"))
-    device._connection = fake
+    device._attach(fake)
 
     await device.deep_sleep()  # must not raise
 
@@ -160,7 +160,7 @@ async def test_power_off_sends_0052_and_accepts_ack() -> None:
     cutting power."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\x00\x52")
-    device._connection = fake
+    device._attach(fake)
 
     await device.power_off()  # must not raise
 
@@ -173,7 +173,7 @@ async def test_power_off_raises_on_not_supported_nack() -> None:
     """A 0xFF52 error frame surfaces as ProtocolError (no power latch)."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(response=b"\xff\x52")
-    device._connection = fake
+    device._attach(fake)
 
     with pytest.raises(ProtocolError, match="power latch"):
         await device.power_off()
@@ -185,7 +185,7 @@ async def test_power_off_tolerates_write_drop() -> None:
     off; that disconnect is expected and must not raise."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(write_error=BLEConnectionError("Write failed: ... error=133"))
-    device._connection = fake
+    device._attach(fake)
 
     await device.power_off()  # must not raise
 
@@ -199,6 +199,6 @@ async def test_power_off_tolerates_read_disconnect() -> None:
     read-time connection error; that is expected and must not raise."""
     device = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF")
     fake = _FakeConnection(read_error=BLEConnectionError("Not connected"))
-    device._connection = fake
+    device._attach(fake)
 
     await device.power_off()  # must not raise

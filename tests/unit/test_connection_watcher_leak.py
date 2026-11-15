@@ -50,7 +50,7 @@ async def test_aenter_disconnects_when_interrogate_raises() -> None:
     class _Boom(Exception):
         pass
 
-    with patch("opendisplay.device.BLEConnection", return_value=fake_conn):
+    with patch("opendisplay.device.facade.BLEConnection", return_value=fake_conn):
         device.interrogate = AsyncMock(side_effect=_Boom("no response"))  # type: ignore[method-assign]
         with pytest.raises(_Boom):
             await device.__aenter__()
@@ -68,7 +68,7 @@ async def test_aenter_disconnects_on_cancellation() -> None:
     fake_conn.connect = AsyncMock()
     fake_conn.disconnect = AsyncMock()
 
-    with patch("opendisplay.device.BLEConnection", return_value=fake_conn):
+    with patch("opendisplay.device.facade.BLEConnection", return_value=fake_conn):
         device.interrogate = AsyncMock(side_effect=asyncio.CancelledError())  # type: ignore[method-assign]
         with pytest.raises(asyncio.CancelledError):
             await device.__aenter__()
@@ -84,7 +84,7 @@ async def test_aenter_success_does_not_disconnect() -> None:
     fake_conn.connect = AsyncMock()
     fake_conn.disconnect = AsyncMock()
 
-    with patch("opendisplay.device.BLEConnection", return_value=fake_conn):
+    with patch("opendisplay.device.facade.BLEConnection", return_value=fake_conn):
         device.interrogate = AsyncMock()  # type: ignore[method-assign]
         result = await device.__aenter__()
 

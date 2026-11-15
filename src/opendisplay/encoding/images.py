@@ -2,10 +2,76 @@
 
 from __future__ import annotations
 
+import io
+import logging
+
 import numpy as np
 from PIL import Image, ImageOps
 
 from ..models.enums import ColorScheme, FitMode
+
+_LOGGER = logging.getLogger(__name__)
+
+# Modes that carry an alpha channel; a palette or greyscale image can also mark
+# one colour transparent through ``info["transparency"]``.
+_ALPHA_MODES = frozenset({"RGBA", "LA", "PA", "RGBa", "La"})
+
+
+def _flatten_on_white(image: Image.Image) -> Image.Image:
+    """Resolve transparency to white, which is what a panel shows where no ink is laid down."""
+    if image.mode not in _ALPHA_MODES and "transparency" not in image.info:
+        return image
+    rgba = image.convert("RGBA")
+    white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    return Image.alpha_composite(white, rgba).convert("RGB")
+
+
+def _convert_to_srgb(image: Image.Image, icc_profile: bytes) -> Image.Image:
+    """Convert an image from its embedded colour profile to sRGB.
+
+    Palettes and dithering work in sRGB, so the values of a wide-gamut source
+    (Adobe RGB, Display P3) would otherwise be read as if they were sRGB and come
+    out desaturated. A profile that cannot be applied only costs colour accuracy,
+    so it is logged and the image is used as it is.
+    """
+    # Pillow can be built without LittleCMS; that must not break image upload.
+    try:
+        from PIL import ImageCms
+    except ImportError:
+        _LOGGER.warning("Pillow has no colour management support; ignoring the image's colour profile")
+        return image
+
+    try:
+        profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
+        if "srgb" in ImageCms.getProfileDescription(profile).lower():
+            return image
+        color_space = profile.profile.xcolor_space.strip()
+        source = image.convert("RGB") if image.mode == "P" and color_space == "RGB" else image
+        if source.mode != color_space:
+            _LOGGER.debug("Ignoring a %s colour profile on a %s image", color_space, image.mode)
+            return image
+        converted = ImageCms.profileToProfile(source, profile, ImageCms.createProfile("sRGB"), outputMode="RGB")
+    except (ImageCms.PyCMSError, OSError, ValueError) as err:
+        _LOGGER.warning("Could not apply the image's colour profile: %s", err)
+        return image
+    if converted is None:  # only an in-place conversion returns None; this one is not
+        return image
+    converted.info.pop("icc_profile", None)
+    return converted
+
+
+def normalize_source_image(image: Image.Image) -> Image.Image:
+    """Make a source image opaque and sRGB, ready to be fitted and dithered.
+
+    - Transparency is resolved to white.
+    - An embedded colour profile other than sRGB is applied, converting the
+      pixels to sRGB.
+
+    An opaque image without a profile (or with an sRGB one) is returned unchanged.
+    """
+    icc_profile = image.info.get("icc_profile")
+    flattened = _flatten_on_white(image)
+    return _convert_to_srgb(flattened, icc_profile) if icc_profile else flattened
 
 
 def _pad_color_for_mode(mode: str) -> int | tuple[int, ...]:

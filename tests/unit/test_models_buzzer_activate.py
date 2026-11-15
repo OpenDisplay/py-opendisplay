@@ -190,8 +190,7 @@ class TestNoteToIndex:
 
     @pytest.mark.parametrize("name", ["a4", "A4", "cs5", "REST", "rest", "r"])
     def test_case_insensitive(self, name):
-        # Just assert it does not raise; specific values covered elsewhere.
-        assert isinstance(note_to_index(name), int)
+        assert note_to_index(name) == note_to_index(name.upper())
 
     @pytest.mark.parametrize("rest", ["R", "r", "REST", "rest", "Rest"])
     def test_rest_is_zero(self, rest):
