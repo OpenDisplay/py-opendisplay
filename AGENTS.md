@@ -38,15 +38,19 @@ Gotchas:
 - **`protocol/`** — pure byte-level layer, no I/O. `commands.py` builds command frames (`CommandCode` enum: 0x0040 config read, 0x0070 direct write, 0x0076 partial, 0x0050 auth, …), `responses.py` parses ACK/NACK/response frames, `config_parser.py`/`config_serializer.py` round-trip the TLV device config.
 - **`models/`** — dataclasses only: `GlobalConfig` and its per-TLV-packet sections (`config.py`), enums, `config_json.py` (JSON import/export compatible with the Config Builder web tool), `advertisement.py` (parses both legacy 11-byte and v1 14-byte BLE advertisement formats; `AdvertisementTracker` derives button events from durable press counts, not the transient pressed bit).
 - **`encoding/`** — image → bitplane bytes (`bitplanes.py`, numpy-vectorized) and compression (`compression.py`). Dithering is done by the external `epaper-dithering` package (7.x), which ships no palettes: py-opendisplay owns them as `epaper-palette` JSON files in `src/opendisplay/palettes/` — an idealised palette per `ColorScheme` and measured palettes by panel ID — mapped in `display_palettes.py`. Entry order is the index order the encoders expect, pinned by `tests/unit/test_display_palettes.py` and `test_wire_bytes_golden.py`; a new measured palette (e.g. from epaper-colorcal) is a new file plus one mapping line. `ColorScheme` itself lives in `models/enums.py`.
-- **`device.py`** — `OpenDisplayDevice`, the facade that orchestrates everything: connect → (authenticate if encrypted) → interrogate config → upload. This is the file to read to understand any end-to-end flow.
-- **`crypto.py`** — AES-128 challenge-response authentication; after auth, all command traffic is transparently encrypted in `device.py`'s read/write path.
+- **`device/`** — the package behind `OpenDisplayDevice`. Traffic flows facade / uploader → channel → transport.
+  - `facade.py` — `OpenDisplayDevice`: connect → (authenticate if encrypted) → interrogate config → upload, plus the simple commands and the per-device command lock. Start here to follow any end-to-end flow.
+  - `channel.py` — `SecureChannel`, one per connection, holding an optional `Session`. No session is plaintext; `LegacySession` is the 2.x challenge-response scheme. Chunk sizes that depend on the session are computed here.
+  - `upload.py` — `Uploader`: the partial, pipe/streaming and direct-write paths and the per-connection PIPE_WRITE probe state.
+  - `imaging.py` — `prepare_image` / `preview_image`: rotate → fit → dither → encode, no I/O.
+- **`crypto.py`** — AES-128 challenge-response authentication; after auth, all command traffic is transparently encrypted in `device/channel.py`.
 - **`partial.py`** — `PartialState` for differential (flicker-free) 0x76 updates; caller-owned, persistable via `to_bytes()`.
 - **`ota.py`** — dispatch to optional `nrf-ota` (Nordic Legacy DFU, DFU device appears at MAC+1) or `silabs-ble-ota` (AppLoader, same MAC) extras. No BLE OTA for ESP32. macOS cannot do OTA (CoreBluetooth GATT cache).
 - **`cli.py`** — argparse CLI (`opendisplay` entry point; subcommands are the `add_parser` calls), `rich` optional.
 
 ### Upload flow (the core path)
 
-`upload_image()` → `prepare_image()` (rotate → fit → dither) → encode to bitplanes → `_dispatch_upload()` picks one of three wire paths:
+`upload_image()` → `prepare_image()` (rotate → fit → dither) → encode to bitplanes → `Uploader.dispatch_upload()` picks one of three wire paths:
 
 1. **Partial** (0x76) — only when the caller passes a `PartialState`, the panel supports it, and a previous frame exists; falls back to full automatically. `PartialUpdateSupport.FULL_FRAME` (=2) panels need the stream expanded to the whole screen.
 2. **Pipe/streaming** — negotiated chunked transfer with retransmission budget.
