@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, TypeVar, cast
 from epaper_dithering import DbsParams, DitherMode, DitherOptions, dither_image
 from PIL import Image
 
-from .crypto import (
+from ..crypto import (
     aes_cmac,
     compute_challenge_response,
     compute_server_proof,
@@ -26,8 +26,8 @@ from .crypto import (
     encrypt_command,
     generate_client_nonce,
 )
-from .display_palettes import PANELS_4GRAY, get_bwry_codes, get_gray4_codes, get_palette_for_display
-from .encoding import (
+from ..display_palettes import PANELS_4GRAY, get_bwry_codes, get_gray4_codes, get_palette_for_display
+from ..encoding import (
     FIRMWARE_ZLIB_WINDOW_BITS,
     compress_image_data,
     encode_2bpp,
@@ -38,7 +38,7 @@ from .encoding import (
     normalize_source_image,
     zlib_window_bits,
 )
-from .exceptions import (
+from ..exceptions import (
     AuthenticationError,
     AuthenticationFailedError,
     AuthenticationRequiredError,
@@ -54,15 +54,15 @@ from .exceptions import (
     RefreshTimeoutError,
     TruncatedConfigError,
 )
-from .landing import build_landing_url
-from .models.advertisement import AdvertisementData, parse_advertisement
-from .models.buzzer_activate import BuzzerActivateConfig
-from .models.capabilities import DeviceCapabilities
-from .models.config import DisplayConfig, GlobalConfig
-from .models.enums import BoardManufacturer, ColorScheme, FitMode, NfcRecordType, RefreshMode, Rotation
-from .models.firmware import FirmwareVersion
-from .models.led_flash import LedFlashConfig
-from .partial import (
+from ..landing import build_landing_url
+from ..models.advertisement import AdvertisementData, parse_advertisement
+from ..models.buzzer_activate import BuzzerActivateConfig
+from ..models.capabilities import DeviceCapabilities
+from ..models.config import DisplayConfig, GlobalConfig
+from ..models.enums import BoardManufacturer, ColorScheme, FitMode, NfcRecordType, RefreshMode, Rotation
+from ..models.firmware import FirmwareVersion
+from ..models.led_flash import LedFlashConfig
+from ..partial import (
     PARTIAL_FLAG_COMPRESSED,
     PartialRegion,
     PartialState,
@@ -72,7 +72,7 @@ from .partial import (
     encode_segment_wire,
     parse_nack,
 )
-from .protocol import (
+from ..protocol import (
     CHUNK_SIZE,
     DEFAULT_MAX_FRAME,
     ENCRYPTED_CHUNK_SIZE,
@@ -126,7 +126,7 @@ from .protocol import (
     unpack_ack_ranges,
     validate_ack_response,
 )
-from .protocol.responses import (
+from ..protocol.responses import (
     NFC_STATUS_CHUNK_ACK,
     NFC_STATUS_WRITE_OK,
     PIPE_FRAME_ACK,
@@ -149,8 +149,8 @@ from .protocol.responses import (
     unpack_command_code,
     validate_nfc_response,
 )
-from .sensors import SensorReading, read_sensor_values
-from .transport import BLEConnection, TcpTransport, Transport
+from ..sensors import SensorReading, read_sensor_values
+from ..transport import BLEConnection, TcpTransport, Transport
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
@@ -656,7 +656,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         if self._device_name:
             _LOGGER.debug("Resolving device name '%s' to MAC address", self._device_name)
 
-            from .discovery import discover_devices
+            from ..discovery import discover_devices
 
             devices = await discover_devices(timeout=self._discovery_timeout)
 
@@ -1818,7 +1818,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         import json
 
-        from .models import config_to_json
+        from ..models import config_to_json
 
         data = config_to_json(self._config)
 
@@ -1837,7 +1837,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         """
         import json
 
-        from .models import config_from_json
+        from ..models import config_from_json
 
         with open(file_path, encoding="utf-8") as f:
             data = json.load(f)

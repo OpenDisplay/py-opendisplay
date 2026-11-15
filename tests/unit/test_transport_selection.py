@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-import opendisplay.device as device_mod
+import opendisplay.device.facade as device_mod
 from opendisplay import OpenDisplayDevice
 from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.enums import ColorScheme

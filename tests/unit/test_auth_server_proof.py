@@ -45,7 +45,7 @@ def _good_proof() -> bytes:
 
 
 def test_authenticate_accepts_valid_server_proof(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("opendisplay.device.generate_client_nonce", lambda: _CLIENT_NONCE)
+    monkeypatch.setattr("opendisplay.device.facade.generate_client_nonce", lambda: _CLIENT_NONCE)
     device = _device(_good_proof())
 
     asyncio.run(device.authenticate(_KEY))
@@ -54,7 +54,7 @@ def test_authenticate_accepts_valid_server_proof(monkeypatch: pytest.MonkeyPatch
 
 
 def test_authenticate_rejects_wrong_server_proof(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("opendisplay.device.generate_client_nonce", lambda: _CLIENT_NONCE)
+    monkeypatch.setattr("opendisplay.device.facade.generate_client_nonce", lambda: _CLIENT_NONCE)
     device = _device(b"\xff" * 16)  # bogus proof a MITM would send
 
     with pytest.raises(AuthenticationFailedError, match="mutual authentication"):
@@ -83,7 +83,7 @@ def test_authenticate_skips_a_duplicated_challenge_frame(monkeypatch: pytest.Mon
     Both frames carry status 0x00, so the duplicate used to parse as "success" with
     the server nonce as the proof, failing with a misleading proof mismatch.
     """
-    monkeypatch.setattr("opendisplay.device.generate_client_nonce", lambda: _CLIENT_NONCE)
+    monkeypatch.setattr("opendisplay.device.facade.generate_client_nonce", lambda: _CLIENT_NONCE)
     success = b"\x00\x50\x00" + _good_proof()
     device = _device_with_responses([_CHALLENGE_FRAME, _CHALLENGE_FRAME, success])
 
@@ -93,7 +93,7 @@ def test_authenticate_skips_a_duplicated_challenge_frame(monkeypatch: pytest.Mon
 
 
 def test_authenticate_gives_up_on_a_stream_of_challenge_frames(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("opendisplay.device.generate_client_nonce", lambda: _CLIENT_NONCE)
+    monkeypatch.setattr("opendisplay.device.facade.generate_client_nonce", lambda: _CLIENT_NONCE)
     strays = OpenDisplayDevice.MAX_STRAY_AUTH_FRAMES + 1
     device = _device_with_responses([_CHALLENGE_FRAME] * (1 + strays))
 

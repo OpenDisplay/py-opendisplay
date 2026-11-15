@@ -14,7 +14,7 @@ import pytest
 from PIL import Image
 
 from opendisplay import OpenDisplayDevice
-from opendisplay.device import _PipePartialEtagMismatch, _PipePartialRejected
+from opendisplay.device.facade import _PipePartialEtagMismatch, _PipePartialRejected
 from opendisplay.exceptions import BLETimeoutError, InvalidResponseError
 from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.config import (
