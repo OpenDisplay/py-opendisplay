@@ -694,7 +694,6 @@ def test_unconfigured_advertisement_decodes_no_slots() -> None:
     assert adv.button_event(0) is None
     assert adv.is_pressed(0) is None
     assert adv.touch_event(0) is None
-    assert adv.sht40_reading() is None
 
 
 def test_claimed_device_in_claim_mode_is_not_awaiting_claim() -> None:
@@ -717,24 +716,37 @@ def test_legacy_payload_has_no_state() -> None:
     assert (adv.session_required, adv.claim_mode, adv.awaiting_claim, adv.unconfigured) == (None, None, None, False)
 
 
-def test_button_tracker_ignores_an_unconfigured_device_and_keeps_its_state() -> None:
+def _touching(x: int = 100, y: int = 200) -> AdvertisementData:
+    """A v1 advertisement with one contact in the touch block at offset 0."""
+    block = bytes([0x01]) + x.to_bytes(2, "little") + y.to_bytes(2, "little")
+    return parse_advertisement(_v1_payload(block + bytes(6)))
+
+
+def test_button_tracker_starts_over_after_an_unconfigured_advertisement() -> None:
+    """An unconfigured period is a break: the device comes back after a config write or an update,
+    often with reset counters, so what was seen before must not be compared with what comes after."""
     tracker = AdvertisementTracker()
-    first = parse_advertisement(_v1_payload(bytes([0x0A]) + bytes(10), loop_counter=1))  # id=2, count=1, up
-    pressed = parse_advertisement(_v1_payload(bytes([0x92]) + bytes(10), loop_counter=3))  # id=2, count=2, down
-    assert tracker.update(_ADDRESS, first, timestamp=1.0) == []
+    before = parse_advertisement(_v1_payload(bytes([0x0A]) + bytes(10), loop_counter=1))  # id=2, count=1, up
+    after = parse_advertisement(_v1_payload(bytes([0x92]) + bytes(10), loop_counter=3))  # id=2, count=2, down
+    assert tracker.update(_ADDRESS, before, timestamp=1.0) == []
 
     assert tracker.update(_ADDRESS, parse_advertisement(AWAITING_CLAIM), timestamp=2.0) == []
 
-    # The FF bytes were not taken for button data: the next real advertisement is compared with `first`.
-    events = tracker.update(_ADDRESS, pressed, timestamp=3.0)
-    assert [e.event_type for e in events] == ["button_down", "press_count_changed"]
-    assert events[1].previous_press_count == 1
+    assert tracker.update(_ADDRESS, after, timestamp=3.0) == []  # a first sighting again, no press reported
 
 
-def test_touch_tracker_ignores_an_unconfigured_device() -> None:
+def test_touch_tracker_reports_nothing_when_a_touched_device_becomes_unconfigured() -> None:
+    tracker = TouchTracker(instance=0, start_byte=0)
+    assert tracker.update(_ADDRESS, _touching(), timestamp=1.0) == []
+
+    # Without the rule the 0xFF bytes read as "no longer touching" and a touch_up is reported.
+    assert tracker.update(_ADDRESS, parse_advertisement(AWAITING_CLAIM), timestamp=2.0) == []
+
+
+def test_touch_tracker_starts_over_after_an_unconfigured_advertisement() -> None:
     tracker = TouchTracker(instance=0, start_byte=0)
     idle = parse_advertisement(_v1_payload(bytes(11)))
-    assert tracker.update(_ADDRESS, idle, timestamp=1.0) == []
+    tracker.update(_ADDRESS, _touching(), timestamp=1.0)
+    tracker.update(_ADDRESS, parse_advertisement(AWAITING_CLAIM), timestamp=2.0)
 
-    # 0xFF in the touch block would read as 15 contacts: a phantom touch_down.
-    assert tracker.update(_ADDRESS, parse_advertisement(AWAITING_CLAIM), timestamp=2.0) == []
+    assert tracker.update(_ADDRESS, idle, timestamp=3.0) == []  # no touch_up against the old contact

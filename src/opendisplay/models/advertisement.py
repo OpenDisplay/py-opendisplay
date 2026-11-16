@@ -100,7 +100,7 @@ class AdvertisementData:
 
         Firmware fills the 11 dynamic bytes with 0xFF when there is no config, no display, or
         (on 3.0) no drive data for the display. The bytes then carry no button, touch or sensor
-        data, so the decoding methods return nothing and the trackers ignore the advertisement.
+        data, so the decoding methods return nothing and the trackers start over after it.
         """
         return self.format_version == "v1" and self.dynamic_data == _UNCONFIGURED_DYNAMIC
 
@@ -364,11 +364,10 @@ class AdvertisementTracker:
         timestamp: float | None = None,
     ) -> list[ButtonChangeEvent]:
         """Process one advertisement and return detected transitions."""
-        if advertisement.unconfigured:
-            # No drivable display: the dynamic bytes are filler, not button data. Keep what was
-            # last seen so the next real advertisement is compared with it.
-            return []
-        if advertisement.format_version != "v1":
+        if advertisement.format_version != "v1" or advertisement.unconfigured:
+            # Unconfigured: the dynamic bytes are filler, not button data, and the state ends
+            # only with a config write or an update, after which counters may have restarted.
+            # Forget what was seen so the next real advertisement is a first sighting.
             self._last_by_address.pop(address, None)
             return []
 
@@ -525,6 +524,10 @@ class TouchTracker:
         timestamp: float | None = None,
     ) -> list[TouchChangeEvent]:
         """Process one advertisement and return detected touch transitions."""
+        if advertisement.unconfigured:
+            # As for buttons: a break, not a release. The next real advertisement starts over.
+            self._last_by_address.pop(address, None)
+            return []
         current = advertisement.touch_event(self._start_byte)
         if current is None:
             return []
