@@ -64,6 +64,7 @@ from .panel_drive import (
     DisplayPanel,
     LengthPrefixedPacket,
 )
+from .profile import DeviceProfile, Generation, build_profile
 
 __all__ = [
     "AdvertisementData",
@@ -97,6 +98,9 @@ __all__ = [
     "DisplayConfig",
     "FirmwareVersion",
     "DeviceIdent",
+    "DeviceProfile",
+    "Generation",
+    "build_profile",
     "FirmwareTarget",
     "IdentDisplay",
     "firmware_ota_asset",
