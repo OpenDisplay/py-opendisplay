@@ -8,7 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from epaper_dithering import DitherMode
 
 from .battery import voltage_to_percent
-from .device import OpenDisplayDevice, prepare_image, preview_image
+from .device import ConfigView, Device, OpenDisplayDevice, connect, prepare_image, preview_image
 from .discovery import discover_devices, discover_devices_with_adv
 from .discovery_ip import IpDeviceInfo, discover_ip_devices
 from .exceptions import (
@@ -135,6 +135,9 @@ __version__ = _package_version()
 __all__ = [
     # Main API
     "OpenDisplayDevice",
+    "Device",
+    "ConfigView",
+    "connect",
     "discover_devices",
     "discover_devices_with_adv",
     "discover_ip_devices",
