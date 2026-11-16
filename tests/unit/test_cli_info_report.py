@@ -667,3 +667,53 @@ def test_report_for_a_device_without_config_shows_identity_and_no_display() -> N
     rendered = _info_to_json(ctx)
     assert rendered["display"] is None
     assert rendered["ident"]["config_driven"] is True
+
+
+# ── drive modes (piece 3b, decision 5) ───────────────────────────────────────
+
+from pathlib import Path  # noqa: E402
+
+from opendisplay.protocol.config_parser import parse_config_response  # noqa: E402
+
+_ALPHA = parse_config_response(
+    (Path(__file__).parent.parent / "fixtures" / "configs" / "bg22_alpha_drive_packets.bin").read_bytes()
+)
+_FW3 = {"major": 3, "minor": 0, "patch": 2, "sha": "bg22-dev"}
+
+
+def _ctx_v3(config: GlobalConfig) -> _InfoContext:
+    return dataclasses.replace(_ctx(config), fw=_FW3)
+
+
+def test_drive_modes_are_listed_with_scheme_and_passes() -> None:
+    console = Console(width=120, record=True, force_terminal=False)
+    console.print(_build_info_tree(_ctx_v3(_ALPHA)))
+    text = console.export_text()
+
+    assert "Drive modes" in text
+    assert "Mode 0  full  BWRY, 1 pass" in text  # inherits the display's scheme
+    assert "Mode 1  colour16  scheme 10, 3 passes" in text
+
+
+def test_drive_modes_are_in_the_json() -> None:
+    modes = _info_to_json(_ctx_v3(_ALPHA))["display"]["drive_modes"]
+
+    assert modes == [
+        {"index": 0, "name": "full", "scheme": "BWRY", "scheme_value": 3, "inherits_scheme": True, "passes": 1},
+        {
+            "index": 1,
+            "name": "colour16",
+            "scheme": "scheme 10",
+            "scheme_value": 10,
+            "inherits_scheme": False,
+            "passes": 3,
+        },
+    ]
+
+
+def test_a_config_without_drive_modes_has_no_section() -> None:
+    console = Console(width=120, record=True, force_terminal=False)
+    console.print(_build_info_tree(_ctx(_config())))
+
+    assert "Drive modes" not in console.export_text()
+    assert _info_to_json(_ctx(_config()))["display"]["drive_modes"] == []

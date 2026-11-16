@@ -173,6 +173,40 @@ class PanelBusyError(ProtocolError):
         super().__init__(message)
 
 
+class DriveModeSubstitutedError(ProtocolError):
+    """The device runs another drive mode than the one asked for, so the encoded frames do not fit.
+
+    Nothing was sent after the START. The caller decides what to upload instead.
+    """
+
+    def __init__(self, requested: str, actual: int, temp_c: int | None) -> None:
+        self.requested = requested
+        self.actual = actual
+        self.temp_c = temp_c
+        at = f" at {temp_c} °C" if temp_c is not None else ""
+        super().__init__(f"The device runs drive mode {actual} instead of '{requested}'{at}; nothing was uploaded.")
+
+
+class DriveModeTemperatureError(ProtocolError):
+    """The device refused a drive mode because the panel temperature is outside the mode's window."""
+
+    def __init__(self, mode: str | int, temp_min_c: int | None = None, temp_max_c: int | None = None) -> None:
+        self.mode = mode
+        self.temp_min_c = temp_min_c
+        self.temp_max_c = temp_max_c
+        window = f" ({temp_min_c} to {temp_max_c} °C)" if temp_min_c is not None and temp_max_c is not None else ""
+        super().__init__(f"The panel temperature is outside drive mode '{mode}''s window{window}.")
+
+
+class DriveSequenceUnsupportedError(ProtocolError):
+    """The drive mode's sequence uses an escape this firmware does not implement (refused at START)."""
+
+    def __init__(
+        self, message: str = "This firmware cannot run the drive mode's sequence (unsupported escape)."
+    ) -> None:
+        super().__init__(message)
+
+
 class ConfigWriteBusyError(ProtocolError):
     """The device did not store a config because a display pass was running. Transient: retry."""
 

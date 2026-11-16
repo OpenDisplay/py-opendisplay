@@ -10,19 +10,24 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..exceptions import IdentNotSupportedError, InvalidResponseError, NoStoredConfigError, OpenDisplayTimeoutError
+from ..models.enums import RefreshMode
 from ..models.profile import DeviceProfile, build_profile
 from ..panels import MigrationPlan, PanelDatabase, plan_migration
 from ..protocol.config_parser import parse_config_response
+from .drive_write import drive_write
 from .facade import OpenDisplayDevice
+from .imaging import prepare_multipass
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
+    from PIL import Image
 
     from ..models.config import GlobalConfig
     from ..models.ident import DeviceIdent
+    from ..models.panel_drive import DisplayMode
     from ..transport.base import Transport
 
 _LOGGER = logging.getLogger(__name__)
@@ -109,6 +114,70 @@ class ConfigView:
                 await asyncio.sleep(_REDRAW_WAIT_S)
 
 
+_RESERVED_MODES = {
+    "fast": "'fast' is reached with refresh_mode=RefreshMode.FAST",
+    "partial": "'partial' is reached with a PartialState (partial updates)",
+}
+
+
+class DisplayView:  # pylint: disable=too-few-public-methods  # grows with pieces 3-5
+    """Drawing on the device's display."""
+
+    def __init__(self, device: Device) -> None:
+        self._device = device
+
+    def _mode(self, name: str) -> DisplayMode:
+        """The config's drive mode called ``name`` (case-insensitive); no I/O."""
+        key = name.lower()
+        if key in _RESERVED_MODES:
+            raise ValueError(f"{_RESERVED_MODES[key]}; mode= names a drive mode such as 'colour16'")
+        profile = self._device.profile
+        known = {m.name.lower(): m for m in profile.drive_modes}
+        if key not in known:
+            names = ", ".join(profile.drive_mode_names) or "none"
+            raise ValueError(f"Unknown drive mode '{name}'; the device has: {names}")
+        config = self._device.config.cached
+        assert config is not None  # drive_modes come from the cached config
+        index = known[key].mode_index
+        return next(m for m in config.display_modes if m.mode_index == index)
+
+    async def show(self, image: Image.Image, *, mode: str | None = None, **options: Any) -> None:
+        """Draw ``image``. Without ``mode`` this is ``OpenDisplayDevice.upload_image`` with ``options``.
+
+        With ``mode`` the image is encoded for that config-declared drive mode (every pass of a
+        multi-pass mode) and sent with CMD_DRIVE_WRITE_START. Accepted options then:
+        ``refresh_mode``, ``compress``, ``progress_callback``, ``dither_mode``, ``serpentine``,
+        ``exposure``, ``saturation``, ``fit``, ``rotate``, ``use_measured_palettes``.
+
+        Raises:
+            ValueError: ``mode`` is "fast" or "partial" (use the refresh mode or a PartialState),
+                or a name the device's config does not declare. Raised before any I/O.
+            DriveModeSubstitutedError: The device runs another mode; nothing was uploaded.
+        """
+        legacy = self._device.legacy
+        if mode is None:
+            await legacy.upload_image(image, **options)
+            return
+        drive_mode = self._mode(mode)
+        config = self._device.config.cached
+        assert config is not None
+        refresh = options.pop("refresh_mode", RefreshMode.FULL)
+        compress = options.pop("compress", True)
+        progress = options.pop("progress_callback", None)
+        frames, _ = prepare_multipass(image, config, drive_mode, **options)
+        # Device wraps OpenDisplayDevice until piece 7 inverts the two; these are its internals.
+        async with legacy._transaction():  # pylint: disable=protected-access
+            await drive_write(
+                legacy._uploader,  # pylint: disable=protected-access
+                legacy._channel,  # pylint: disable=protected-access
+                drive_mode,
+                frames,
+                refresh=refresh,
+                compress=compress,
+                progress_callback=progress,
+            )
+
+
 class Device:
     """A connected OpenDisplay device. Use as ``async with opendisplay.connect(...) as dev``.
 
@@ -127,6 +196,7 @@ class Device:
     def __init__(self, legacy: OpenDisplayDevice) -> None:
         self.legacy = legacy
         self.config = ConfigView(self)
+        self.display = DisplayView(self)
         self._profile: DeviceProfile | None = None
 
     @property

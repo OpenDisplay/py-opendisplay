@@ -48,6 +48,7 @@ class CommandCode(IntEnum):
 
     # Sliding-window image transfer (PIPE_WRITE, firmware 2.x+)
     PIPE_WRITE_START = 0x0080  # Start + negotiate a sliding-window transfer
+    DRIVE_WRITE_START = 0x0085  # Start a full-frame write in a named drive mode (firmware 3.0)
     PIPE_WRITE_DATA = 0x0081  # Windowed data frame (seq + chunk); also device→host ACK/NACK opcode
     PIPE_WRITE_END = 0x0082  # End sliding-window transfer and trigger display refresh
 
@@ -258,6 +259,32 @@ def build_direct_write_start_compressed(
     first_chunk = compressed_data[:max_data_in_start]
     remaining = compressed_data[max_data_in_start:]
     return cmd + size + first_chunk, remaining
+
+
+DRIVE_WRITE_FLAG_COMPRESSED = 0x01  # payload carries uncompressed_size + zlib stream
+# DRIVE_WRITE_FLAG_PIPELINED (0x02) is never set: Firmware target only, and data goes over 0x71.
+
+
+def build_drive_write_start(
+    mode: int, refresh: int, *, uncompressed_size: int | None = None, first_chunk: bytes = b""
+) -> bytes:
+    """Build CMD_DRIVE_WRITE_START (0x0085): a full-frame write in a config-declared drive mode.
+
+    Format: ``[00][85][mode][refresh][flags][rsv:2]``, then, when compressed,
+    ``[uncompressed_size:4 LE]`` and the first bytes of the zlib stream.
+
+    Args:
+        mode: The mode's ``mode_index``.
+        refresh: The refresh byte (``RefreshMode`` value).
+        uncompressed_size: The frames' total uncompressed size; ``None`` for an uncompressed write.
+        first_chunk: The first compressed bytes (compressed writes only).
+    """
+    if uncompressed_size is None:
+        if first_chunk:
+            raise ValueError("first_chunk needs uncompressed_size: inline data is only sent compressed")
+        return bytes([0x00, 0x85, mode, refresh, 0x00, 0x00, 0x00])
+    head = bytes([0x00, 0x85, mode, refresh, DRIVE_WRITE_FLAG_COMPRESSED, 0x00, 0x00])
+    return head + uncompressed_size.to_bytes(4, "little") + first_chunk
 
 
 def build_direct_write_start_uncompressed() -> bytes:

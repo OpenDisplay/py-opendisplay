@@ -12,6 +12,8 @@ from ..exceptions import (
     ConfigKeyMismatchError,
     ConfigSecretNeedsClaimError,
     ConfigWriteBusyError,
+    DriveModeTemperatureError,
+    DriveSequenceUnsupportedError,
     InvalidResponseError,
     NeedsMigrationError,
     NfcWriteError,
@@ -438,6 +440,56 @@ def is_ident_unsupported_frame(data: bytes) -> bool:
     if len(data) >= 2 and data[0] == 0xFF and data[1] == low:
         return True
     return len(data) == 3 and data[1] == low and data[2] == 0xFE
+
+
+# CMD_DRIVE_WRITE_START refusals (opendisplay_protocol.h section 4e).
+DRIVE_NACK_BAD_ARGS = 0x01
+DRIVE_NACK_NO_CONFIG = 0x02
+DRIVE_NACK_BAD_MODE = 0x03
+DRIVE_NACK_BAD_SIZE = 0x04
+DRIVE_NACK_UNSUPPORTED = 0x05
+DRIVE_NACK_TEMP_RANGE = 0x06
+DRIVE_NACK_SEQ_UNSUPPORTED = 0x07
+DRIVE_NACK_PANEL_BUSY = 0x08
+_DRIVE_NACK_NAMES = {
+    DRIVE_NACK_BAD_ARGS: "bad arguments",
+    DRIVE_NACK_BAD_MODE: "mode not in the config",
+    DRIVE_NACK_BAD_SIZE: "declared size is not passes x frame",
+    DRIVE_NACK_UNSUPPORTED: "unsupported on this target",
+}
+_TEMP_UNKNOWN = 0x7F
+
+
+def parse_drive_write_start(data: bytes) -> tuple[int, int, int | None]:
+    """Parse the answer to CMD_DRIVE_WRITE_START (0x0085).
+
+    Returns:
+        ``(mode, passes, temp_c)``: the mode the device actually runs (it may differ from the
+        one asked for), the frames it now expects, and its panel temperature (``None`` unknown).
+
+    Raises:
+        DriveModeTemperatureError: 0x06, the temperature is outside the mode's window.
+        DriveSequenceUnsupportedError: 0x07.
+        PanelBusyError: 0x08, transient.
+        NeedsMigrationError: 0x02, no display or no drive data.
+        InvalidResponseError: Any other refusal (code named), or a malformed answer.
+    """
+    if len(data) >= 4 and data[0] == 0xFF and data[1] == 0x85:
+        err, mode = data[2], data[3]
+        if err == DRIVE_NACK_TEMP_RANGE:
+            raise DriveModeTemperatureError(mode)
+        if err == DRIVE_NACK_SEQ_UNSUPPORTED:
+            raise DriveSequenceUnsupportedError()
+        if err == DRIVE_NACK_PANEL_BUSY:
+            raise PanelBusyError()
+        if err == DRIVE_NACK_NO_CONFIG:
+            raise NeedsMigrationError()
+        name = _DRIVE_NACK_NAMES.get(err, "unknown error")
+        raise InvalidResponseError(f"Drive write START for mode {mode} refused: 0x{err:02x} ({name})")
+    if len(data) < 5 or data[0] != 0x00 or data[1] != 0x85:
+        raise InvalidResponseError(f"Unexpected answer to drive write START: {data.hex() or '<empty>'}")
+    temp = data[4]
+    return data[2], data[3], None if temp == _TEMP_UNKNOWN else int.from_bytes(bytes([temp]), "little", signed=True)
 
 
 def parse_read_ident(data: bytes) -> DeviceIdent:
