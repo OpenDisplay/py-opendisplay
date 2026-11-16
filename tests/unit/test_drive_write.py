@@ -235,9 +235,12 @@ async def test_show_without_a_mode_is_todays_upload(fake_transport, monkeypatch)
     monkeypatch.setattr(OpenDisplayDevice, "upload_image", upload_image)
     image = _image()
 
-    await dev.display.show(image, dither_mode=opendisplay.DitherMode.NONE)
+    result = await dev.display.show(image, dither_mode=opendisplay.DitherMode.NONE)
 
-    assert calls == [(image, {"dither_mode": opendisplay.DitherMode.NONE})]
+    assert result is None
+    assert len(calls) == 1 and calls[0][0] is image
+    assert calls[0][1]["dither_mode"] is opendisplay.DitherMode.NONE
+    assert calls[0][1]["refresh_mode"] is opendisplay.RefreshMode.FULL
     assert fake.written == []
 
 
@@ -249,3 +252,85 @@ async def test_a_refused_end_raises(fake_transport) -> None:
 
     with pytest.raises(InvalidResponseError):
         await dev.display.show(_image(), mode="full")
+
+
+# ── review fixes (piece 3b review I1 I2 M1) ──────────────────────────────────
+
+
+async def test_encoding_and_compression_run_off_the_event_loop(fake_transport, monkeypatch) -> None:  # I1
+    import threading
+
+    import opendisplay.device.api as api
+
+    config = _streaming(ALPHA)
+    dev, fake = await _connected(fake_transport, config)
+    threads: dict[str, threading.Thread] = {}
+    real_prepare, real_compress = api.prepare_multipass, api.compress_image_data
+
+    def prepare(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        threads["prepare"] = threading.current_thread()
+        return real_prepare(*args, **kwargs)
+
+    def compress(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        threads["compress"] = threading.current_thread()
+        return real_compress(*args, **kwargs)
+
+    monkeypatch.setattr(api, "prepare_multipass", prepare)
+    monkeypatch.setattr(api, "compress_image_data", compress)
+    frames, _ = real_prepare(_image(), config, next(m for m in config.display_modes if m.name == "colour16"))
+    from opendisplay.encoding import compress_image_data
+
+    _script_transfer(
+        dev,
+        fake,
+        bytes.fromhex("0085010319"),
+        len(compress_image_data(frames, level=6, window_bits=9)),
+        inline=200 - 11,
+    )
+
+    await dev.display.show(_image(), mode="colour16")
+
+    assert threads["prepare"] is not threading.main_thread()
+    assert threads["compress"] is not threading.main_thread()
+
+
+async def test_an_option_the_mode_path_cannot_take_is_a_type_error_before_any_io(fake_transport) -> None:  # I2
+    dev, fake = await _connected(fake_transport)
+
+    with pytest.raises(TypeError):
+        await dev.display.show(_image(), mode="colour16", tone=0.5)  # type: ignore[call-arg]
+
+    assert fake.written == []
+
+
+async def test_a_mode_upload_returns_the_panel_temperature(fake_transport) -> None:  # I2
+    dev, fake = await _connected(fake_transport)
+    frames, _ = prepare_multipass(_image(), ALPHA, next(m for m in ALPHA.display_modes if m.name == "full"))
+    _script_transfer(dev, fake, bytes.fromhex("0085000119"), len(frames))
+
+    assert await dev.display.show(_image(), mode="full") == 25
+
+
+async def test_the_mode_of_display_0_is_used_not_another_displays(fake_transport) -> None:  # M1
+    from opendisplay.models.panel_drive import LengthPrefixedPacket
+
+    other = next(p for p in ALPHA.length_prefixed_packets if p.packet_type == 0xAE and p.body[1] == 1)
+    body = bytearray(other.body)
+    body[0] = 1  # the same mode_index, for display instance 1
+    config = dataclasses.replace(
+        ALPHA,
+        length_prefixed_packets=[
+            LengthPrefixedPacket(number=9, packet_type=0xAE, body=bytes(body)),
+            *ALPHA.length_prefixed_packets,
+        ],
+    )
+    dev, _ = await _connected(fake_transport, config)
+
+    assert dev.display.drive_mode("colour16").instance_number == 0
+
+
+async def test_nominal_colours_are_reported_for_an_unmeasured_multi_pass_mode(fake_transport) -> None:  # M3
+    dev, _ = await _connected(fake_transport)
+
+    assert dev.display.nominal_colours(dev.display.drive_mode("colour16")) is True
+    assert dev.display.nominal_colours(dev.display.drive_mode("full")) is False

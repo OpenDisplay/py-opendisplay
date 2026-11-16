@@ -75,26 +75,15 @@ async def _upload_mode(device_kwargs: dict[str, Any], image_path: str, mode: str
     names = {"mac_address": "address", "device_name": "name"}
     try:
         async with connect(**{names.get(k, k): v for k, v in device_kwargs.items()}) as dev:
-            _announce_nominal(dev, mode)
+            try:
+                drive_mode = dev.display.drive_mode(mode)
+            except ValueError as exc:
+                _error(str(exc))
+            if dev.display.nominal_colours(drive_mode):
+                _console.print(
+                    f"Drive mode '{drive_mode.name}' uses nominal colours, not colours measured on this panel."
+                )
             await dev.display.show(image, mode=mode, **options)
-    except ValueError as exc:
-        _error(str(exc))
     except OpenDisplayError as exc:
         _handle_ble_error(exc)
     _console.print(f"Uploaded in drive mode '{mode}'.")
-
-
-def _announce_nominal(dev: Any, mode: str) -> None:
-    """One line when a multi-pass mode's palette is nominal rather than measured on this unit."""
-    config = dev.config.cached
-    if config is None:
-        return
-    for display_mode in config.display_modes:
-        if display_mode.name.lower() != mode.lower() or display_mode.passes <= 1:
-            continue
-        for calibration in config.display_calibrations:
-            if calibration.mode_index == display_mode.mode_index and not calibration.measured:
-                _console.print(
-                    f"Drive mode '{display_mode.name}' uses nominal colours, not colours measured on this panel."
-                )
-                return

@@ -23,6 +23,15 @@ class _FakeDisplay:
         self.calls: list[tuple[Image.Image, dict[str, Any]]] = []
         self.error = error
 
+    def drive_mode(self, name: str) -> Any:
+        mode = next((m for m in ALPHA.display_modes if m.name.lower() == name.lower()), None)
+        if mode is None:
+            raise ValueError(f"Unknown drive mode '{name}'; the device has: full, colour16")
+        return mode
+
+    def nominal_colours(self, mode: Any) -> bool:
+        return bool(mode.passes > 1)
+
     async def show(self, image: Image.Image, **kwargs: Any) -> None:
         if self.error is not None:
             raise self.error
@@ -101,7 +110,7 @@ def test_a_single_pass_mode_says_nothing_about_nominal_colours(
 def test_an_unknown_mode_is_an_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _patch(monkeypatch, _FakeDevice(ValueError("Unknown drive mode 'sepia'; the device has: full, colour16")))
+    _patch(monkeypatch, _FakeDevice())
 
     with pytest.raises(SystemExit) as exit_info:
         _upload(tmp_path, "--mode", "sepia")
@@ -134,3 +143,12 @@ def test_without_mode_the_upload_is_unchanged(monkeypatch: pytest.MonkeyPatch, t
     _upload(tmp_path)
 
     assert calls == [] and len(seen) == 1
+
+
+def test_another_value_error_is_not_reported_as_a_mode_name_error(  # review M7
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch(monkeypatch, _FakeDevice(ValueError("image data broke")))
+
+    with pytest.raises(ValueError, match="image data broke"):
+        _upload(tmp_path, "--mode", "colour16")
