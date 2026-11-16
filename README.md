@@ -45,6 +45,23 @@ async with OpenDisplayDevice(device_name="OpenDisplay-A123") as device:
   await device.upload_image(image)
 ```
 
+### New entry point: `opendisplay.connect()`
+
+`connect()` returns a `Device` that describes the device it connected to, for firmware 2.x and 3.0
+alike. It also connects to a device that has no config yet.
+
+```python
+import opendisplay
+
+async with opendisplay.connect("AA:BB:CC:DD:EE:FF") as dev:
+    print(dev.profile.generation, dev.profile.width, dev.profile.height, dev.profile.configured)
+    config = await dev.config.read()   # raises NoStoredConfigError when the device has none
+```
+
+`dev.profile` is built from the firmware version, the stored config and, on firmware 3.0 and up, the
+device identity. Everything not yet on the new surface is reached through `dev.legacy`, the wrapped
+`OpenDisplayDevice`. `OpenDisplayDevice` remains supported.
+
 ## CLI
 
 Run without installing (requires [uv](https://docs.astral.sh/uv/)):

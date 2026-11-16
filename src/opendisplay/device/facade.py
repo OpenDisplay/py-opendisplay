@@ -172,6 +172,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         encryption_key: bytes | None = None,
         blocks_per_ack: int = 8,
         max_queue_size: int = 16,
+        *,
+        auto_interrogate: bool = True,
     ):
         """Initialize OpenDisplay device.
 
@@ -203,6 +205,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             max_queue_size: Requested PIPE_WRITE window W (tokens in flight), 1..32
                 (default: 16). ``max_queue_size <= 1`` disables sliding-window fast
                 transfer entirely — legacy stop-and-wait only, no 0x0080 probe.
+            auto_interrogate: Read the config on entry when none was given (default: True).
 
         Raises:
             ValueError: If not exactly one addressing mode is provided
@@ -256,6 +259,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # Sliding-window (PIPE_WRITE) tuning + per-connection capability cache.
         self._blocks_per_ack = blocks_per_ack
         self._max_queue_size = max_queue_size
+        self._auto_interrogate = auto_interrogate
 
     async def __aenter__(self) -> OpenDisplayDevice:
         """Connect and optionally interrogate device."""
@@ -337,7 +341,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 await self.authenticate(self._encryption_key)
 
             # Auto-interrogate if no config or capabilities provided
-            if self._config is None and self._capabilities is None:
+            if self._auto_interrogate and self._config is None and self._capabilities is None:
                 _LOGGER.info("No config provided, auto-interrogating device")
                 await self.interrogate()
 
