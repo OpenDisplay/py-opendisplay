@@ -19,12 +19,12 @@ from ..encoding import (
     fit_image,
     normalize_source_image,
 )
-from ..encoding.multipass import encode_multipass, mode_palette
+from ..encoding.multipass import SCHEME_BWRY16, encode_multipass, mode_palette
 from ..exceptions import ImageEncodingError
 from ..models.capabilities import DeviceCapabilities
 from ..models.config import DisplayConfig, GlobalConfig
 from ..models.enums import ColorScheme, FitMode, Rotation
-from ..models.panel_drive import DisplayMode
+from ..models.panel_drive import COLOR_SCHEME_INHERIT, DisplayMode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -345,8 +345,20 @@ def prepare_multipass(  # pylint: disable=too-many-arguments
         The uncompressed frames, concatenated, and the dithered preview.
 
     Raises:
-        ImageEncodingError: A multi-pass mode without a 0xB0 calibration packet.
+        ImageEncodingError: A multi-pass mode without a 0xB0 calibration packet or with a scheme
+            other than BWRY16, or a single-pass mode whose scheme is not the display's.
     """
+    if mode.passes > 1 and mode.color_scheme != SCHEME_BWRY16:
+        raise ImageEncodingError(
+            f"Drive mode '{mode.name}' has {mode.passes} passes with scheme {mode.color_scheme}; "
+            f"only scheme {SCHEME_BWRY16} (BWRY16) multi-pass frames can be encoded"
+        )
+    display_scheme = config.displays[0].color_scheme if config.displays else None
+    if mode.passes <= 1 and mode.color_scheme not in (COLOR_SCHEME_INHERIT, display_scheme):
+        raise ImageEncodingError(
+            f"Drive mode '{mode.name}' renders scheme {mode.color_scheme}, not the display's scheme "
+            f"{display_scheme}; such a single-pass mode cannot be encoded yet"
+        )
     if mode.passes <= 1:
         data, _, preview = prepare_image(
             image,

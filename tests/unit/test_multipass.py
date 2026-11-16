@@ -205,3 +205,19 @@ def test_a_calibration_of_another_mode_is_not_used() -> None:
 
     with pytest.raises(ImageEncodingError, match="0xB0"):
         prepare_multipass(_photo(), config, COLOUR16)
+
+
+def test_a_multi_pass_mode_with_a_scheme_other_than_bwry16_raises() -> None:  # review M2
+    import dataclasses
+
+    with pytest.raises(ImageEncodingError, match="scheme"):
+        prepare_multipass(_photo(), ALPHA, dataclasses.replace(COLOUR16, color_scheme=3))
+
+
+def test_a_single_pass_mode_with_another_scheme_than_the_display_raises() -> None:  # review M2
+    import dataclasses
+
+    with pytest.raises(ImageEncodingError, match="scheme"):
+        prepare_multipass(_photo(), ALPHA, dataclasses.replace(FULL, color_scheme=5))
+    # Inheriting (0xFF) or naming the display's own scheme (BWRY, 3) is fine.
+    prepare_multipass(_photo(), ALPHA, dataclasses.replace(FULL, color_scheme=3))

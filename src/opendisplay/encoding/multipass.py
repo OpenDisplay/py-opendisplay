@@ -20,6 +20,7 @@ from ..models.panel_drive import DisplayCalibration
 from .images import encode_2bpp
 
 MAX_PASSES: Final = 8  # CalibrationEntry.codes holds 2 bits for each of up to 8 passes
+SCHEME_BWRY16: Final = 10  # the multi-pass scheme: 2 bpp per pass, colours from the 0xB0 palette
 
 
 def mode_palette(calibration: DisplayCalibration) -> Palette:
