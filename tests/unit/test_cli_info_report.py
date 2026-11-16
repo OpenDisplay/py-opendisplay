@@ -9,13 +9,14 @@ stay absent from the report.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import replace
 from typing import Any
 
 import pytest
 from rich.console import Console
 
-from opendisplay.cli import _build_info_tree, _info_to_json, _InfoContext
+from opendisplay.cli_info import _build_info_tree, _info_to_json, _InfoContext
 from opendisplay.models.config import (
     DataBus,
     DataExtended,
@@ -33,6 +34,7 @@ from opendisplay.models.config import (
     WifiConfig,
 )
 from opendisplay.models.enums import LedType, SensorType
+from opendisplay.protocol.responses import parse_read_ident
 from opendisplay.sensors import SensorReading
 
 _FW = {"major": 2, "minor": 26, "patch": 0, "sha": "987c6d9"}
@@ -602,3 +604,66 @@ def test_readings_match_their_own_sensor_instance() -> None:
 
     assert entries[0]["temperature_c"] is None
     assert entries[1]["temperature_c"] == 18.2
+
+
+# ── READ_IDENT (protocol section) ────────────────────────────────────────────
+
+
+def _ctx_with_ident(frame_hex: str) -> _InfoContext:
+    return dataclasses.replace(_ctx(_config()), ident=parse_read_ident(bytes.fromhex(frame_hex)))
+
+
+def _text_of(ctx: _InfoContext) -> str:
+    console = Console(width=120, record=True, force_terminal=False)
+    console.print(_build_info_tree(ctx))
+    return console.export_text()
+
+
+def test_protocol_section_reports_a_3_0_identity() -> None:
+    ctx = _ctx_with_ident("004604010029a00f800003")  # reTerminal E1002 on 3.0.2
+
+    text = _text_of(ctx)
+    for line in ("Protocol", "ESP32", "Config-driven", "yes", "Needs migration", "no", "4000 bytes", "128"):
+        assert line in text
+
+    assert _info_to_json(ctx)["ident"] == {
+        "fw_target": "ESP32",
+        "proto_minor": 4,
+        "config_driven": True,
+        "needs_migration": False,
+        "builtin_driver": False,
+        "max_config": 4000,
+        "max_seq_steps": 128,
+    }
+
+
+def test_protocol_section_for_a_reply_without_the_tail_shows_only_what_was_sent() -> None:
+    ctx = _ctx_with_ident("00460303011c00b800680103")  # EFR32BG22 on an early config-driven build
+
+    text = _text_of(ctx)
+
+    assert "EFR32BG22" in text
+    assert "Config-driven" not in text
+    assert "Max config" not in text
+
+
+def test_protocol_section_is_absent_without_an_identity() -> None:
+    ctx = _ctx(_config())
+
+    assert "Protocol" not in _text_of(ctx)
+    assert _info_to_json(ctx)["ident"] is None
+
+
+def test_report_for_a_device_without_config_shows_identity_and_no_display() -> None:
+    """A fresh 3.0 device has no config: the report is its firmware and identity, nothing made up."""
+    ident = parse_read_ident(bytes.fromhex("004604010029a00f800003"))
+    ctx = dataclasses.replace(_ctx(None), ident=ident, width=0, height=0, color_scheme_name="", board_type_name=None)
+
+    text = _text_of(ctx)
+
+    assert "Protocol" in text
+    assert "Display" not in text
+    assert "0x0px" not in text
+    rendered = _info_to_json(ctx)
+    assert rendered["display"] is None
+    assert rendered["ident"]["config_driven"] is True
