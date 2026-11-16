@@ -213,6 +213,7 @@ class PanelEntry:  # pylint: disable=too-many-instance-attributes
         packets: The drive packets to write; empty when the entry is not usable.
         blocked_reason: Why the entry cannot be used on this class; ``None`` when it can.
         legacy_panel_ic_type: The 2.x panel id this entry replaces, when the file names one.
+        legacy_model_id: The 2.x driver model the entry was derived from, when it was.
     """
 
     panel_ic_type: int
@@ -228,6 +229,7 @@ class PanelEntry:  # pylint: disable=too-many-instance-attributes
     requires_escapes: tuple[str, ...]
     blocked_reason: str | None
     legacy_panel_ic_type: int | None = None
+    legacy_model_id: int | None = None
 
     @property
     def usable(self) -> bool:
@@ -335,6 +337,7 @@ def _drive_view(meta: Mapping[str, Any], src: Mapping[str, Any], target_class: T
         requires_escapes=tuple(src.get("requires_escapes") or ()),
         blocked_reason=None if usable else reason,
         legacy_panel_ic_type=meta["legacy_panel_ic_type"],
+        legacy_model_id=meta["legacy_model_id"],
     )
 
 
@@ -363,6 +366,7 @@ def _panel_from_generated(key: str, entry: Mapping[str, Any], panels: Mapping[st
         "height": _num(entry.get("height")),
         "color_scheme": _num(entry.get("color_scheme")),
         "legacy_panel_ic_type": _num(legacy.get("panel_ic_type")),
+        "legacy_model_id": _num(legacy.get("model_id")),
     }
     classes: dict[TargetClass, PanelEntry] = {}
     for name, view in (src.get("targets") or {}).items():
@@ -403,6 +407,8 @@ class PanelDatabase:
             _check_schema(doc, target_class.value)
             panels = doc.get("panels") or {}
             for key, raw in panels.items():
+                # A class file names a panel by its key when the entry does not (buildDriveDb).
+                raw = {**raw, "panel_ic_type": raw.get("panel_ic_type", key)}
                 panel = _panel_from_generated(key, raw, panels)
                 if panel is None or panel.top.panel_ic_type in self._panels:
                     continue
@@ -415,6 +421,7 @@ class PanelDatabase:
                         "height": meta_top.height,
                         "color_scheme": meta_top.color_scheme,
                         "legacy_panel_ic_type": meta_top.legacy_panel_ic_type,
+                        "legacy_model_id": meta_top.legacy_model_id,
                     },
                     raw,
                     target_class,
@@ -492,6 +499,24 @@ class PanelDatabase:
                     }
                 )
         return top
+
+    def nrf52811_panel_for(self, legacy_panel_ic_type: int) -> int | None:
+        """The Firmware_NRF 3.0 panel id for a 2.x Firmware_NRF id 1000-2999 (od-v3.js ``nrf52811PanelFor``).
+
+        The nRF52811 entry whose legacy id matches; entries derived from the 2.x driver (with a
+        ``model_id``) win over others, then the lowest id. ``None`` when there is none.
+        """
+        if not 1000 <= legacy_panel_ic_type <= 2999:
+            return None
+        best: tuple[int, int] | None = None
+        for panel_ic_type, panel in self._panels.items():
+            view = panel.classes.get(TargetClass.NRF52811)
+            if view is None or view.legacy_panel_ic_type != legacy_panel_ic_type:
+                continue
+            rank = (0 if view.legacy_model_id is not None else 1, panel_ic_type)
+            if best is None or rank < best:
+                best = rank
+        return None if best is None else best[1]
 
     def native_controller_for(self, panel_ic_type: int) -> NativeController | None:
         """The 0xB3 entry of a native-controller panel id (od-v3.js ``nativeControllerFor``)."""
