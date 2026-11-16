@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import dataclasses
+import struct
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from opendisplay import DeviceProfile, Generation, build_profile
+from opendisplay import DeviceProfile, Generation, ProfileMode, build_profile
 from opendisplay.models.config import (
     DisplayConfig,
     GlobalConfig,
@@ -153,7 +154,11 @@ def test_identity_flag_decides_migration_when_the_identity_has_a_tail() -> None:
 def test_config_driven_device_reports_its_modes_and_code_map() -> None:
     p = build_profile(FW3, ALPHA_CONFIG, None, ident_missing=True)
 
-    assert p.drive_modes == ("full", "colour16")
+    assert p.drive_modes == (
+        ProfileMode(mode_index=0, name="full", color_scheme=None, passes=1),  # 0xFF: inherits 0x20
+        ProfileMode(mode_index=1, name="colour16", color_scheme=10, passes=3),  # BWRY16 lives in the mode
+    )
+    assert p.drive_mode_names == ("full", "colour16")
     assert p.code_map == (0, 1, 3, 2)
     assert (p.needs_migration, p.ident_missing) == (False, True)  # has drive packets; Review Focus 1
     assert p.target is FirmwareTarget.EFR32BG22  # mapped from the config's ic_type
@@ -166,7 +171,7 @@ def test_drive_modes_follow_mode_index_not_packet_order() -> None:
     others = [pkt for pkt in lp if pkt.packet_type != 0xAE]
     swapped = dataclasses.replace(ALPHA_CONFIG, length_prefixed_packets=others + modes[::-1])
 
-    assert build_profile(FW3, swapped, None).drive_modes == ("full", "colour16")
+    assert build_profile(FW3, swapped, None).drive_mode_names == ("full", "colour16")
 
 
 def test_2x_device_is_described_from_its_config_alone() -> None:
@@ -238,16 +243,18 @@ def test_3_0_config_without_displays_does_not_need_migration() -> None:  # Revie
 
 
 def test_unknown_colour_scheme_is_kept_as_its_raw_value() -> None:  # Review Focus 3
-    p = build_profile(FW3, _config(displays=[_display(color_scheme=10)]), None)
+    # 0x20 holds the base scheme; mode-level schemes such as BWRY16 never go there, but a newer
+    # firmware may define a 0x20 value this library does not know.
+    p = build_profile(FW3, _config(displays=[_display(color_scheme=0x7E)]), None)
 
-    assert p.color_scheme == 10
+    assert p.color_scheme == 0x7E
     assert not isinstance(p.color_scheme, ColorScheme)
 
 
 def test_unknown_colour_scheme_in_the_identity_is_kept_as_its_raw_value() -> None:  # Review Focus 3
-    ident = parse_read_ident(bytes.fromhex("004604010123002003e0010a0ba00f800003"))
+    ident = parse_read_ident(bytes.fromhex("004604010123002003e0017e0ba00f800003"))
 
-    assert build_profile(FW3, None, ident).color_scheme == 10
+    assert build_profile(FW3, None, ident).color_scheme == 0x7E
 
 
 def test_transfer_support_follows_the_display_config() -> None:
@@ -267,3 +274,62 @@ def test_profile_is_immutable() -> None:
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         p.width = 1  # type: ignore[misc]
+
+
+# ── firmware 3.0 drive modes and partial support ─────────────────────────────
+# Firmware_Unified docs/CONFIG_DRIVEN_DISPLAY.md "Mode conventions": a mode is identified by its
+# mode_index, the first packet per (instance, mode_index) wins, names match case-insensitively,
+# and the mode named "partial" is what enables partial updates; the 0x20 flag alone does not.
+
+
+def _mode(index: int, name: str, *, instance: int = 0, scheme: int = 0xFF, passes: int = 1) -> LengthPrefixedPacket:
+    head = struct.pack(
+        "<BB12sBBbbB8s8sH", instance, index, name.encode(), scheme, passes, 0, 0, 0, b"\xff" * 8, bytes(8), 0
+    )
+    return LengthPrefixedPacket(number=index, packet_type=0xAE, body=head)
+
+
+def _v3(*modes: LengthPrefixedPacket, scheme: int = ColorScheme.MONO, partial_flag: int = 0, **kw: Any) -> GlobalConfig:
+    display = _display(color_scheme=scheme, partial_update_support=partial_flag)
+    return _config(displays=[display], length_prefixed_packets=[_mode(0, "full"), *modes], **kw)
+
+
+def test_v3_partial_comes_from_a_partial_mode_not_the_display_flag() -> None:
+    assert build_profile(FW3, _v3(_mode(1, "partial")), None).supports_partial is True
+    assert build_profile(FW3, _v3(partial_flag=1), None).supports_partial is False
+
+
+def test_v3_partial_mode_name_is_matched_case_insensitively() -> None:
+    assert build_profile(FW3, _v3(_mode(2, "PARTIAL")), None).supports_partial is True
+
+
+def test_v3_partial_mode_of_another_display_does_not_count() -> None:
+    assert build_profile(FW3, _v3(_mode(1, "partial", instance=1)), None).supports_partial is False
+
+
+def test_v3_partial_needs_a_scheme_with_partial_geometry() -> None:
+    # od_color_direct_geometry sets partial_supported for MONO only.
+    assert build_profile(FW3, _v3(_mode(1, "partial"), scheme=ColorScheme.BWR), None).supports_partial is False
+
+
+def test_v3_partial_is_off_while_the_device_needs_migration() -> None:
+    assert build_profile(FW3, _v3(_mode(1, "partial")), IDENT_NEEDS_MIGRATION).supports_partial is False
+
+
+def test_v3_partial_is_off_on_efr32bg22() -> None:
+    # targets/efr32bg22-slc: partial_enabled is always false.
+    config = _v3(_mode(1, "partial"), ic_type=ICType.EFR32BG22)
+    assert build_profile(FW3, config, None).supports_partial is False
+
+
+def test_v2_partial_still_follows_the_display_flag() -> None:
+    assert build_profile(FW2, _v3(partial_flag=1), None).supports_partial is True
+    assert build_profile(FW2, _v3(_mode(1, "partial")), None).supports_partial is False
+
+
+def test_first_mode_packet_per_index_wins_and_other_displays_are_left_out() -> None:
+    config = _v3(_mode(1, "fast"), _mode(1, "partial"), _mode(2, "other", instance=1))
+    p = build_profile(FW3, config, None)
+
+    assert p.drive_mode_names == ("full", "fast")
+    assert p.supports_partial is False  # the duplicate "partial" at index 1 is ignored

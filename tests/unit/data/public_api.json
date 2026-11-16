@@ -126,6 +126,7 @@
     "PassiveBuzzer",
     "PowerMode",
     "PowerOption",
+    "ProfileMode",
     "ProtocolError",
     "RefreshMode",
     "RefreshTimeoutError",

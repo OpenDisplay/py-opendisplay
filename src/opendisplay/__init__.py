@@ -114,7 +114,7 @@ from .models.panel_drive import (
     DisplayPanel,
     LengthPrefixedPacket,
 )
-from .models.profile import DeviceProfile, Generation, build_profile
+from .models.profile import DeviceProfile, Generation, ProfileMode, build_profile
 from .ota import find_nrf_dfu_device, perform_nrf_dfu, perform_silabs_ota
 from .partial import PartialState
 from .protocol import MANUFACTURER_ID, SERVICE_UUID
@@ -170,6 +170,7 @@ __all__ = [
     "DeviceIdent",
     "DeviceProfile",
     "Generation",
+    "ProfileMode",
     "build_profile",
     "FirmwareTarget",
     "IdentDisplay",
