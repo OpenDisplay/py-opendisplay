@@ -63,6 +63,7 @@ from ..protocol.responses import (
     matches_command_echo,
     parse_read_ident,
     parse_read_msd,
+    raise_for_config_write_refusal,
     strip_command_echo,
     unpack_command_code,
 )
@@ -1248,6 +1249,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
         # Wait for ACK
         response = await self._channel.read(self.TIMEOUT_ACK)
+        raise_for_config_write_refusal(response)
         validate_ack_response(response, CommandCode.WRITE_CONFIG)
 
         # Send remaining chunks if needed
@@ -1257,6 +1259,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
 
             # Wait for ACK after each chunk
             response = await self._channel.read(self.TIMEOUT_ACK)
+            raise_for_config_write_refusal(response)
             validate_ack_response(response, CommandCode.WRITE_CONFIG_CHUNK)
 
         _LOGGER.info("Config written successfully to %s", self.mac_address)

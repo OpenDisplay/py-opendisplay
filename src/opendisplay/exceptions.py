@@ -146,6 +146,43 @@ class IntegrityCheckError(ProtocolError):
     pass
 
 
+class NeedsMigrationError(ProtocolError):
+    """The device refused an upload because it has no usable drive data for its display.
+
+    Firmware 3.0 drives a panel from data in the config. A config written by a client that
+    does not know those packets leaves the device unable to draw until one that includes
+    them is written.
+    """
+
+    def __init__(
+        self,
+        message: str = (
+            "The device has no drive data for its display (firmware 3.0 needs a migrated config); "
+            "write a config that includes the panel's drive packets."
+        ),
+    ) -> None:
+        super().__init__(message)
+
+
+class PanelBusyError(ProtocolError):
+    """The device refused an upload because the panel was still busy. Transient: retry."""
+
+    def __init__(
+        self, message: str = "The panel was still busy when the upload started; retry in a few seconds."
+    ) -> None:
+        super().__init__(message)
+
+
+class ConfigWriteBusyError(ProtocolError):
+    """The device did not store a config because a display pass was running. Transient: retry."""
+
+    def __init__(
+        self,
+        message: str = "The device is refreshing its display and did not store the config; retry after the refresh.",
+    ) -> None:
+        super().__init__(message)
+
+
 class NfcWriteError(ProtocolError):
     """Device rejected an NFC_ENDPOINT (0x0083) write with an error frame.
 
