@@ -183,6 +183,36 @@ class ConfigWriteBusyError(ProtocolError):
         super().__init__(message)
 
 
+class ConfigSecretNeedsClaimError(ProtocolError):
+    """An unclaimed firmware 3.0 device refused a config that carries a secret; nothing was stored.
+
+    Secrets are a 0x27 key or ``encryption_enabled``, a 0x26 WiFi password, and 0x2D FindMy key
+    material (SECURITY_V2.md § 10.4). Claim the device first, or write the config without them.
+    """
+
+    def __init__(
+        self,
+        message: str = (
+            "The device is not claimed and does not store secrets (encryption key, WiFi password, "
+            "FindMy keys); claim it first, or write the config without them."
+        ),
+    ) -> None:
+        super().__init__(message)
+
+
+class ConfigKeyMismatchError(ProtocolError):
+    """A claimed firmware 3.0 device refused a config whose 0x27 key is neither zero nor its own key."""
+
+    def __init__(
+        self,
+        message: str = (
+            "The config carries an encryption key that is not the device's key; "
+            "write it with the key zeroed (the device keeps its own)."
+        ),
+    ) -> None:
+        super().__init__(message)
+
+
 class NfcWriteError(ProtocolError):
     """Device rejected an NFC_ENDPOINT (0x0083) write with an error frame.
 
