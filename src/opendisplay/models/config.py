@@ -1327,6 +1327,7 @@ class GlobalConfig:
 
     # The FindMy packet (legacy type 0x2D), which this library does not model: the whole
     # packet, [number][0x2D] header included (130 bytes), written back as it was read.
+    # A config should have one; if it has more, they are all here, in order.
     findmy_config_raw: bytes | None = None
 
     # Packets from the length-prefixed range (types 0x80-0xFF), verbatim and in

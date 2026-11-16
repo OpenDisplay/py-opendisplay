@@ -196,8 +196,8 @@ class DisplayCalibration:
     entries: tuple[CalibrationEntry, ...]
 
     _HEAD: ClassVar[struct.Struct] = struct.Struct("<BBBB")
-    # codes and L* are unsigned; a* and b* are signed (two's complement), all x100 except codes.
-    _ENTRY: ClassVar[struct.Struct] = struct.Struct("<HHhh")
+    # codes is unsigned; L*, a* and b* are signed int16 (x100), as the firmware header documents them.
+    _ENTRY: ClassVar[struct.Struct] = struct.Struct("<Hhhh")
     _FLAG_MEASURED: ClassVar[int] = 0x01
 
     @property

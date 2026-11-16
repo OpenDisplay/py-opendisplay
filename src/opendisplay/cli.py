@@ -1341,16 +1341,30 @@ def _cmd_write_config(args: argparse.Namespace) -> None:
     _run(_write_config(device_kwargs, args.input, args.unknown_packets))
 
 
-def _carried_packet_bytes(config: GlobalConfig) -> int:
-    """Bytes of packets a config carries verbatim: length-prefixed ones, FindMy and the unparsed tail.
+def _packets_lost_by_writing(on_device: GlobalConfig, config: GlobalConfig) -> dict[str, Any]:
+    """The verbatim-carried packets the device has and ``config`` lacks, by ``GlobalConfig`` field.
 
-    These are the packets a JSON file loses when it passes through a tool that
-    does not know the fields holding them.
+    Three kinds of packet are carried verbatim instead of being modelled: the length-prefixed
+    range, FindMy, and the unparsed tail. A JSON file that passed through a tool that does not
+    know the field holding one of them has lost that kind, so each is checked separately: a
+    file that carries one kind must not hide that it would delete another.
     """
+    lost: dict[str, Any] = {}
+    if on_device.length_prefixed_packets and not config.length_prefixed_packets:
+        lost["length_prefixed_packets"] = list(on_device.length_prefixed_packets)
+    if on_device.findmy_config_raw and not config.findmy_config_raw:
+        lost["findmy_config_raw"] = on_device.findmy_config_raw
+    if on_device.unparsed_tail and not config.unparsed_tail:
+        lost["unparsed_tail"] = on_device.unparsed_tail
+    return lost
+
+
+def _lost_packet_bytes(lost: dict[str, Any]) -> int:
+    packets = lost.get("length_prefixed_packets", [])
     return (
-        sum(len(packet.to_bytes()) for packet in config.length_prefixed_packets)
-        + len(config.findmy_config_raw or b"")
-        + len(config.unparsed_tail)
+        sum(len(packet.to_bytes()) for packet in packets)
+        + len(lost.get("findmy_config_raw", b""))
+        + len(lost.get("unparsed_tail", b""))
     )
 
 
@@ -1384,15 +1398,11 @@ async def _write_config(device_kwargs: dict[str, Any], input_path: str, unknown_
             task = progress.add_task("Connecting...", total=None)
             async with OpenDisplayDevice(**device_kwargs) as device:
                 on_device = device.config
-                at_risk = _carried_packet_bytes(on_device) if on_device else 0
-                if on_device and at_risk and not _carried_packet_bytes(config):
+                lost = _packets_lost_by_writing(on_device, config) if on_device else {}
+                if lost:
+                    at_risk = _lost_packet_bytes(lost)
                     if unknown_packets == "keep":
-                        config = replace(
-                            config,
-                            length_prefixed_packets=list(on_device.length_prefixed_packets),
-                            findmy_config_raw=on_device.findmy_config_raw,
-                            unparsed_tail=on_device.unparsed_tail,
-                        )
+                        config = replace(config, **lost)
                         kept = at_risk
                     elif unknown_packets != "discard":
                         refusal = _UNKNOWN_PACKETS_REFUSAL.format(size=at_risk)

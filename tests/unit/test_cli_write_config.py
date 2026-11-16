@@ -197,3 +197,49 @@ def test_keep_carries_the_devices_findmy_packet_over(monkeypatch: pytest.MonkeyP
     written = _write_over_a_device_with_findmy(monkeypatch, tmp_path, "keep")
 
     assert [c.findmy_config_raw for c in written] == [_FINDMY]
+
+
+def _write_lp_file_over_a_device_with_findmy_and_lp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, unknown_packets: str | None
+) -> list[GlobalConfig]:
+    """The file carries its own length-prefixed packets but no FindMy; the device has both kinds."""
+    written: list[GlobalConfig] = []
+    device_packets = [LengthPrefixedPacket(0, 0xB1, b"\x01\x02\x03")]
+    file_packets = [LengthPrefixedPacket(0, 0xB1, b"\x09\x09")]
+
+    class FakeDevice:
+        import_config_json = staticmethod(cli.OpenDisplayDevice.import_config_json)
+
+        def __init__(self, **kwargs: object) -> None:
+            self.config = dataclasses.replace(
+                _config(), findmy_config_raw=_FINDMY, length_prefixed_packets=device_packets
+            )
+
+        async def __aenter__(self) -> FakeDevice:
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        async def write_config(self, config: GlobalConfig) -> None:
+            written.append(config)
+
+    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config_to_json(dataclasses.replace(_config(), length_prefixed_packets=file_packets))))
+    asyncio.run(cli._write_config({}, str(path), unknown_packets))
+    return written
+
+
+def test_a_file_that_carries_one_kind_of_packet_cannot_silently_delete_another_kind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    with pytest.raises(SystemExit):
+        _write_lp_file_over_a_device_with_findmy_and_lp(monkeypatch, tmp_path, None)
+
+
+def test_keep_carries_over_only_the_kinds_the_file_lacks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    written = _write_lp_file_over_a_device_with_findmy_and_lp(monkeypatch, tmp_path, "keep")
+
+    assert [c.findmy_config_raw for c in written] == [_FINDMY]
+    assert [[p.body for p in c.length_prefixed_packets] for c in written] == [[b"\x09\x09"]]  # the file's own

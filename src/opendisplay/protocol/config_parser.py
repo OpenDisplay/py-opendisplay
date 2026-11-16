@@ -93,11 +93,12 @@ def parse_config_response(raw_data: bytes) -> GlobalConfig:
     return parse_tlv_config(packet_data, version=config_version)
 
 
-def _walk_packets(data: bytes) -> tuple[dict[tuple[int, int], bytes], list[LengthPrefixedPacket], bytes]:
+def _walk_packets(data: bytes) -> tuple[dict[tuple[int, int], bytes], bytes, list[LengthPrefixedPacket], bytes]:
     """Split raw config data into its packets.
 
     Returns:
-        Legacy packets by (type, number), the length-prefixed packets in order,
+        Legacy packets by (type, number), every FindMy packet (0x2D) verbatim and
+        in order with its header, the length-prefixed packets in order,
         and the unparsed tail: everything from the first packet that could not
         be read to the end of the data.
 
@@ -108,6 +109,7 @@ def _walk_packets(data: bytes) -> tuple[dict[tuple[int, int], bytes], list[Lengt
     offset = 0
     packets: dict[tuple[int, int], bytes] = {}
     length_prefixed_packets: list[LengthPrefixedPacket] = []
+    findmy_raw = b""
     unparsed_tail = b""
 
     while offset < len(data) - 1:
@@ -168,13 +170,19 @@ def _walk_packets(data: bytes) -> tuple[dict[tuple[int, int], bytes], list[Lengt
         packet_data = data[offset : offset + packet_size]
         offset += packet_size
 
+        if packet_type == PACKET_TYPE_FINDMY:
+            # Not modelled and kept whole. Collected here, not in the dict, so that a config
+            # with more than one (a singleton violation) still loses none of them.
+            findmy_raw += bytes([packet_number, packet_type]) + packet_data
+            continue
+
         # Store packet
         key = (packet_type, packet_number)
         packets[key] = packet_data
 
         _LOGGER.debug("Parsed packet: type=0x%02x, num=%d, size=%d", packet_type, packet_number, packet_size)
 
-    return packets, length_prefixed_packets, unparsed_tail
+    return packets, findmy_raw, length_prefixed_packets, unparsed_tail
 
 
 def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
@@ -199,7 +207,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
 
     _LOGGER.debug("Parsing TLV config, %d bytes", len(data))
 
-    packets, length_prefixed_packets, unparsed_tail = _walk_packets(data)
+    packets, findmy_raw, length_prefixed_packets, unparsed_tail = _walk_packets(data)
 
     # Parse packets in a single pass
     # Note: Firmware uses global sequential numbering across all packet types
@@ -218,9 +226,8 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     nfc_configs = []
     flash_configs = []
     data_extended = None
-    findmy_config_raw: bytes | None = None
 
-    for (packet_type, number), packet_data in packets.items():
+    for (packet_type, _number), packet_data in packets.items():
         if packet_type == PACKET_TYPE_SYSTEM:
             system = _parse_system_config(packet_data)
         elif packet_type == PACKET_TYPE_MANUFACTURER:
@@ -251,9 +258,6 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
             flash_configs.append(FlashConfig.from_bytes(packet_data))
         elif packet_type == PACKET_TYPE_DATA_EXTENDED:
             data_extended = DataExtended.from_bytes(packet_data)
-        elif packet_type == PACKET_TYPE_FINDMY and findmy_config_raw is None:
-            # Not modelled: kept whole, header included, so it is written back as it was read.
-            findmy_config_raw = bytes([number, packet_type]) + packet_data
 
     missing_required = [
         name
@@ -288,7 +292,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
         data_extended=data_extended,
-        findmy_config_raw=findmy_config_raw,
+        findmy_config_raw=findmy_raw or None,
         length_prefixed_packets=length_prefixed_packets,
         unparsed_tail=unparsed_tail,
         version=version,  # From firmware wrapper

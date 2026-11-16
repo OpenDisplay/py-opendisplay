@@ -247,15 +247,6 @@ def test_a_config_without_panel_drive_data_has_empty_views() -> None:
 # ─── Corrections against the Firmware_Unified header ─────────────────────────
 
 
-def test_calibration_lightness_is_unsigned() -> None:
-    """lab_l is an unsigned 16-bit field (L* x100); only a* and b* are signed."""
-    body = struct.pack("<BBBB", 0, 1, 0x01, 1) + struct.pack("<HHhh", 0x0002, 40000, -1546, 774)
-
-    entry = DisplayCalibration.from_body(body).entries[0]
-
-    assert (entry.lab_l, entry.lab_a, entry.lab_b) == (400.0, -15.46, 7.74)
-
-
 _FINDMY_BODY = bytes(range(128))
 
 
@@ -305,3 +296,19 @@ def test_config_without_action_table_or_controller_has_none() -> None:
 
     assert config.action_table is None
     assert config.display_controllers == []
+
+
+def test_two_findmy_packets_both_survive_a_round_trip() -> None:
+    """A config that breaks the singleton rule still loses nothing on a read-modify-write."""
+    base = _config()
+    raw = serialize_config(base)
+    first_lp = raw.index(base.length_prefixed_packets[0].to_bytes())
+    second = bytes([1, 0x2D]) + bytes(reversed(range(128)))
+    same_number = bytes([0, 0x2D]) + bytes([0xAB]) * 128
+    body = raw[:first_lp] + bytes([0, 0x2D]) + _FINDMY_BODY + second + same_number + raw[first_lp:-2]
+    spliced = body + calculate_config_crc(body).to_bytes(2, "little")
+
+    config = parse_config_response(spliced)
+
+    assert config.findmy_config_raw == bytes([0, 0x2D]) + _FINDMY_BODY + second + same_number
+    assert serialize_config(config) == spliced

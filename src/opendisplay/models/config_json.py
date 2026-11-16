@@ -86,8 +86,8 @@ def _parse_findmy_raw(value: object) -> bytes | None:
         raw = bytes.fromhex(text)
     except ValueError as err:
         raise ValueError(f"findmy_config_raw is not a hex string: {text[:32]!r}") from err
-    if len(raw) != 130 or raw[1] != 0x2D:
-        raise ValueError("findmy_config_raw must be a whole 130-byte FindMy packet ([number][0x2d][128 bytes])")
+    if not raw or len(raw) % 130 or any(raw[i + 1] != 0x2D for i in range(0, len(raw), 130)):
+        raise ValueError("findmy_config_raw must be whole 130-byte FindMy packets ([number][0x2d][128 bytes])")
     return raw
 
 
