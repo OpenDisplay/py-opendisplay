@@ -18,6 +18,7 @@ from ..encoding import (
     fit_image,
     normalize_source_image,
 )
+from ..exceptions import ImageEncodingError
 from ..models.capabilities import DeviceCapabilities
 from ..models.config import DisplayConfig, GlobalConfig
 from ..models.enums import ColorScheme, FitMode, Rotation
@@ -71,12 +72,28 @@ def _capabilities_from_config(config: GlobalConfig) -> DeviceCapabilities:
     display = config.displays[0]
     rotation = display.rotation_enum
     color_scheme = ColorScheme.from_value(display.color_scheme)
+    panel = next((p for p in config.display_panels if p.instance_number == display.instance_number), None)
     return DeviceCapabilities(
         width=display.pixel_width,
         height=display.pixel_height,
         color_scheme=color_scheme,
         rotation=rotation.value if isinstance(rotation, Rotation) else 0,
+        bwry_codes=panel.code_map if panel is not None else None,
     )
+
+
+def _bwry_codes(capabilities: DeviceCapabilities, panel_ic_type: int | None) -> tuple[int, int, int, int]:
+    """The device's code_map when it has one (od-v3.js ``wireMapFromCodeMap``), else the built-in table.
+
+    Raises:
+        ImageEncodingError: The code_map is not a permutation of 0..3.
+    """
+    codes = capabilities.bwry_codes
+    if codes is None:
+        return get_bwry_codes(panel_ic_type)
+    if sorted(codes) != [0, 1, 2, 3]:
+        raise ImageEncodingError(f"The device's code_map {codes} is not a permutation of 0..3; refusing to guess")
+    return codes
 
 
 # pixels-per-byte for each direct-write color scheme. GRAYSCALE_4 is omitted:
@@ -256,7 +273,7 @@ def prepare_image(
         # Some YR panels (0x001D) use a native 4-color code order with
         # yellow/red swapped relative to the dither palette; apply the per-panel
         # code table so the firmware's raw-nibble direct write shows the right color.
-        image_data = encode_2bpp(dithered, codes=get_bwry_codes(panel_ic_type))
+        image_data = encode_2bpp(dithered, codes=_bwry_codes(capabilities, panel_ic_type))
     else:
         image_data = encode_image(dithered, color_scheme)
 
