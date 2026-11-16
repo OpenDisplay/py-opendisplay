@@ -332,8 +332,8 @@ disagrees with the text above, this section is newer.
 | Piece | State |
 |---|---|
 | 1 Seams | Merged (#203). `device/` = `facade.py`, `channel.py`, `upload.py`, `imaging.py`, later also `nfc.py` |
-| 2a Read side | #208 (identity) and #209 (advertisement state) merged. `feat/typed-refusals` and `feat/panel-drive-packets` (#198) are finished locally and still to push and merge |
-| 2b Profile and first new API | Planned: `../plans/2026-11-16-v3-2b-profile-and-device.md` |
+| 2a Read side | Done: #208 (identity), #209 (advertisement state), #211 (typed refusals), #198 (panel drive packets) merged |
+| 2b Profile and first new API | Task 1 merged (#212). Correction to the profile (`fix/profile-mode-records`) and Task 2 (`feat/device-entry-point`) done locally. Ledger: `.superpowers/sdd/2026-11-16-v3-2b-profile-and-device/progress.md` |
 | 3 Panels, migration, drive modes | Planned: `../plans/2026-11-16-v3-3-panels-and-migration.md` (3a in detail, 3b as an outline that needs a design note first) |
 | 4 SEC2 | Planned: `../plans/2026-11-16-v3-4-sec2.md` |
 | 5 Updater and setup flow | Planned: `../plans/2026-11-16-v3-5-update-and-setup.md` |
@@ -352,7 +352,9 @@ Piece 2 was split: 2a is pure reading, 2b is `DeviceProfile` plus `opendisplay.c
 - **Identity is not free on 2.x.** 2.x ESP32/nRF firmware is silent on READ_IDENT (a timeout);
   encrypted 2.2.1 EFR32BG22 answers the 3-byte session-required frame; only 3.0 and
   config-driven BG22 builds answer. So 2b must decide the generation from the firmware version
-  first and ask for the identity only on major 3 and up (or BG22). `IdentNotSupportedError.timed_out`
+  first and ask for the identity only on major 3 and up. (The user ruled on 2026-11-16 that
+  `connect()` has no BG22 exception, because an unencrypted 2.x BG22 is silent and would cost 2 s
+  per connect; `opendisplay info` keeps its BG22 exception.) `IdentNotSupportedError.timed_out`
   tells silence from refusal; silence alone must not classify a device as 2.x.
 - **A device with no config is its own state.** It answers READ_CONFIG with the no-config frame
   (`NoStoredConfigError`), reports zero displays in its identity, and refuses an upload START
@@ -375,6 +377,36 @@ Piece 2 was split: 2a is pure reading, 2b is `DeviceProfile` plus `opendisplay.c
   Scripts that reset a board must wait or retry discovery.
 - **PR #198's packet layouts are the same in `Firmware_Unified`.** Calibration L*, a*, b* are
   all signed. The host applies `code_map`.
+
+### Facts learned from the firmware sources in piece 2b
+
+- **Two levels of colour scheme on 3.0** (`docs/CONFIG_DRIVEN_DISPLAY.md` "Mode conventions").
+  The 0x20 `color_scheme` stays required: it is the pixel format of mode 0, the default full
+  refresh every upload without a named mode goes through, and what READ_IDENT's display record
+  reports. A 0xAE mode may declare its own scheme (0xFF = inherit); mode-level schemes such as
+  BWRY16 (10) live only there and never in 0x20. `DeviceProfile.color_scheme` is the base
+  scheme; `drive_modes` carries each mode's scheme and pass count.
+- **Modes are identified by `mode_index`; the first 0xAE per (instance, mode_index) wins**;
+  names match case-insensitively; `fast` and `partial` are reserved names.
+- **On 3.0, partial support is not the 0x20 flag.** Firmware enables partial when a usable
+  "partial" mode exists and no migration is pending, and the 0x20 scheme has partial geometry
+  (`od_color_direct_geometry`: MONO only). The EFR32BG22 target never enables it; the ESP32
+  FastEPD native driver (0xB3) always does. The 0x20 `partial_update_support` is read only by
+  the boot screen. The profile models all of this except the mode's temperature window and the
+  FastEPD case; the device's START NACK stays authoritative.
+- **`interrogate()` couples reading the config to deriving the legacy capabilities.** A 0x20
+  scheme the legacy enum lacks makes it raise after the config is stored. `Device` tolerates
+  exactly that (`ImageEncodingError`, re-raised when no config was stored); `Device.legacy` then
+  has no capabilities. Piece 7 should separate config reading from capability derivation when
+  `OpenDisplayDevice` becomes the delegate. `opendisplay info` fails on such a device today.
+- **A stored config without a display packet cannot be parsed** (`ConfigParseError`), so
+  `connect()` fails on it, like `OpenDisplayDevice`. Whether it should connect as unconfigured
+  instead is an open decision for the user.
+- **For 3b: measured colours.** 0xB0 calibration packets are host-only, "the renderable palette
+  of one multi-pass mode", flagged "measured on this unit". Mode 0 has no 0xB0 in the captured
+  config, so the library's per-panel measured palettes (`display_palettes.py`, keyed by
+  `panel_ic_type`, which stays in 0x20) remain the source for ordinary uploads. Calibration codes
+  are panel codes already: never apply `code_map` to them.
 
 ### Constraints the code now has
 
