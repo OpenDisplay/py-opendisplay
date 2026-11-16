@@ -416,8 +416,13 @@ Piece 2 was split: 2a is pure reading, 2b is `DeviceProfile` plus `opendisplay.c
   (`AuthenticationRequiredError`) and `[00][50][05]` = `AUTH_STATUS_V2_REQUIRED` once claimed
   (`AuthenticationFailedError`, "status 0x05"; `responses.py` does not know 0x05). So the caller
   cannot learn the device runs 3.0; this is what Home Assistant hits with a stored 2.x key after
-  an upgrade. Piece 4 must read the version and SEC_STATUS first, then pick the scheme. Two tests
-  in `test_device_api.py` pin today's failure.
+  an upgrade. The needs-migration flag does not cover it: identity bit 1 and NACK 0x08 are about
+  display drive data only, so such a device reports `needs_migration=False`. Status 0x05 is the
+  security-side signal ("use SEC2"). The fix is ordering: the version, READ_IDENT and SEC_STATUS
+  are plaintext, so piece 4 must read them first, then pick the scheme, and map 0x05 to a typed
+  "needs SEC2" error. 3.0 adopts the 2.x key as its device key, so a stored key should keep
+  working over SEC2 (verify on hardware in piece 4). Two tests in `test_device_api.py` pin
+  today's failure.
 - **For piece 6:** `connect()` does not yet pass `max_attempts`, `use_services_cache`,
   `discovery_timeout`, `blocks_per_ack`, `max_queue_size` or `use_measured_palettes` through.
   Home Assistant passes none of them today.
