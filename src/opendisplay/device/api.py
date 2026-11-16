@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from ..exceptions import IdentNotSupportedError, InvalidResponseError, NoStoredConfigError
 from ..models.profile import DeviceProfile, build_profile
+from ..panels import MigrationPlan, PanelDatabase, plan_migration
 from ..protocol.config_parser import parse_config_response
 from .facade import OpenDisplayDevice
 
@@ -73,6 +74,10 @@ class ConfigView:
             raise
         self._cached = config
         return config
+
+    def plan_migration(self, db: PanelDatabase | None = None) -> MigrationPlan:
+        """What the cached config needs before a firmware 3.0 device can draw (no I/O)."""
+        return plan_migration(self.cached, self._device.profile, db or PanelDatabase.load())
 
     async def write(self, config: GlobalConfig) -> None:
         """Write ``config`` to the device, then refresh the profile from the device."""
