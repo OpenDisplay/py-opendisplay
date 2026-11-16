@@ -14,9 +14,11 @@
 
 ## Decisions to confirm with the user before Task 2
 
+**Status 2026-11-16:** the user confirmed 1, 2 and 4 as written and changed 3 (new wording below; Task 2 step 4 and its tests updated to match).
+
 1. **The new surface is a new class, `opendisplay.Device`, not new attributes on `OpenDisplayDevice`.** Reason: the spec wants `dev.config.read()`, but `OpenDisplayDevice.config` already exists as a property returning `GlobalConfig`, and that cannot change without breaking Home Assistant. `Device` holds an `OpenDisplayDevice` and delegates to it for now; piece 7 inverts that.
 2. **`opendisplay.connect()` does not fail on a device without config.** It returns a `Device` whose profile says `configured=False`.
-3. **The identity is read only when the firmware can answer**: major version 3 and up, or `ic_type` EFR32BG22. Other 2.x firmware is silent and would cost every connect 2 seconds.
+3. **`connect()` reads the identity only when the firmware major is 3 or higher.** No EFR32BG22 exception there: an unencrypted 2.x BG22 is silent and would cost every connect 2 seconds, as other 2.x firmware would. The BG22 exception stays in `opendisplay info` only. *(Changed by the user on 2026-11-16; the earlier draft also asked 2.x BG22 tags.)*
 4. **`connect()` costs one extra round trip against today** (the firmware version read). Home Assistant already reads the version separately, so in practice it moves, it does not add.
 
 ## Global Constraints
@@ -210,7 +212,7 @@ def connect(
 1. enter the wrapped `OpenDisplayDevice` (`auto_interrogate=False`);
 2. read the firmware version;
 3. read the config; on `NoStoredConfigError` continue with `None`;
-4. read the identity only if `firmware major >= 3` or the config's `ic_type` is EFR32BG22; on `IdentNotSupportedError` continue with `None` and remember `ident_missing = (major >= 3)`;
+4. read the identity only if `firmware major >= 3` (no `ic_type` exception: a 2.x EFR32BG22 is not asked, decision 3); on `IdentNotSupportedError` continue with `None` and remember `ident_missing = (major >= 3)`;
 5. `build_profile(...)`.
 If any step other than the two tolerated errors raises, exit the wrapped device and re-raise.
 
@@ -224,6 +226,10 @@ If any step other than the two tolerated errors raises, exit the wrapped device 
 async def test_connect_to_a_2x_device_reads_version_and_config_but_not_identity(fake_transport):
     # replies: fw 2.27 version frame, config frames. Assert: profile.generation is V2,
     # profile.width matches, and no frame b"\x00\x46" was written.
+
+async def test_connect_to_a_2x_efr32bg22_does_not_ask_for_the_identity(fake_transport):   # decision 3
+    # replies: fw 2.x version frame, a config whose system ic_type is EFR32BG22. Assert: profile.generation
+    # is V2, profile.ident is None, ident_missing is False, and no frame b"\x00\x46" was written.
 
 async def test_connect_to_a_3_0_device_reads_its_identity(fake_transport):
     # replies: fw 3.0 version, no-config frame ff400000, identity 004604010029a00f800003.
