@@ -10,6 +10,9 @@ import pytest
 import opendisplay
 from opendisplay import Device, Generation, OpenDisplayDevice
 from opendisplay.exceptions import (
+    AuthenticationFailedError,
+    AuthenticationRequiredError,
+    BLEConnectionError,
     ConfigParseError,
     ImageEncodingError,
     InvalidResponseError,
@@ -255,3 +258,52 @@ async def test_default_still_interrogates(fake_transport) -> None:
         assert device.config is not None
 
     assert _opcodes(fake.written) == [READ_CONFIG]
+
+
+async def test_3_0_device_with_a_malformed_identity_reply_still_connects(fake_transport, caplog) -> None:
+    fake = fake_transport([_version(3, 0), _config_reply(ESP32_CONFIG), bytes.fromhex("00460401")])  # cut short
+
+    async with opendisplay.connect(transport=fake) as dev:
+        assert dev.profile.generation is Generation.V3
+        assert (dev.profile.ident, dev.profile.ident_missing) == (None, True)
+
+    assert "identity" in caplog.text.lower()
+
+
+async def test_link_loss_during_the_identity_read_still_fails_the_connect(fake_transport) -> None:
+    fake = fake_transport([_version(3, 0), _config_reply(ESP32_CONFIG), BLEConnectionError("link lost")])
+
+    with pytest.raises(BLEConnectionError):
+        async with opendisplay.connect(transport=fake):
+            pytest.fail("entered despite the lost link")
+
+    assert fake.is_connected is False
+
+
+# Pins the current failure mode for piece 4 (SEC2). connect(encryption_key=...) runs the 2.x
+# handshake inside OpenDisplayDevice.__aenter__, before the firmware version is read. Firmware 3.0
+# (od_sec2.c od_sec2_command) answers CMD_AUTHENTICATE with [00][50][03] while unclaimed and
+# [00][50][05] (AUTH_STATUS_V2_REQUIRED) once claimed, so connect() fails before a profile exists
+# and the caller cannot learn that the device runs 3.0. Piece 4 must change this deliberately.
+
+
+async def test_2x_key_on_an_unclaimed_3_0_device_fails_before_a_profile_exists(fake_transport) -> None:
+    fake = fake_transport([b"\x00\x50\x03"])
+
+    with pytest.raises(AuthenticationRequiredError):
+        async with opendisplay.connect(transport=fake, encryption_key=bytes(16)):
+            pytest.fail("entered")
+
+    assert _opcodes(fake.written) == [b"\x00\x50"]  # no version read happened
+    assert fake.is_connected is False
+
+
+async def test_2x_key_on_a_claimed_3_0_device_fails_before_a_profile_exists(fake_transport) -> None:
+    fake = fake_transport([b"\x00\x50\x05"])
+
+    with pytest.raises(AuthenticationFailedError, match="0x05"):
+        async with opendisplay.connect(transport=fake, encryption_key=bytes(16)):
+            pytest.fail("entered")
+
+    assert _opcodes(fake.written) == [b"\x00\x50"]
+    assert fake.is_connected is False

@@ -7,10 +7,11 @@ up, the identity, and builds a ``DeviceProfile`` from them.
 
 from __future__ import annotations
 
+import logging
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
-from ..exceptions import IdentNotSupportedError, ImageEncodingError, NoStoredConfigError
+from ..exceptions import IdentNotSupportedError, ImageEncodingError, InvalidResponseError, NoStoredConfigError
 from ..models.profile import DeviceProfile, build_profile
 from .facade import OpenDisplayDevice
 
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from ..models.config import GlobalConfig
     from ..models.ident import DeviceIdent
     from ..transport.base import Transport
+
+_LOGGER = logging.getLogger(__name__)
 
 _IDENT_MIN_MAJOR = 3  # earlier firmware is silent on READ_IDENT and would cost every connect its timeout
 
@@ -85,7 +88,9 @@ class Device:
             Its config is the one read on entry. When that config's display has a colour scheme
             the legacy API does not know, ``legacy`` has no capabilities:
             ``legacy.width`` and ``legacy.upload_image()`` raise "capabilities unknown".
-            Use ``profile`` for what the device is.
+            Use ``profile`` for what the device is. After a ``refresh()`` that finds the
+            device changed, ``legacy`` can still hold the previous config (when the device now
+            has none) or the previous capabilities; ``config.cached`` and ``profile`` are current.
     """
 
     def __init__(self, legacy: OpenDisplayDevice) -> None:
@@ -101,7 +106,13 @@ class Device:
         return self._profile
 
     async def refresh(self) -> DeviceProfile:
-        """Re-read the firmware version, config and identity, and rebuild the profile."""
+        """Re-read the firmware version, config and identity, and rebuild the profile.
+
+        The three reads are separate commands, each holding the device's command lock, not one
+        transaction. Two concurrent refreshes interleave harmlessly; the last to finish wins.
+        A malformed identity reply is logged and the profile is built without the identity
+        (``ident_missing=True``), as ``opendisplay info`` does; link errors propagate.
+        """
         firmware = await self.legacy.read_firmware_version()
         try:
             config: GlobalConfig | None = await self.config.read()
@@ -113,6 +124,9 @@ class Device:
             try:
                 ident = await self.legacy.read_ident()
             except IdentNotSupportedError:
+                ident_missing = True
+            except InvalidResponseError as err:
+                _LOGGER.warning("Ignoring a malformed identity reply from %s: %s", self.legacy.mac_address, err)
                 ident_missing = True
         self._profile = build_profile(firmware, config, ident, ident_missing=ident_missing)
         return self._profile
