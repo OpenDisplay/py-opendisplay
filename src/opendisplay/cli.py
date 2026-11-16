@@ -343,6 +343,10 @@ async def _read_ident(device: OpenDisplayDevice, fw: FirmwareVersion) -> DeviceI
         return await device.read_ident()
     except IdentNotSupportedError:
         return None
+    except OpenDisplayError as exc:
+        # The identity is an extra: a malformed reply must not cost the rest of the report.
+        _LOGGER.warning("Could not read the device identity: %s", exc)
+        return None
 
 
 async def _info_with_config(device_kwargs: dict[str, Any]) -> _InfoContext:

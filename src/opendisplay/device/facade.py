@@ -765,13 +765,14 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         Raises:
             IdentNotSupportedError: If the firmware does not implement the command. Such
                 firmware stays silent, sends the "session required" frame, or sends a NACK.
+                Its ``timed_out`` is True for silence, which a slow link can also cause.
             InvalidResponseError: If the reply is malformed
         """
         await self._conn.write_command(build_read_ident_command())
         try:
             response = await self._conn.read_response(timeout=self.TIMEOUT_IDENT)
         except OpenDisplayTimeoutError as err:
-            raise IdentNotSupportedError() from err
+            raise IdentNotSupportedError(timed_out=True) from err
         if is_ident_unsupported_frame(response):
             raise IdentNotSupportedError()
         return parse_read_ident(response)

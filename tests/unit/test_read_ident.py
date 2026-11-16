@@ -103,3 +103,16 @@ async def test_read_ident_on_firmware_without_it_raises_not_supported(fake_trans
 
     with pytest.raises(IdentNotSupportedError):
         await device.read_ident()
+
+
+@pytest.mark.parametrize(("reply", "timed_out"), [(BLETimeoutError, True), (bytes.fromhex("0046fe"), False)])
+async def test_not_supported_says_whether_the_device_was_silent(fake_transport, reply, timed_out: bool) -> None:
+    """Silence can also be a slow link, so a caller deciding "this is 2.x" must be able to tell it
+    from a device that actively refused the command."""
+    device = _device()
+    device._attach(fake_transport([reply]))
+
+    with pytest.raises(IdentNotSupportedError) as exc:
+        await device.read_ident()
+
+    assert exc.value.timed_out is timed_out

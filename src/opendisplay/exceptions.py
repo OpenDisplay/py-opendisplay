@@ -169,8 +169,13 @@ class IdentNotSupportedError(ProtocolError):
     def __init__(
         self,
         message: str = "Device does not answer READ_IDENT (firmware before 3.0 does not implement it)",
+        *,
+        timed_out: bool = False,
     ) -> None:
         super().__init__(message)
+        #: True when the device simply did not answer. Old firmware does that, but so does a
+        #: slow or dropping link, so silence alone does not prove the firmware is old.
+        self.timed_out = timed_out
 
 
 class NfcNotSupportedError(ProtocolError):
