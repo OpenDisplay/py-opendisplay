@@ -54,6 +54,7 @@ from .enums import (
     get_manufacturer_name,
 )
 from .firmware import FirmwareVersion, firmware_ota_asset, firmware_release_repo
+from .ident import DeviceIdent, FirmwareTarget, IdentDisplay
 from .led_flash import LedFlashConfig, LedFlashStep
 from .panel_drive import (
     CalibrationEntry,
@@ -95,6 +96,9 @@ __all__ = [
     "DeviceCapabilities",
     "DisplayConfig",
     "FirmwareVersion",
+    "DeviceIdent",
+    "FirmwareTarget",
+    "IdentDisplay",
     "firmware_ota_asset",
     "firmware_release_repo",
     "FitMode",

@@ -67,6 +67,19 @@ class ConfigParseError(ProtocolError):
     pass
 
 
+class NoStoredConfigError(ProtocolError):
+    """The device has no configuration stored (READ_CONFIG answered with an error frame).
+
+    Normal for a freshly flashed device, and for firmware 3.0 after an install that erased
+    the config: the device is reachable but cannot drive a display until a config is written.
+    """
+
+    def __init__(
+        self, message: str = "Device has no stored configuration (READ_CONFIG returned an error frame)"
+    ) -> None:
+        super().__init__(message)
+
+
 class TruncatedConfigError(ConfigParseError):
     """Device stopped sending config chunks before the advertised length.
 
@@ -133,6 +146,43 @@ class IntegrityCheckError(ProtocolError):
     pass
 
 
+class NeedsMigrationError(ProtocolError):
+    """The device refused an upload because it has no usable drive data for its display.
+
+    Firmware 3.0 drives a panel from data in the config. A config written by a client that
+    does not know those packets leaves the device unable to draw until one that includes
+    them is written.
+    """
+
+    def __init__(
+        self,
+        message: str = (
+            "The device has no drive data for its display (firmware 3.0 needs a migrated config); "
+            "write a config that includes the panel's drive packets."
+        ),
+    ) -> None:
+        super().__init__(message)
+
+
+class PanelBusyError(ProtocolError):
+    """The device refused an upload because the panel was still busy. Transient: retry."""
+
+    def __init__(
+        self, message: str = "The panel was still busy when the upload started; retry in a few seconds."
+    ) -> None:
+        super().__init__(message)
+
+
+class ConfigWriteBusyError(ProtocolError):
+    """The device did not store a config because a display pass was running. Transient: retry."""
+
+    def __init__(
+        self,
+        message: str = "The device is refreshing its display and did not store the config; retry after the refresh.",
+    ) -> None:
+        super().__init__(message)
+
+
 class NfcWriteError(ProtocolError):
     """Device rejected an NFC_ENDPOINT (0x0083) write with an error frame.
 
@@ -144,6 +194,25 @@ class NfcWriteError(ProtocolError):
     def __init__(self, message: str, error_code: int | None = None) -> None:
         super().__init__(message)
         self.error_code = error_code
+
+
+class IdentNotSupportedError(ProtocolError):
+    """Device does not implement READ_IDENT (0x0046).
+
+    Firmware before 3.0 (EFR32BG22 before 2.3) does not know the command. Depending on the
+    build it stays silent, answers with the 3-byte "session required" frame, or sends a NACK.
+    """
+
+    def __init__(
+        self,
+        message: str = "Device does not answer READ_IDENT (firmware before 3.0 does not implement it)",
+        *,
+        timed_out: bool = False,
+    ) -> None:
+        super().__init__(message)
+        #: True when the device simply did not answer. Old firmware does that, but so does a
+        #: slow or dropping link, so silence alone does not prove the firmware is old.
+        self.timed_out = timed_out
 
 
 class NfcNotSupportedError(ProtocolError):

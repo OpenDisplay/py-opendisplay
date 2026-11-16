@@ -83,6 +83,7 @@ from ..protocol.responses import (
     PIPE_START_NACK_RECT_INVALID,
     check_response_type,
     is_compressed_failure_frame,
+    raise_for_upload_start_refusal,
 )
 from .channel import SecureChannel
 
@@ -204,6 +205,17 @@ class Uploader:
         self.pipe_probed = False
         self.pipe_supported = False
         self.pipe_partial_supported = None
+
+    @staticmethod
+    def _raise_for_start_refusal(response: bytes) -> None:
+        """Raise the typed error if ``response`` is a START NACK that names its reason.
+
+        Checked before the generic handling so that "needs migration" or "panel busy" on a
+        compressed START is reported as such instead of triggering the uncompressed retry.
+        """
+        nack = parse_nack(response)
+        if nack is not None:
+            raise_for_upload_start_refusal(*nack)
 
     def _color_scheme(self) -> ColorScheme:
         """The device's color scheme, raising RuntimeError when capabilities are unknown."""
@@ -554,6 +566,7 @@ class Uploader:
             nack = parse_nack(response)
             if nack is not None:
                 opcode, err = nack
+                raise_for_upload_start_refusal(opcode, err)
                 # No partial data has been applied yet, so any pre-refresh 0x76
                 # NACK (etag mismatch, rect OOB/align, flags, unsupported, ...) is
                 # safe to recover from by falling back to a full upload rather than
@@ -645,6 +658,7 @@ class Uploader:
 
         # 2. Wait for START ACK — firmware initializes display hardware here, which can be slow
         response = await self._channel.read(self._timeouts.TIMEOUT_FIRST_CHUNK)
+        self._raise_for_start_refusal(response)
         try:
             validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
         except InvalidResponseError:
@@ -670,6 +684,7 @@ class Uploader:
             start_cmd = build_direct_write_start_uncompressed()
             await self._channel.write(start_cmd)
             response = await self._channel.read(self._timeouts.TIMEOUT_FIRST_CHUNK)
+            self._raise_for_start_refusal(response)
             validate_ack_response(response, CommandCode.DIRECT_WRITE_START)
 
         # 3. Send data chunks: whatever the compressed START could not carry, or
@@ -824,6 +839,7 @@ class Uploader:
 
         if not ok:
             err_code = cast(int, payload)
+            raise_for_upload_start_refusal(CommandCode.PIPE_WRITE_START & 0xFF, err_code)
             if err_code == PIPE_START_NACK_COMPRESSION and compressed and _retry_uncompressed:
                 _LOGGER.info("Device rejected compressed PIPE_WRITE (err 0x02); retrying uncompressed")
                 return await self.negotiate_pipe(False, total_size, _retry_uncompressed=False)
@@ -911,6 +927,7 @@ class Uploader:
 
         if not ok:
             err_code = cast(int, payload)
+            raise_for_upload_start_refusal(CommandCode.PIPE_WRITE_START & 0xFF, err_code)
             # The device answered 0x0080, so pipe write itself is supported.
             self.pipe_probed = True
             self.pipe_supported = True

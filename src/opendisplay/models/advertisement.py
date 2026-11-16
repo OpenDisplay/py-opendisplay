@@ -13,6 +13,13 @@ from dataclasses import dataclass, field
 # See sensor_sht40.cpp write_sht40_msd() / opendisplay_sensor_sht40.c.
 SHT40_MSD_LENGTH = 3
 SHT40_DEFAULT_MSD_START = 7  # firmware default when msd_data_start_byte is 0 or 0xFF
+
+# Status byte (v1 byte 13). Bit 2 was CONNECTION_REQUESTED and bit 3 ENCRYPTION_ENABLED on 2.x.
+_STATUS_CLAIM_MODE = 0x04
+_STATUS_SESSION_REQUIRED = 0x08
+
+# The dynamic block of a device with no drivable display.
+_UNCONFIGURED_DYNAMIC = b"\xff" * 11
 SHT40_MAX_MSD_START = 8  # a 3-byte block must fit the 11-byte dynamic area
 _SHT40_RH_MASK = 0x3FF
 _SHT40_TEMP_MASK = 0x7FF
@@ -57,8 +64,13 @@ class AdvertisementData:
         loop_counter: Incrementing counter for each advertisement
         format_version: Parsed advertisement format ("legacy" or "v1")
         reboot_flag: Reboot flag from status byte (v1 only)
-        connection_requested: Connection-request flag from status byte (v1 only)
+        connection_requested: Status bit 2 under its 2.x name; same value as ``claim_mode``
         dynamic_data: Dynamic return data block (v1 only)
+        session_required: Status bit 3 (v1 only). On firmware 3.0 the device is claimed and
+            gated commands need a session. 2.x firmware does not set it reliably: encrypted
+            EFR32BG22 devices on 2.2.1 advertise it clear, so False proves nothing on 2.x.
+        claim_mode: Status bit 2 (v1 only). Firmware 3.0 sets it while the device is in claim
+            mode; no shipped 2.x firmware ever set it.
     """
 
     battery_mv: int
@@ -69,6 +81,28 @@ class AdvertisementData:
     connection_requested: bool | None = None
     dynamic_data: bytes = field(default_factory=bytes)
     raw_data: bytes = field(default_factory=bytes)
+    session_required: bool | None = None
+    claim_mode: bool | None = None
+
+    @property
+    def awaiting_claim(self) -> bool | None:
+        """Whether the device is waiting to be claimed: in claim mode and not yet claimed.
+
+        Advisory, as everything in an advertisement is; ``None`` for a legacy payload.
+        """
+        if self.claim_mode is None or self.session_required is None:
+            return None
+        return self.claim_mode and not self.session_required
+
+    @property
+    def unconfigured(self) -> bool:
+        """Whether the device reports that it has no drivable display.
+
+        Firmware fills the 11 dynamic bytes with 0xFF when there is no config, no display, or
+        (on 3.0) no drive data for the display. The bytes then carry no button, touch or sensor
+        data, so the decoding methods return nothing and the trackers start over after it.
+        """
+        return self.format_version == "v1" and self.dynamic_data == _UNCONFIGURED_DYNAMIC
 
     def button_event(self, byte_index: int) -> ButtonEventData | None:
         """Decode one dynamic return byte as button data (v1 only).
@@ -82,7 +116,7 @@ class AdvertisementData:
         Raises:
             IndexError: If byte_index is outside 0-10
         """
-        if self.format_version != "v1":
+        if self.format_version != "v1" or self.unconfigured:
             return None
         if byte_index < 0 or byte_index >= len(self.dynamic_data):
             raise IndexError(f"button byte index out of range: {byte_index}")
@@ -104,7 +138,7 @@ class AdvertisementData:
         Callers should keep only the indices their config assigns to buttons
         (see ``BinaryInputs.published_button_byte_index``).
         """
-        if self.format_version != "v1":
+        if self.format_version != "v1" or self.unconfigured:
             return []
         return [decode_button_event(raw, i) for i, raw in enumerate(self.dynamic_data)]
 
@@ -117,7 +151,7 @@ class AdvertisementData:
         Returns:
             Parsed touch data, or None if not a v1 advertisement or block out of range.
         """
-        if self.format_version != "v1":
+        if self.format_version != "v1" or self.unconfigured:
             return None
         # Valid start offsets are 0-6 within the 11-byte block; a negative value
         # would index from the end and return garbage.
@@ -149,7 +183,7 @@ class AdvertisementData:
             advertisement, the block does not fit, or the sensor has no valid
             reading (not yet read, or the firmware's read failed).
         """
-        if self.format_version != "v1":
+        if self.format_version != "v1" or self.unconfigured:
             return None
         if not 0 <= start_byte <= SHT40_MAX_MSD_START:
             return None
@@ -330,7 +364,10 @@ class AdvertisementTracker:
         timestamp: float | None = None,
     ) -> list[ButtonChangeEvent]:
         """Process one advertisement and return detected transitions."""
-        if advertisement.format_version != "v1":
+        if advertisement.format_version != "v1" or advertisement.unconfigured:
+            # Unconfigured: the dynamic bytes are filler, not button data, and the state ends
+            # only with a config write or an update, after which counters may have restarted.
+            # Forget what was seen so the next real advertisement is a first sighting.
             self._last_by_address.pop(address, None)
             return []
 
@@ -487,6 +524,10 @@ class TouchTracker:
         timestamp: float | None = None,
     ) -> list[TouchChangeEvent]:
         """Process one advertisement and return detected touch transitions."""
+        if advertisement.unconfigured:
+            # As for buttons: a break, not a release. The next real advertisement starts over.
+            self._last_by_address.pop(address, None)
+            return []
         current = advertisement.touch_event(self._start_byte)
         if current is None:
             return []
@@ -560,7 +601,8 @@ def _parse_v1(data: bytes) -> AdvertisementData:
     battery_10mv = data[12] | ((data[13] & 0x01) << 8)
     battery_mv = battery_10mv * 10
     reboot_flag = bool(data[13] & 0x02)
-    connection_requested = bool(data[13] & 0x04)
+    claim_mode = bool(data[13] & _STATUS_CLAIM_MODE)
+    session_required = bool(data[13] & _STATUS_SESSION_REQUIRED)
     loop_counter = (data[13] >> 4) & 0x0F
 
     return AdvertisementData(
@@ -569,9 +611,11 @@ def _parse_v1(data: bytes) -> AdvertisementData:
         loop_counter=loop_counter,
         format_version="v1",
         reboot_flag=reboot_flag,
-        connection_requested=connection_requested,
+        connection_requested=claim_mode,
         dynamic_data=dynamic_data,
         raw_data=data[:V1_LENGTH],
+        session_required=session_required,
+        claim_mode=claim_mode,
     )
 
 
