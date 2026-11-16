@@ -114,12 +114,14 @@ async def test_stored_config_without_displays_fails_the_connect_and_closes_the_l
 
 
 async def test_unknown_colour_scheme_does_not_stop_the_connect(fake_transport) -> None:  # Review Focus 3
-    display = dataclasses.replace(ESP32_CONFIG.displays[0], color_scheme=10)
+    # An unknown 0x20 value, as a newer firmware might define. (Mode-level schemes such as
+    # BWRY16 live in 0xAE packets and never in 0x20.)
+    display = dataclasses.replace(ESP32_CONFIG.displays[0], color_scheme=0x7E)
     config = dataclasses.replace(ESP32_CONFIG, displays=[display])
     fake = fake_transport([_version(3, 0), _config_reply(config), IDENT_V3_NO_DISPLAY])
 
     async with opendisplay.connect(transport=fake) as dev:
-        assert dev.profile.color_scheme == 10
+        assert dev.profile.color_scheme == 0x7E
         assert dev.profile.configured is True
         # Pins that interrogate() stored the parsed config before its capability step failed.
         assert dev.config.cached == parse_config_response(serialize_config(config))

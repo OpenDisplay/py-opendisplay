@@ -28,10 +28,10 @@ async def _read_config(legacy: OpenDisplayDevice) -> GlobalConfig:
     """Read the stored config, also when the legacy capability step cannot describe it.
 
     ``interrogate()`` stores the parsed config, then derives capabilities from display 0. That
-    step raises ``ImageEncodingError`` for a colour scheme the legacy enum lacks (such as
-    BWRY16). The profile describes it, so the config is kept. Any other failure, or one before
-    a config was stored, is re-raised. (A config without displays never gets this far: the
-    parser rejects it with ``ConfigParseError``.)
+    step raises ``ImageEncodingError`` for a display (0x20) colour scheme the legacy enum lacks,
+    such as one a newer firmware defines. The profile describes it, so the config is kept. Any
+    other failure, or one before a config was stored, is re-raised. (A config without displays
+    never gets this far: the parser rejects it with ``ConfigParseError``.)
 
     Raises:
         NoStoredConfigError: The device has no config.
@@ -82,8 +82,8 @@ class Device:
     Attributes:
         config: The stored config.
         legacy: The wrapped ``OpenDisplayDevice``, for everything not yet on the new surface.
-            Its config is the one read on entry. When that config has a colour scheme the
-            legacy API does not know (such as BWRY16), ``legacy`` has no capabilities:
+            Its config is the one read on entry. When that config's display has a colour scheme
+            the legacy API does not know, ``legacy`` has no capabilities:
             ``legacy.width`` and ``legacy.upload_image()`` raise "capabilities unknown".
             Use ``profile`` for what the device is.
     """
