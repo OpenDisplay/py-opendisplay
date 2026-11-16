@@ -665,3 +665,88 @@ def test_chip_temperature_is_not_the_sensor_reading() -> None:
     assert reading is not None
     assert adv.temperature_c == pytest.approx(31.0)
     assert reading.temperature_c == pytest.approx(22.4)
+
+
+# ─── Device state in the status byte, and the "no drivable display" rule ─────
+
+# Captured from a reTerminal E1002 on Firmware_Unified 3.0.2 with no config, in fresh claim mode.
+AWAITING_CLAIM = bytes.fromhex("ffffffffffffffffffffff860016")
+
+_ADDRESS = "AA:BB:CC:DD:EE:FF"
+_LEGACY_PAYLOAD = bytes([0x02, 0x36, 0x00, 0x6C, 0x00, 0xC3, 0x01, 0x55, 0x0F, 0x16, 0x4D])
+
+
+def _with_status_bits(payload: bytes, bits: int) -> bytes:
+    return payload[:-1] + bytes([payload[-1] | bits])
+
+
+def test_fresh_3_0_device_is_unconfigured_and_awaiting_claim() -> None:
+    adv = parse_advertisement(AWAITING_CLAIM)
+
+    assert (adv.unconfigured, adv.claim_mode, adv.session_required, adv.awaiting_claim) == (True, True, False, True)
+    assert adv.connection_requested is True  # the old name for the same bit
+
+
+def test_unconfigured_advertisement_decodes_no_slots() -> None:
+    adv = parse_advertisement(AWAITING_CLAIM)
+
+    assert adv.button_events == []
+    assert adv.button_event(0) is None
+    assert adv.is_pressed(0) is None
+    assert adv.touch_event(0) is None
+
+
+def test_claimed_device_in_claim_mode_is_not_awaiting_claim() -> None:
+    adv = parse_advertisement(_with_status_bits(_v1_payload(bytes(11), connection_requested=True), 0x08))
+
+    assert (adv.claim_mode, adv.session_required, adv.awaiting_claim) == (True, True, False)
+
+
+def test_session_required_bit_on_a_configured_device() -> None:
+    adv = parse_advertisement(_with_status_bits(_v1_payload(bytes([0x0A]) + bytes(10)), 0x08))
+
+    assert (adv.session_required, adv.claim_mode, adv.unconfigured) == (True, False, False)
+    assert adv.button_event(0) is not None  # a configured device's slots are still decoded
+
+
+def test_legacy_payload_has_no_state() -> None:
+    adv = parse_advertisement(_LEGACY_PAYLOAD)
+
+    assert adv.format_version == "legacy"
+    assert (adv.session_required, adv.claim_mode, adv.awaiting_claim, adv.unconfigured) == (None, None, None, False)
+
+
+def _touching(x: int = 100, y: int = 200) -> AdvertisementData:
+    """A v1 advertisement with one contact in the touch block at offset 0."""
+    block = bytes([0x01]) + x.to_bytes(2, "little") + y.to_bytes(2, "little")
+    return parse_advertisement(_v1_payload(block + bytes(6)))
+
+
+def test_button_tracker_starts_over_after_an_unconfigured_advertisement() -> None:
+    """An unconfigured period is a break: the device comes back after a config write or an update,
+    often with reset counters, so what was seen before must not be compared with what comes after."""
+    tracker = AdvertisementTracker()
+    before = parse_advertisement(_v1_payload(bytes([0x0A]) + bytes(10), loop_counter=1))  # id=2, count=1, up
+    after = parse_advertisement(_v1_payload(bytes([0x92]) + bytes(10), loop_counter=3))  # id=2, count=2, down
+    assert tracker.update(_ADDRESS, before, timestamp=1.0) == []
+
+    assert tracker.update(_ADDRESS, parse_advertisement(AWAITING_CLAIM), timestamp=2.0) == []
+
+    assert tracker.update(_ADDRESS, after, timestamp=3.0) == []  # a first sighting again, no press reported
+
+
+def test_touch_tracker_reports_nothing_when_a_touched_device_becomes_unconfigured() -> None:
+    tracker = TouchTracker(instance=0, start_byte=0)
+    assert tracker.update(_ADDRESS, _touching(), timestamp=1.0) == []
+
+    # Without the rule the 0xFF bytes read as "no longer touching" and a touch_up is reported.
+    assert tracker.update(_ADDRESS, parse_advertisement(AWAITING_CLAIM), timestamp=2.0) == []
+
+
+def test_touch_tracker_starts_over_after_an_unconfigured_advertisement() -> None:
+    tracker = TouchTracker(instance=0, start_byte=0)
+    idle = parse_advertisement(_v1_payload(bytes(11)))
+    tracker.update(_ADDRESS, _touching(), timestamp=1.0)
+    tracker.update(_ADDRESS, parse_advertisement(AWAITING_CLAIM), timestamp=2.0)
+
+    assert tracker.update(_ADDRESS, idle, timestamp=3.0) == []  # no touch_up against the old contact

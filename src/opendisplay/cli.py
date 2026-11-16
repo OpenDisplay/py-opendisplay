@@ -34,6 +34,7 @@ from .exceptions import (
     NoStoredConfigError,
     OpenDisplayError,
 )
+from .models.advertisement import AdvertisementData
 from .models.capabilities import DeviceCapabilities
 from .models.enums import (
     CapacityEstimator,
@@ -253,6 +254,24 @@ async def _scan_lan(timeout: float, output_json: bool) -> None:
     _console.print(table)
 
 
+def _scan_state(adv: AdvertisementData | None) -> str:
+    """Describe what an advertisement says about the device's claim and config state.
+
+    "key required" is status bit 3, which firmware 3.0 sets for a claimed device. 2.x firmware
+    does not set it reliably, so an encrypted 2.x device can show no state here.
+    """
+    if adv is None:
+        return ""
+    states = []
+    if adv.awaiting_claim:
+        states.append("awaiting claim")
+    if adv.session_required:
+        states.append("key required")
+    if adv.unconfigured:
+        states.append("unconfigured")
+    return ", ".join(states)
+
+
 async def _scan(timeout: float, output_json: bool) -> None:
     with _spinner() as progress:
         progress.add_task(f"Scanning for {timeout:.0f}s...", total=None)
@@ -270,6 +289,7 @@ async def _scan(timeout: float, output_json: bool) -> None:
                     "mac": mac,
                     "battery_mv": adv.battery_mv if adv else None,
                     "temperature_c": adv.temperature_c if adv else None,
+                    "state": _scan_state(adv),
                 }
             )
         _stdout.print_json(json.dumps({"devices": rows}))
@@ -284,6 +304,7 @@ async def _scan(timeout: float, output_json: bool) -> None:
     table.add_column("MAC")
     table.add_column("Battery")
     table.add_column("Temp")
+    table.add_column("State")
     for name, (mac, adv) in sorted(devices.items()):
         if adv:
             pct = voltage_to_percent(adv.battery_mv, CapacityEstimator.LI_ION)
@@ -292,7 +313,7 @@ async def _scan(timeout: float, output_json: bool) -> None:
         else:
             battery_str = "\u2014"
             temp_str = "\u2014"
-        table.add_row(name, mac, battery_str, temp_str)
+        table.add_row(name, mac, battery_str, temp_str, _scan_state(adv))
     _console.print(table)
 
 
