@@ -12,6 +12,7 @@ from opendisplay.exceptions import (
     BLETimeoutError,
     ConfigParseError,
     InvalidResponseError,
+    NoStoredConfigError,
     ProtocolError,
     TruncatedConfigError,
 )
@@ -53,7 +54,7 @@ def test_interrogate_reports_no_config_error_frame() -> None:
     )
     device._attach(_FakeConn([b"\xff\x40\x00\x00"]))  # type: ignore[arg-type]
 
-    with pytest.raises(ProtocolError, match="no stored configuration"):
+    with pytest.raises(NoStoredConfigError, match="no stored configuration"):
         asyncio.run(device.interrogate())
 
 

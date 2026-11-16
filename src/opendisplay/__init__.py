@@ -19,12 +19,14 @@ from .exceptions import (
     BLETimeoutError,
     ConfigParseError,
     ConfigWriteBusyError,
+    IdentNotSupportedError,
     ImageEncodingError,
     IntegrityCheckError,
     InvalidResponseError,
     NeedsMigrationError,
     NfcNotSupportedError,
     NfcWriteError,
+    NoStoredConfigError,
     OpenDisplayConnectionError,
     OpenDisplayError,
     OpenDisplayTimeoutError,
@@ -102,6 +104,7 @@ from .models.enums import (
     get_manufacturer_name,
 )
 from .models.firmware import firmware_ota_asset, firmware_release_repo
+from .models.ident import DeviceIdent, FirmwareTarget, IdentDisplay
 from .models.led_flash import LedFlashConfig, LedFlashStep
 from .ota import find_nrf_dfu_device, perform_nrf_dfu, perform_silabs_ota
 from .partial import PartialState
@@ -154,6 +157,11 @@ __all__ = [
     "NeedsMigrationError",
     "NfcNotSupportedError",
     "PanelBusyError",
+    "IdentNotSupportedError",
+    "DeviceIdent",
+    "FirmwareTarget",
+    "IdentDisplay",
+    "NoStoredConfigError",
     "NfcWriteError",
     "OTAError",
     "OTANotSupportedError",
