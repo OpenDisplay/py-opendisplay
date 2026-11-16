@@ -393,15 +393,34 @@ Piece 2 was split: 2a is pure reading, 2b is `DeviceProfile` plus `opendisplay.c
   (`od_color_direct_geometry`: MONO only). The EFR32BG22 target never enables it; the ESP32
   FastEPD native driver (0xB3) always does. The 0x20 `partial_update_support` is read only by
   the boot screen. The profile models all of this except the mode's temperature window and the
-  FastEPD case; the device's START NACK stays authoritative.
+  temperature window; the device's START NACK stays authoritative.
+- **Native controllers (0xB3, ESP32 FastEPD builds) enable partial on their own.** The first 0xB3
+  for the display's instance with a 12-byte body, version 0 and class 1 (IT8951) or 2 (parallel,
+  panel 1..3) selects a built-in driver; partial is then on for any scheme but GRAY8 (9), whatever
+  the modes say. C3/C6 builds have no FastEPD. The profile models this (Firmware_Unified f6d3a83).
 - **`interrogate()` couples reading the config to deriving the legacy capabilities.** A 0x20
   scheme the legacy enum lacks makes it raise after the config is stored. `Device` tolerates
   exactly that (`ImageEncodingError`, re-raised when no config was stored); `Device.legacy` then
   has no capabilities. Piece 7 should separate config reading from capability derivation when
   `OpenDisplayDevice` becomes the delegate. `opendisplay info` fails on such a device today.
 - **A stored config without a display packet cannot be parsed** (`ConfigParseError`), so
-  `connect()` fails on it, like `OpenDisplayDevice`. Whether it should connect as unconfigured
-  instead is an open decision for the user.
+  `connect()` fails on it, like `OpenDisplayDevice`; 2b keeps that and a test pins it. It is a
+  real 3.0 state: the firmware stores a config write as sent (PROTOCOL_CHANGES_3.0 row 10), and
+  "no config, no 0x20, or no display with drive data" all mean "no drivable display".
+  **Required for 3a:** the new entry point needs a lenient read that keeps the other packets, so a
+  repair write does not silently drop WiFi, security or sensor packets. Do not treat it as "no
+  config": a later write would then delete the device's other packets.
+- **Required for piece 4: a 2.x key fails on 3.0 before a profile exists.**
+  `connect(encryption_key=...)` runs the 2.x handshake inside `OpenDisplayDevice.__aenter__`,
+  before the version read. 3.0 (`od_sec2.c`) answers `[00][50][03]` while unclaimed
+  (`AuthenticationRequiredError`) and `[00][50][05]` = `AUTH_STATUS_V2_REQUIRED` once claimed
+  (`AuthenticationFailedError`, "status 0x05"; `responses.py` does not know 0x05). So the caller
+  cannot learn the device runs 3.0; this is what Home Assistant hits with a stored 2.x key after
+  an upgrade. Piece 4 must read the version and SEC_STATUS first, then pick the scheme. Two tests
+  in `test_device_api.py` pin today's failure.
+- **For piece 6:** `connect()` does not yet pass `max_attempts`, `use_services_cache`,
+  `discovery_timeout`, `blocks_per_ack`, `max_queue_size` or `use_measured_palettes` through.
+  Home Assistant passes none of them today.
 - **For 3b: measured colours.** 0xB0 calibration packets are host-only, "the renderable palette
   of one multi-pass mode", flagged "measured on this unit". Mode 0 has no 0xB0 in the captured
   config, so the library's per-panel measured palettes (`display_palettes.py`, keyed by
