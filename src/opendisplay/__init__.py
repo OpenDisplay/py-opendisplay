@@ -114,6 +114,7 @@ from .models.panel_drive import (
     DisplayPanel,
     LengthPrefixedPacket,
 )
+from .models.profile import DeviceProfile, Generation, build_profile
 from .ota import find_nrf_dfu_device, perform_nrf_dfu, perform_silabs_ota
 from .partial import PartialState
 from .protocol import MANUFACTURER_ID, SERVICE_UUID
@@ -167,6 +168,9 @@ __all__ = [
     "PanelBusyError",
     "IdentNotSupportedError",
     "DeviceIdent",
+    "DeviceProfile",
+    "Generation",
+    "build_profile",
     "FirmwareTarget",
     "IdentDisplay",
     "NoStoredConfigError",
