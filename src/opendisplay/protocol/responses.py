@@ -13,6 +13,7 @@ from ..exceptions import (
     NfcWriteError,
 )
 from ..models.firmware import FirmwareVersion
+from ..models.ident import DeviceIdent, FirmwareTarget, IdentDisplay
 from .commands import RESPONSE_HIGH_BIT_FLAG, CommandCode
 
 # Status bytes returned in AUTHENTICATE responses
@@ -351,6 +352,70 @@ def parse_firmware_version(data: bytes) -> FirmwareVersion:
         "sha": sha,
         "patch": patch,
     }
+
+
+_IDENT_HEADER_LEN = 5  # echo:2 + proto_minor + fw_target + display_count
+_IDENT_RECORD = struct.Struct("<HHHB")
+_IDENT_TAIL = struct.Struct("<BHHB")
+
+
+def is_ident_unsupported_frame(data: bytes) -> bool:
+    """Whether ``data`` is how firmware without READ_IDENT answers the command.
+
+    Seen on hardware: ``[00][46][FE]`` (the session gate of an encrypted 2.x device refusing an
+    opcode it does not know). ``[FF][46]...`` is the generic NACK for the opcode.
+    """
+    low = CommandCode.READ_IDENT & 0xFF
+    if len(data) >= 2 and data[0] == 0xFF and data[1] == low:
+        return True
+    return len(data) == 3 and data[1] == low and data[2] == 0xFE
+
+
+def parse_read_ident(data: bytes) -> DeviceIdent:
+    """Parse a READ_IDENT (0x0046) response.
+
+    A reply that ends after the display records comes from 2.x firmware and has no tail.
+    Bytes after the 3.0 tail are kept in ``DeviceIdent.extra``.
+
+    Raises:
+        InvalidResponseError: If the echo is wrong or the reply is cut short
+    """
+    if len(data) < _IDENT_HEADER_LEN:
+        raise InvalidResponseError(f"READ_IDENT response too short: {len(data)} bytes (need {_IDENT_HEADER_LEN})")
+    if not matches_command_echo(data, CommandCode.READ_IDENT):
+        raise InvalidResponseError(f"READ_IDENT echo mismatch: got 0x{unpack_command_code(data):04x}")
+    proto_minor, raw_target, count = data[2], data[3], data[4]
+    records_end = _IDENT_HEADER_LEN + count * _IDENT_RECORD.size
+    if len(data) < records_end:
+        raise InvalidResponseError(
+            f"READ_IDENT response cut short: {len(data)} bytes, {count} display record(s) need {records_end}"
+        )
+    displays = tuple(
+        IdentDisplay(*_IDENT_RECORD.unpack_from(data, _IDENT_HEADER_LEN + i * _IDENT_RECORD.size)) for i in range(count)
+    )
+    fw_target: FirmwareTarget | int
+    try:
+        fw_target = FirmwareTarget(raw_target)
+    except ValueError:
+        fw_target = raw_target
+    rest = data[records_end:]
+    if not rest:
+        return DeviceIdent(proto_minor=proto_minor, fw_target=fw_target, displays=displays)
+    if len(rest) < _IDENT_TAIL.size:
+        raise InvalidResponseError(
+            f"READ_IDENT tail cut short: {len(rest)} byte(s) after the display records (need {_IDENT_TAIL.size})"
+        )
+    flags, max_config, max_seq_steps, escapes = _IDENT_TAIL.unpack_from(rest)
+    return DeviceIdent(
+        proto_minor=proto_minor,
+        fw_target=fw_target,
+        displays=displays,
+        flags=flags,
+        max_config=max_config,
+        max_seq_steps=max_seq_steps,
+        escapes=escapes,
+        extra=rest[_IDENT_TAIL.size :],
+    )
 
 
 MSD_LENGTH = 16  # company_id:2 + dynamic:11 + chip_temp:1 + battery_low:1 + status:1

@@ -18,8 +18,9 @@ from ..crypto import (
 )
 from ..exceptions import (
     BLEConnectionError,
+    IdentNotSupportedError,
     ImageEncodingError,
-    NfcNotSupportedError,
+    NoStoredConfigError,
     OpenDisplayConnectionError,
     OpenDisplayTimeoutError,
     ProtocolError,
@@ -32,27 +33,22 @@ from ..models.capabilities import DeviceCapabilities
 from ..models.config import GlobalConfig
 from ..models.enums import BoardManufacturer, ColorScheme, FitMode, NfcRecordType, RefreshMode, Rotation
 from ..models.firmware import FirmwareVersion
+from ..models.ident import DeviceIdent
 from ..models.led_flash import LedFlashConfig
 from ..partial import (
     PartialState,
 )
 from ..protocol import (
-    NFC_CHUNK_SIZE,
-    NFC_INLINE_MAX,
-    NFC_WRITE_MAX_TOTAL,
     OD_LAN_TCP_PORT,
     CommandCode,
     build_buzzer_activate_command,
     build_deep_sleep_command,
     build_enter_dfu_command,
     build_led_activate_command,
-    build_nfc_write_data_command,
-    build_nfc_write_end_command,
-    build_nfc_write_inline_command,
-    build_nfc_write_start_command,
     build_power_off_command,
     build_read_config_command,
     build_read_fw_version_command,
+    build_read_ident_command,
     build_read_msd_command,
     build_reboot_command,
     build_write_config_command,
@@ -62,19 +58,19 @@ from ..protocol import (
     validate_ack_response,
 )
 from ..protocol.responses import (
-    NFC_STATUS_CHUNK_ACK,
-    NFC_STATUS_WRITE_OK,
     describe_command_code,
+    is_ident_unsupported_frame,
     matches_command_echo,
+    parse_read_ident,
     parse_read_msd,
     strip_command_echo,
     unpack_command_code,
-    validate_nfc_response,
 )
 from ..sensors import SensorReading, read_sensor_values
 from ..transport import BLEConnection, TcpTransport, Transport
 from .channel import MAX_STRAY_AUTH_FRAMES, SecureChannel
 from .imaging import _capabilities_from_config, prepare_image
+from .nfc import write_nfc_record
 from .upload import Uploader, UploadTarget
 
 if TYPE_CHECKING:
@@ -144,6 +140,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
     # Operation timeouts (seconds). The upload ones are defined on Uploader.
     TIMEOUT_CONFIG_CHUNK = 2.0  # Subsequent config read chunks (interrogate)
     TIMEOUT_NFC_WRITE = 15.0  # NFC EEPROM commit (inline write / chunk end): slow I2C work
+    TIMEOUT_IDENT = 2.0  # READ_IDENT: answered at once, or not at all by firmware that predates it
     TIMEOUT_FIRST_CHUNK = Uploader.TIMEOUT_FIRST_CHUNK
     TIMEOUT_ACK = Uploader.TIMEOUT_ACK
     TIMEOUT_DIRECT_WRITE_DATA_ACK = Uploader.TIMEOUT_DIRECT_WRITE_DATA_ACK
@@ -671,7 +668,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # {0xFF, 0x40, 0x00, 0x00}. Without this check the {0x00,0x00} length
         # field is misread as a zero-length config instead of "no config".
         if len(response) == 4 and response[0] == 0xFF and response[1] == CommandCode.READ_CONFIG:
-            raise ProtocolError("Device has no stored configuration (READ_CONFIG returned an error frame)")
+            raise NoStoredConfigError()
 
         chunk_data = strip_command_echo(response, CommandCode.READ_CONFIG)
 
@@ -753,6 +750,32 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         )
 
         return self._fw_version
+
+    @_serialized
+    async def read_ident(self) -> DeviceIdent:
+        """Read the device identity (READ_IDENT 0x0046).
+
+        The command is plaintext on every firmware, like the firmware-version read, so it
+        works before authentication and on a device this client holds no key for.
+
+        Returns:
+            The identity. Its tail fields are ``None`` on firmware 2.x, which answers
+            without the 3.0 tail.
+
+        Raises:
+            IdentNotSupportedError: If the firmware does not implement the command. Such
+                firmware stays silent, sends the "session required" frame, or sends a NACK.
+                Its ``timed_out`` is True for silence, which a slow link can also cause.
+            InvalidResponseError: If the reply is malformed
+        """
+        await self._conn.write_command(build_read_ident_command())
+        try:
+            response = await self._conn.read_response(timeout=self.TIMEOUT_IDENT)
+        except OpenDisplayTimeoutError as err:
+            raise IdentNotSupportedError(timed_out=True) from err
+        if is_ident_unsupported_frame(response):
+            raise IdentNotSupportedError()
+        return parse_read_ident(response)
 
     @_serialized
     async def read_msd(self) -> AdvertisementData:
@@ -1113,43 +1136,10 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         """
         if self._connection is None:
             raise RuntimeError("Device not connected")
-        if not 1 <= len(payload) <= NFC_WRITE_MAX_TOTAL:
-            raise ValueError(f"payload length must be 1..{NFC_WRITE_MAX_TOTAL}, got {len(payload)}")
-
         commit_timeout = self.TIMEOUT_NFC_WRITE if timeout is None else timeout
-        first_read = True
-
-        async def _read_nfc(read_timeout: float) -> bytes:
-            nonlocal first_read
-            try:
-                response = await self._channel.read(read_timeout)
-            except OpenDisplayTimeoutError:
-                if first_read:
-                    raise NfcNotSupportedError() from None
-                raise
-            finally:
-                first_read = False
-            return response
-
-        if len(payload) <= NFC_INLINE_MAX:
-            await self._channel.write(build_nfc_write_inline_command(int(rec_type), payload))
-            response = await _read_nfc(commit_timeout)
-            validate_nfc_response(response, NFC_STATUS_WRITE_OK)
-            return
-
-        await self._channel.write(build_nfc_write_start_command(int(rec_type), len(payload)))
-        response = await _read_nfc(self.TIMEOUT_ACK)
-        validate_nfc_response(response, NFC_STATUS_CHUNK_ACK)
-
-        for offset in range(0, len(payload), NFC_CHUNK_SIZE):
-            chunk = payload[offset : offset + NFC_CHUNK_SIZE]
-            await self._channel.write(build_nfc_write_data_command(chunk))
-            response = await _read_nfc(self.TIMEOUT_ACK)
-            validate_nfc_response(response, NFC_STATUS_CHUNK_ACK)
-
-        await self._channel.write(build_nfc_write_end_command())
-        response = await _read_nfc(commit_timeout)
-        validate_nfc_response(response, NFC_STATUS_WRITE_OK)
+        await write_nfc_record(
+            self._channel, rec_type, payload, commit_timeout=commit_timeout, ack_timeout=self.TIMEOUT_ACK
+        )
 
     async def write_nfc_url(self, url: str, timeout: float | None = None) -> None:
         """Write a URI NDEF record containing the given URL.
