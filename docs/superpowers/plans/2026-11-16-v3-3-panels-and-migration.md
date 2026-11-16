@@ -334,7 +334,11 @@ class DriveSequenceUnsupportedError(ProtocolError)            (0x07)
 # 0x08 -> PanelBusyError, 0x02 -> NeedsMigrationError, other codes -> InvalidResponseError naming the code
 
 class DisplayView:
-    async def show(self, image, *, mode: str | None = None, refresh=..., fit=..., ...) -> None
+    def drive_mode(self, name: str) -> DisplayMode          # display 0's, case-insensitive; no I/O
+    def nominal_colours(self, mode: DisplayMode) -> bool
+    async def show(self, image, *, mode=None, refresh_mode=RefreshMode.FULL, dither_mode, serpentine,
+                   exposure, saturation, fit, rotate, compress=True, use_measured_palettes=True,
+                   progress_callback=None) -> int | None     # the reported temperature; None without mode
 Device.display: DisplayView
 ```
 
@@ -348,8 +352,12 @@ Device.display: DisplayView
 - CLI: `opendisplay upload --mode NAME`, printing one line that the colours are nominal when the
   mode's calibration is not measured. `opendisplay info`: a drive-mode section (decision 5).
 
-**Tests (scripted connection):** exact START bytes compressed and uncompressed; the pass count is
-taken from the answer; substitution sends nothing after START and raises; each refusal code maps
+- Encoding and compression run in `asyncio.to_thread`; `drive_write` does no CPU work (review I1).
+- A START answer whose pass count differs from the config's raises `InvalidResponseError`: the
+  frames are already encoded for the config's count (review; replaces "use the answer's count").
+
+**Tests (scripted connection):** exact START bytes compressed and uncompressed; a pass count other
+than the config's raises; substitution sends nothing after START and raises; each refusal code maps
 to its error; reserved and unknown names fail before any frame is written; `show()` without
 `mode=` writes exactly what `upload_image` writes; the info section and its JSON, and its absence
 without 0xAE. Regenerate the public API snapshot (additions only) and list the additions in the PR.

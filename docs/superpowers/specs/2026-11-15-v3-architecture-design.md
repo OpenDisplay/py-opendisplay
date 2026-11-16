@@ -409,6 +409,19 @@ Piece 2 was split: 2a is pure reading, 2b is `DeviceProfile` plus `opendisplay.c
     `code_map`.
   - The measured waits sit well inside the website's timeout rule (data 90 s, START with
     inline data 10 s + max(90 s, (passes-1) x 45 s), END max(90 s, passes x 45 s)), which stays.
+- **Open points from the 3b review (no code change yet):**
+  - After a substituted mode or a pass-count mismatch the library sends nothing more, which leaves
+    a started transfer on the device. A new START replaces it, and the firmware has a transfer
+    timeout (`od_xfer.c` `od_xfer_report_timeout`); whether that timeout covers 0x0085 is a
+    question for the firmware author.
+  - Data chunks use the uploader's fixed 90 s acknowledgement timeout. With compression one chunk
+    can cross several pass boundaries: fine for 3 passes (20.3 s + 2.1 s measured), not for a
+    mode with many. Revisit when such a mode exists.
+  - For piece 4: the START room is chosen on "session is not None" (`ENCRYPTED_CHUNK_SIZE` vs
+    `MAX_START_PAYLOAD`), as in `upload.py`. A SEC2 session has another overhead, so all three
+    places must ask the channel.
+  - `mode_palette` takes the lightest 0xB0 entry as the paper white. That is an assumption about
+    the calibration, true for all 7 shipped palettes.
 - **The 0x0085 `@targets` line in `opendisplay_protocol.h` is stale.** It says "Silabs
   (Firmware/NRF54/NRF52811: pending)", but the ESP32 and nordic builds set
   `OD_CAP_DRIVE_WRITE=1` (`shared/core/od_cmd_drive.c`, also at release a519151), and the E1002
