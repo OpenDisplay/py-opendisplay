@@ -252,6 +252,7 @@ async def _migrate_connected(dev: Any, args: argparse.Namespace, backup: GlobalC
             _error("Not written.")
     assert start is not None  # a plan that is needed and not blocked has a starting config
     migrated = apply_migration(start, plan)
+    _console.print("Writing. Some panels (Spectra) redraw for about 30 s before the device answers again...")
     await dev.config.write(migrated)
     stored = await dev.config.read()
     expected, actual = serialize_config(migrated), serialize_config(stored)

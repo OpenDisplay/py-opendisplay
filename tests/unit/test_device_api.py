@@ -249,6 +249,52 @@ async def test_config_write_refreshes_the_profile(fake_transport) -> None:
         assert dev.config.cached is not None
 
 
+def _write_acks(config: GlobalConfig) -> list[bytes]:
+    blob = serialize_config(config)
+    chunks = 1 + max(0, (len(blob) - 200 + 199) // 200)
+    return [b"\x00\x41"] + [b"\x00\x42"] * (chunks - 1)
+
+
+async def test_config_write_waits_for_a_panel_that_is_still_redrawing(fake_transport, monkeypatch) -> None:
+    # Spectra and similar panels redraw for about 30 s after a config write and answer nothing
+    # meanwhile; the read-back must wait for them instead of failing on the first timeout.
+    slept: list[float] = []
+
+    async def no_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr("opendisplay.device.api.asyncio.sleep", no_sleep)
+    silent = OpenDisplayTimeoutError("redrawing")
+    fake = fake_transport(
+        [_version(3, 0), NO_CONFIG, IDENT_V3_NO_DISPLAY]
+        + _write_acks(ESP32_CONFIG)
+        + [silent, silent]
+        + [_version(3, 0), _config_reply(ESP32_CONFIG), IDENT_V3_NO_DISPLAY]
+    )
+
+    async with opendisplay.connect(transport=fake) as dev:
+        await dev.config.write(ESP32_CONFIG)
+
+        assert dev.profile.configured is True
+        assert len(slept) == 2 and sum(slept) >= 20
+
+
+async def test_config_write_gives_up_after_the_redraw_budget(fake_transport, monkeypatch) -> None:
+    async def no_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("opendisplay.device.api.asyncio.sleep", no_sleep)
+    fake = fake_transport(
+        [_version(3, 0), NO_CONFIG, IDENT_V3_NO_DISPLAY]
+        + _write_acks(ESP32_CONFIG)
+        + [OpenDisplayTimeoutError("silent")] * 20
+    )
+
+    async with opendisplay.connect(transport=fake) as dev:
+        with pytest.raises(OpenDisplayTimeoutError):
+            await dev.config.write(ESP32_CONFIG)
+
+
 def test_conflicting_addressing_is_rejected() -> None:  # Review Focus 5
     with pytest.raises(ValueError, match="exactly one addressing mode"):
         opendisplay.connect("AA:BB:CC:DD:EE:FF", host="10.0.0.5")
