@@ -14,8 +14,21 @@ from .config import DisplayConfig, GlobalConfig
 from .enums import ColorScheme, ICType
 from .firmware import FirmwareVersion
 from .ident import DeviceIdent, FirmwareTarget
+from .panel_drive import COLOR_SCHEME_INHERIT
 
 DEFAULT_MAX_CONFIG: Final = 4096  # config size limit assumed when the identity does not state one
+PARTIAL_MODE_NAME: Final = "partial"  # reserved mode name that enables partial updates on 3.0
+
+# The 3.0 partial rules below mirror Firmware_Unified f6d3a83 (2026-11-15); re-check them there.
+_PARTIAL_GEOMETRY_SCHEMES: Final = frozenset({ColorScheme.MONO})  # shared/core/od_color.c direct geometry
+# targets/esp32-idf/src/od_controller_esp.cpp from_packet(): a 0xB3 body the firmware accepts.
+_CONTROLLER_BODY_MIN: Final = 12
+_CONTROLLER_VERSION: Final = 0
+_CONTROLLER_IT8951: Final = 1
+_CONTROLLER_PARALLEL: Final = 2
+_PARALLEL_PANELS: Final = range(1, 4)  # Inkplate 5 V2, Inkplate 10, PaperS3
+_NATIVE_NO_PARTIAL_SCHEME: Final = 9  # GRAY8 (od_color.h), not a ColorScheme member
+_NO_FASTEPD_IC_TYPES: Final = frozenset({ICType.ESP32_C3, ICType.ESP32_C6})  # builds without FastEPD
 
 _TARGET_BY_IC_TYPE: Final[dict[int, FirmwareTarget]] = {
     ICType.NRF52840: FirmwareTarget.NRF52840,
@@ -35,6 +48,24 @@ class Generation(Enum):
 
 
 @dataclass(frozen=True)
+class ProfileMode:
+    """One drive mode of display 0, as declared by a 0xAE packet.
+
+    Attributes:
+        mode_index: The id a host names when starting a transfer in this mode.
+        name: The mode name, e.g. ``"full"``, ``"fast"``, ``"partial"``, ``"colour16"``.
+        color_scheme: The raw scheme value the mode renders, or ``None`` when it inherits the
+            display's (0x20) scheme. Mode-level schemes such as BWRY16 (10) live only here.
+        passes: Frames one transfer in this mode streams.
+    """
+
+    mode_index: int
+    name: str
+    color_scheme: int | None
+    passes: int
+
+
+@dataclass(frozen=True)
 class DeviceProfile:  # pylint: disable=too-many-instance-attributes
     """What the library knows about a connected device.
 
@@ -50,14 +81,22 @@ class DeviceProfile:  # pylint: disable=too-many-instance-attributes
             configured display has no drive packets.
         width: Display 0 of the config, else display record 0 of the identity, else ``None``.
         height: As ``width``.
-        color_scheme: As ``width``; the enum when known, the raw value when not.
+        color_scheme: As ``width``; the enum when known, the raw value when not. On 3.0 this is
+            the base scheme: the pixel format of mode 0, which every upload without a named
+            mode uses. A mode may render another scheme; see ``drive_modes``.
         rotation: Display 0 of the config, else ``None``.
         max_config: Largest config the device stores: the identity's value, else 4096.
-        supports_partial: Display 0 supports partial (0x76) updates.
+        supports_partial: Display 0 supports partial (0x76) updates. On 2.x, from the display's
+            0x20 flag. On 3.0, as the firmware decides it, without the 0x20 flag: on an ESP32
+            with a native controller driver (0xB3 IT8951 or parallel), any scheme but GRAY8;
+            otherwise a mode named "partial", no pending migration, a scheme with partial
+            geometry (MONO), and not an EFR32BG22. Not modelled: the "partial" mode's
+            temperature window. The device's refusal of a partial START stays authoritative.
         supports_pipe: Display 0 advertises PIPE_WRITE.
         supports_compression: Display 0 accepts compressed uploads (ZIP or streaming).
-        drive_modes: Names of the config's drive modes (0xAE), in ``mode_index`` order.
-        code_map: Logical colour index to panel code, from the first 0xB1 packet.
+        drive_modes: Display 0's drive modes (0xAE), in ``mode_index`` order; the first packet
+            per ``mode_index`` wins.
+        code_map: Logical colour index to panel code, from display 0's first 0xB1 packet.
     """
 
     generation: Generation
@@ -75,8 +114,13 @@ class DeviceProfile:  # pylint: disable=too-many-instance-attributes
     supports_partial: bool
     supports_pipe: bool
     supports_compression: bool
-    drive_modes: tuple[str, ...]
+    drive_modes: tuple[ProfileMode, ...]
     code_map: tuple[int, int, int, int] | None
+
+    @property
+    def drive_mode_names(self) -> tuple[str, ...]:
+        """The names of ``drive_modes``, in the same order."""
+        return tuple(mode.name for mode in self.drive_modes)
 
 
 def _color_scheme(raw: int) -> ColorScheme | int:
@@ -102,6 +146,55 @@ def _needs_migration(generation: Generation, config: GlobalConfig | None, ident:
     if config is None or not config.displays:
         return False
     return not config.display_modes and not config.display_controllers
+
+
+def _drive_modes(config: GlobalConfig | None, display: DisplayConfig | None) -> tuple[ProfileMode, ...]:
+    if config is None or display is None:
+        return ()
+    first: dict[int, ProfileMode] = {}
+    for mode in config.display_modes:
+        if mode.instance_number != display.instance_number or mode.mode_index in first:
+            continue
+        scheme = None if mode.color_scheme == COLOR_SCHEME_INHERIT else mode.color_scheme
+        first[mode.mode_index] = ProfileMode(mode.mode_index, mode.name, scheme, mode.passes)
+    return tuple(first[index] for index in sorted(first))
+
+
+def _native_controller(config: GlobalConfig, display: DisplayConfig) -> bool:
+    """Whether display 0 is driven by a built-in controller driver the firmware accepts."""
+    if config.system.ic_type in _NO_FASTEPD_IC_TYPES:
+        return False
+    body = next((p.body for p in config.display_controllers if p.body[:1] == bytes([display.instance_number])), None)
+    if body is None or len(body) < _CONTROLLER_BODY_MIN or body[1] != _CONTROLLER_VERSION:
+        return False
+    if body[2] == _CONTROLLER_PARALLEL:
+        return body[7] in _PARALLEL_PANELS
+    return body[2] == _CONTROLLER_IT8951
+
+
+def _supports_partial(  # pylint: disable=too-many-arguments
+    generation: Generation,
+    config: GlobalConfig | None,
+    display: DisplayConfig | None,
+    modes: tuple[ProfileMode, ...],
+    target: FirmwareTarget | int | None,
+    needs_migration: bool,
+) -> bool:
+    if config is None or display is None:
+        return False
+    if generation is Generation.V2:
+        return bool(display.partial_update_support)
+    # targets/esp32-idf/src/display_service.cpp od_xfer_app_panel_info(): a native driver enables
+    # partial whatever the modes say; otherwise partial_enabled needs a usable "partial" mode and
+    # no pending migration, and the geometry must allow partial. efr32bg22-slc never enables it.
+    if target == FirmwareTarget.ESP32 and _native_controller(config, display):
+        return display.color_scheme != _NATIVE_NO_PARTIAL_SCHEME
+    return (
+        any(mode.name.lower() == PARTIAL_MODE_NAME for mode in modes)
+        and not needs_migration
+        and display.color_scheme in _PARTIAL_GEOMETRY_SCHEMES
+        and target != FirmwareTarget.EFR32BG22
+    )
 
 
 def build_profile(
@@ -133,27 +226,29 @@ def build_profile(
         width, height = record.pixel_width, record.pixel_height
         color_scheme = _color_scheme(record.color_scheme)
 
-    drive_modes: tuple[str, ...] = ()
     code_map: tuple[int, int, int, int] | None = None
-    if config is not None:
-        drive_modes = tuple(m.name for m in sorted(config.display_modes, key=lambda m: m.mode_index))
-        panels = config.display_panels
-        code_map = panels[0].code_map if panels else None
+    if config is not None and display is not None:
+        code_map = next(
+            (p.code_map for p in config.display_panels if p.instance_number == display.instance_number), None
+        )
 
+    drive_modes = _drive_modes(config, display)
+    target = _target(config, ident)
+    needs_migration = _needs_migration(generation, config, ident)
     return DeviceProfile(
         generation=generation,
         firmware=firmware,
-        target=_target(config, ident),
+        target=target,
         ident=ident,
         ident_missing=ident_missing,
         configured=display is not None,
-        needs_migration=_needs_migration(generation, config, ident),
+        needs_migration=needs_migration,
         width=width,
         height=height,
         color_scheme=color_scheme,
         rotation=display.rotation if display is not None else None,
         max_config=ident.max_config if ident is not None and ident.max_config is not None else DEFAULT_MAX_CONFIG,
-        supports_partial=bool(display.partial_update_support) if display is not None else False,
+        supports_partial=_supports_partial(generation, config, display, drive_modes, target, needs_migration),
         supports_pipe=display.supports_pipe_write if display is not None else False,
         supports_compression=(
             display.supports_zip or display.supports_streaming_decompression if display is not None else False
