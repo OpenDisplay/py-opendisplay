@@ -14,9 +14,11 @@
 
 ## Decisions to confirm with the user
 
-1. **Restoring a 2.x backup that contains a key onto 3.0.** 3.0 adopts a 2.x key as the device key. Until piece 4 the library cannot open a SEC2 session, so the device would be locked until a factory reset. **Plan default: `migrate` refuses a config whose security packet has encryption enabled, unless `--drop-key` is given, which zeroes the key and clears `encryption_enabled`.** After piece 4 that refusal is replaced by the real key handover.
-2. **Panels marked `equivalent` (70 of 77) are offered with one extra confirmation; `glass` (7) without.** `equivalent` means the generated drive data replays byte-identically but nobody has seen it draw.
-3. **The database is vendored as package data** (about 0.8 MB of JSON). An update is a copy of the file plus a test run. Alternative if the size is a problem: ship it gzip-compressed.
+**Status 2026-11-16:** 1–3 settled (the user decided 3; the user delegated 1 and 2 to the plan author, whose answers are below). 4 is open until 3b starts.
+
+1. **Restoring a 2.x backup that carries secrets.** *(Corrected: an earlier text said 3.0 adopts a key from a config write and locks the device. It does not; the write is refused. See the spec's "Status and findings".)* An unclaimed 3.0 device refuses to store any secret (`[FF][41|42][10][00]`). **Decided:** `migrate --from-backup` refuses a backup that carries any secret unless `--strip-secrets` is given. Before connecting to write, it lists which secrets it found, never their values, and says why: "an unclaimed firmware 3.0 device does not store secrets; claim it first, then enter WiFi / FindMy settings again." The secrets are `SECURITY_V2.md` § 10.4's closed list: 0x27 key or `encryption_enabled`, 0x26 password, 0x2D key material. `--strip-secrets` zeroes the 0x27 key and `encryption_enabled`, zeroes every 0x26 password, and drops the 0x2D packet (the library keeps it raw), and says so. A migrate that reads the device's own config strips nothing, because stripping would delete the user's WiFi; the firmware accepts LEGACY_SECRETS WiFi/FindMy secrets back byte-identical. A refusal then arrives as a typed error (Task 0b). TODO for piece 4: claim first, then write the secrets in the session.
+2. **Panels marked `equivalent` (70 of 77) get one extra confirmation; `glass` (7) none.** **Decided as planned.** The prompt names the panel and its id and says in plain words what "equivalent" means: the drive data replays byte-identically to what 2.x sent, but nobody has watched this panel draw with it. `--yes-untested` skips the prompt; `--dry-run` always prints the verification level.
+3. **The database ships gzip-compressed** (`drive_presets.json.gz`, 32 KB instead of 809 KB; decided by the user). Load it with `gzip` from package data. `panels/SOURCE.md` records the `Web` commit and the sha256 of the uncompressed file, so an update can be verified.
 4. **Part 3b sends multi-pass frames only on targets where the firmware documents `0x0085`.** The header currently lists Silabs only ("Firmware/NRF54/NRF52811: pending"), although the status deck shows hardware runs on BG22 and nRF52840. Re-read the header's `@targets` line when 3b starts.
 
 ## Global Constraints
@@ -39,12 +41,25 @@
 
 ## Part 3a: database, planner, `backup-config` and `migrate`
 
+### Task 0a: Lenient read of a config without a display packet
+
+**Branch:** `feat/lenient-config-read`. Required by the 2b review: on 3.0 a stored config without 0x20 is a real state (the firmware stores a write as sent), and a repair must keep the other packets.
+
+- `parse_config_response(raw, *, require_display=True)`: one keyword on the existing function, not a second parser, so the two cannot drift. With `False`, a config without 0x20 parses to `displays=[]` and keeps every other packet. Only the display packet becomes optional. The strict error message stays byte-identical, because a 2b test pins it.
+- The facade gets one small internal reader that returns the assembled config bytes. `interrogate()` and `ConfigView` both use it. Do this as its own refactor commit first, and move something out of `facade.py` if the line limit needs it. `OpenDisplayDevice` stays strict.
+- `Device` and `ConfigView` use the lenient mode: `connect()` succeeds with `configured=False`, and `config.cached` holds the other packets. Update the 2b test `test_stored_config_without_displays_fails_the_connect_and_closes_the_link` accordingly, and assert the other packets are there.
+- `legacy.write_config()` keeps refusing a config without a display: a repair must add one.
+
+### Task 0b: Typed errors for the 3.0 config-write refusals
+
+Next to `ConfigWriteBusyError`, raised by `raise_for_config_write_refusal`: `ConfigSecretNeedsClaimError` (`[FF][41|42][10][00]`) and `ConfigKeyMismatchError` (`[FF][41|42][11][00]`). The values live in `shared/core/od_sec2_wire.h` (`OD_ERR_CONFIG_SECRET_NEEDS_CLAIM`, `OD_ERR_CONFIG_KEY_MISMATCH`), not yet in the protocol header's section 4g: mark them provisional in a comment. Tests from those frames, on the first chunk and on a later chunk.
+
 ### File Structure
 
 | File | Responsibility |
 |---|---|
 | `src/opendisplay/panels/__init__.py` | exports |
-| `src/opendisplay/panels/drive_presets.json` | vendored from `Web` `origin/v3/website` `httpdocs/firmware/toolbox/drive-presets.json`; record its source commit in `panels/SOURCE.md` |
+| `src/opendisplay/panels/drive_presets.json.gz` | vendored, gzip-compressed, from `Web` `origin/v3/website` `httpdocs/firmware/toolbox/drive-presets.json`; record its source commit and the uncompressed sha256 in `panels/SOURCE.md` |
 | `src/opendisplay/panels/database.py` | load and query the database |
 | `src/opendisplay/panels/migration.py` | `plan_migration`, `apply_migration`, `MigrationPlan` |
 | `src/opendisplay/cli_migrate.py` | the `backup-config` and `migrate` commands (new module: `cli.py` is near its line limit) |
@@ -100,7 +115,7 @@ def target_class_for(target: FirmwareTarget | int | None) -> TargetClass
 
 Port these `od-v3.js` functions and keep their names in the docstrings so the two stay comparable: `targetClassFromIdent`, `normalizeClass`, `driveView`, `entryFromGenerated`, `driveEntryFor`, `nativeControllerFor`, `panelNeedsDriveData`. Where the JSON gives per-class data (`targets`, `fits_target`), `entry_for` returns the view for the requested class, as `driveView` does.
 
-- [ ] **Step 1:** Branch. Copy the JSON file in; write `panels/SOURCE.md` with the `Web` commit and the file's `sources` block; add the file to the package data in `pyproject.toml` and confirm with `uv build` that the wheel contains it.
+- [ ] **Step 1:** Branch. Copy the JSON file in gzip-compressed (`drive_presets.json.gz`, decision 3); write `panels/SOURCE.md` with the `Web` commit, the sha256 of the uncompressed file and the file's `sources` block; add the file to the package data in `pyproject.toml` and confirm with `uv build` that the wheel contains it.
 
 - [ ] **Step 2: Write the failing tests** (`tests/unit/test_panel_database.py`):
 
@@ -186,6 +201,9 @@ def test_it8951_board_on_another_target_blocks():
 def test_panel_override_replaces_existing_drive_packets(): # panel_ic_type=... given: plan.remove holds the old drive packets
 def test_config_with_an_unparsed_tail_blocks():
 def test_no_config_and_no_panel_id_blocks():               # reason "no display configured"
+def test_config_without_a_display_blocks_even_with_a_panel_id():
+    # A display packet cannot be invented from a panel id: pins, size and bus wiring are
+    # board-specific. Blocked; the reason says so and points to a backup or the website toolbox.
 ```
 
 - [ ] **Step 2:** Run to see them fail. **Step 3:** Implement. **Step 4:** Verify, commit `feat: plan and apply the migration of a config to firmware 3.0 drive data`.
@@ -200,7 +218,7 @@ def test_no_config_and_no_panel_id_blocks():               # reason "no display 
 opendisplay backup-config FILE [--device/--host/--key ...]
     Like export-config, but refuses to overwrite an existing file and prints a warning that
     the file contains the key when it does.
-opendisplay migrate [--dry-run] [--from-backup FILE] [--panel ID] [--yes-untested] [--drop-key]
+opendisplay migrate [--dry-run] [--from-backup FILE] [--panel ID] [--yes-untested] [--strip-secrets]
     Without --from-backup: read the device's config, plan, show the plan, write, read back, compare.
     With --from-backup: use the file as the starting config (for a device whose config was erased).
 ```
@@ -208,21 +226,21 @@ opendisplay migrate [--dry-run] [--from-backup FILE] [--panel ID] [--yes-unteste
 Behaviour of `migrate`:
 1. Connect with `opendisplay.connect()`; print generation, target, configured, needs-migration from the profile.
 2. Plan. Print `plan.reason`. If not needed: exit 0. If blocked: exit 1.
-3. Refuse a starting config with encryption enabled unless `--drop-key` (Decision 1).
+3. With `--from-backup`: refuse a backup carrying any secret unless `--strip-secrets` (Decision 1), before writing. Say that the device's existing packets are replaced by the backup's, and list the packet types the device has that the backup lacks.
 4. If `plan.needs_confirmation` and not `--yes-untested`: ask "This panel's drive data has not been seen on a real panel. Continue?".
 5. With `--dry-run`: print the packets to add and remove, with sizes, and stop.
 6. Write through `dev.config.write()`, then `dev.config.read()` and compare the serialized bytes; report.
 
 Also add `Device.config.plan_migration(db=None)` to `device/api.py`, returning `plan_migration(self.cached, device.profile, db or PanelDatabase.load())`.
 
-- [ ] **Step 1: Write the failing tests** (`tests/unit/test_cli_migrate.py`) with a fake `Device`, as `tests/unit/test_cli_write_config.py` fakes `OpenDisplayDevice`: dry run writes nothing; a blocked plan exits 1 and writes nothing; an encrypted starting config is refused without `--drop-key` and written with a zero key with it; an `equivalent` panel is not written when the confirmation is declined; a read-back mismatch exits non-zero (Review Focus 5); `backup-config` refuses an existing file.
+- [ ] **Step 1: Write the failing tests** (`tests/unit/test_cli_migrate.py`) with a fake `Device`, as `tests/unit/test_cli_write_config.py` fakes `OpenDisplayDevice`: dry run writes nothing; a blocked plan exits 1 and writes nothing; a backup carrying secrets is refused without `--strip-secrets` (the message names the secrets, never their values) and written with the key, password and 0x2D stripped with it; the device's own config is written back with its secrets untouched; a 0x10 refusal surfaces as `ConfigSecretNeedsClaimError`; an `equivalent` panel is not written when the confirmation is declined; a read-back mismatch exits non-zero (Review Focus 5); `backup-config` refuses an existing file.
 
 - [ ] **Step 2–4:** fail, implement, verify, commit `feat(cli): add backup-config and migrate`.
 
 - [ ] **Step 5: Hardware — needs the user's go-ahead for each write.** Target: the E1002 `OD4064C9` (ESP32-S3, firmware 3.0.2, no config; Spectra 800x480, panel_ic_type 35; backup at `scratch/backup-OD4064C9-fw2.26.7.json`, which contains a key).
 
 ```bash
-uv run opendisplay migrate --device OD4064C9 --from-backup scratch/backup-OD4064C9-fw2.26.7.json --drop-key --dry-run
+uv run opendisplay migrate --device OD4064C9 --from-backup scratch/backup-OD4064C9-fw2.26.7.json --strip-secrets --dry-run
 ```
 
 Expected: a plan that adds the drive packets for panel 35 and reports whether that panel is `glass` or `equivalent`. Stop and show the plan to the user. With their go-ahead, run it without `--dry-run`. Then: `opendisplay info` shows a display and "Needs migration: no"; upload a test image with `opendisplay upload`; the user confirms what the panel shows. Record the result, including a wrong or blank image, in the ledger. If the upload START is refused, record the frame and stop.

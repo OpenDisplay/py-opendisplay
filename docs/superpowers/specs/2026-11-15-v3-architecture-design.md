@@ -370,9 +370,21 @@ Piece 2 was split: 2a is pure reading, 2b is `DeviceProfile` plus `opendisplay.c
 - **A 3.0.2 release image reports version 3.0.0 and an all-zero hash.** Do not rely on the
   patch byte on 3.0 yet.
 - **ESP32 `max_config` is 4,000 bytes** (the deck said 4,096). Read limits from the identity.
-- **Writing a 2.x config that contains a key to a 3.0 device is dangerous before SEC2 exists.**
-  3.0 adopts a 2.x key as the device key, and the library cannot open a SEC2 session yet. The
-  E1002's backup has such a key. Strip packet 0x27 before any test write, until piece 4.
+- **Writing a backup cannot lock a 3.0 device; it is refused.** *(Corrected 2026-11-16: an
+  earlier version of this bullet said 3.0 adopts a key from a config write. It does not.)*
+  `SECURITY_V2.md` § 10.3–10.5 and `od_cfg_policy.c` (Firmware_Unified f6d3a83): an **unclaimed**
+  device refuses a write carrying a 0x27 key or `encryption_enabled` with `[FF][41|42][10][00]`
+  (`OD_ERR_CONFIG_SECRET_NEEDS_CLAIM`), and a write carrying a 0x26 WiFi password or 0x2D key
+  material likewise. The one exception is a LEGACY_SECRETS device writing back WiFi/FindMy
+  secrets byte-identical to what it stores; a 0x27 key is refused even there. A **claimed** device
+  accepts a 0x27 key that is zero or equal to K_dev and refuses any other with `[FF][41|42][11][00]`
+  (`OD_ERR_CONFIG_KEY_MISMATCH`); a claimed write needs a SEC2 session anyway. The key is set only
+  by claim and rotation. A 2.x key is adopted in one place only: the first 3.0 boot of a device
+  whose encrypted 2.x config survived the upgrade in place (§ 10.5 b; BG22 and nRF52811), which
+  comes up claimed with K_dev = the old key and is usable only once SEC2 (piece 4) exists. To
+  restore a backup onto another or re-claimed device, zero the 0x27 key and `encryption_enabled`
+  first. The 0x10/0x11 values are in `shared/core/od_sec2_wire.h`, not yet in the protocol
+  header's section 4g: provisional.
 - **The Spectra boards redraw for about 30 seconds after a reset before they advertise.**
   Scripts that reset a board must wait or retry discovery.
 - **PR #198's packet layouts are the same in `Firmware_Unified`.** Calibration L*, a*, b* are
@@ -420,9 +432,16 @@ Piece 2 was split: 2a is pure reading, 2b is `DeviceProfile` plus `opendisplay.c
   display drive data only, so such a device reports `needs_migration=False`. Status 0x05 is the
   security-side signal ("use SEC2"). The fix is ordering: the version, READ_IDENT and SEC_STATUS
   are plaintext, so piece 4 must read them first, then pick the scheme, and map 0x05 to a typed
-  "needs SEC2" error. 3.0 adopts the 2.x key as its device key, so a stored key should keep
-  working over SEC2 (verify on hardware in piece 4). Two tests in `test_device_api.py` pin
+  "needs SEC2" error. A device upgraded in place with an encrypted 2.x config comes up claimed
+  with K_dev = its old key (§ 10.5 b), so a stored key should keep working over SEC2 (verify on
+  hardware in piece 4). Two tests in `test_device_api.py` pin
   today's failure.
+- **Future (no piece yet): a config missing system, manufacturer or power.** `GlobalConfig` types
+  those as required and much of the library reads them unguarded, so making them optional is a
+  typing change across the code base, not a parser flag. The status deck's "Core profile" for
+  third-party firmware says a device must only provide 0x20: the opposite gap of the one 3a
+  handles (0x20 present, the rest missing) will need handling one day. 3a makes only the display
+  packet optional.
 - **For piece 6:** `connect()` does not yet pass `max_attempts`, `use_services_cache`,
   `discovery_timeout`, `blocks_per_ack`, `max_queue_size` or `use_measured_palettes` through.
   Home Assistant passes none of them today.

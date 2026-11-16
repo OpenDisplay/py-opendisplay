@@ -53,9 +53,10 @@ This is where the earlier pieces needed judgment, and where a wrong guess is exp
 Ask before doing any of these, every time:
 
 - flashing firmware, or anything that erases a device's config;
-- writing a config that contains an encryption key to a firmware 3.0 device (3.0 adopts a 2.x
-  key as its device key; until SEC2 support exists the library cannot open a session, and the
-  device needs a factory reset);
+- upgrading an encrypted 2.x device to firmware 3.0 in place: it comes up claimed with its old
+  key, usable only once SEC2 support (piece 4) exists. (Writing a backup that carries secrets
+  cannot lock a 3.0 device; it is refused with 0x10 or 0x11, see the spec's "Status and findings".)
+  Still never write a config carrying secrets to a device without the user's go-ahead;
 - a Bluetooth firmware update on an EFR32BG22 tag (no USB port; recovery needs a debugger);
 - pushing, opening or merging a pull request.
 
