@@ -567,3 +567,32 @@ def test_strip_secrets_needs_from_backup(
     assert exit_info.value.code == 2
     assert "--from-backup" in capsys.readouterr().err
     assert calls == []
+
+
+def test_own_config_whose_security_packet_the_device_normalises_still_verifies(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Seen on OD58D951 (3.0.2, unclaimed): its own config kept 0x27 flags 0x02 from 0.25, and the
+    # device stores every 0x27 in the unclaimed form, so the bytes read back differ in 0x27 only.
+    security = _security(encryption_enabled=0, encryption_key=bytes(16), flags=0x02)
+    device = _device(_plain(panel=GLASS_PANEL, security_config=security))
+    _patch(monkeypatch, device)
+
+    _migrate()
+
+    err = " ".join(capsys.readouterr().err.split())
+    assert "verified" in err
+    assert "security packet" in err
+
+
+def test_a_difference_outside_the_security_packet_still_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    device = _device(
+        _plain(panel=GLASS_PANEL, security_config=_security(encryption_enabled=0, encryption_key=bytes(16)))
+    )
+    device.stored_after_write = _plain(panel=GLASS_PANEL, security_config=device.config.cached.security_config)  # type: ignore[union-attr]
+    _patch(monkeypatch, device)
+
+    with pytest.raises(SystemExit) as exit_info:
+        _migrate()
+
+    assert exit_info.value.code == 1

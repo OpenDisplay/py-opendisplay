@@ -320,9 +320,17 @@ async def _write_and_verify(dev: Any, config: GlobalConfig) -> None:
     await dev.config.write(config)
     stored = await dev.config.read()
     expected, actual = serialize_config(config), serialize_config(stored)
-    if actual != expected:
+    if _without_security(stored) != _without_security(config):
         _error(
             f"The config read back ({len(actual)} bytes) does not match what was written ({len(expected)} bytes). "
             "Keep your backup; the write may have been interrupted."
         )
+    if actual != expected:
+        # The firmware rewrites 0x27 on store: unclaimed_form on an unclaimed device, the key at
+        # rest on a claimed one (od_cfg_policy.c), so the security packet is compared apart.
+        _console.print("The device stored the security packet (0x27) in its own form; everything else matches.")
     _console.print(f"Config written and verified ({len(expected)} bytes).")
+
+
+def _without_security(config: GlobalConfig) -> bytes:
+    return serialize_config(dataclasses.replace(config, security_config=None))
