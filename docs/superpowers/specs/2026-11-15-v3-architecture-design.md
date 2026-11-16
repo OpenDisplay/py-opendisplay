@@ -398,6 +398,22 @@ Piece 2 was split: 2a is pure reading, 2b is `DeviceProfile` plus `opendisplay.c
   database can mark it. The device answers nothing for about 30 s after a config write while it
   redraws; `Device.config.write()` retries its read-back for about 90 s.
 
+- **Piece 3b proven on glass (2026-11-16).** Named drive modes through `CMD_DRIVE_WRITE_START`
+  (0x0085):
+  - E1002 (ESP32, 3.0.2), mode `full`, compressed START: answered in 1.1 s (mode 0, 1 pass,
+    25 °C), END acknowledged at once, panel refresh 32.9 s.
+  - OD58D951 (BG22, 3.0.2), mode `colour16`, uncompressed START: answered in 0.9 s (mode 1,
+    3 passes, 30 °C). The pass boundaries showed as data-chunk acknowledgements that waited
+    20.3 s and 2.1 s; END at once, final refresh 2.0 s; 16 distinct swatches on glass.
+  - A red/yellow image in the default mode was still correct after the host started applying
+    `code_map`.
+  - The measured waits sit well inside the website's timeout rule (data 90 s, START with
+    inline data 10 s + max(90 s, (passes-1) x 45 s), END max(90 s, passes x 45 s)), which stays.
+- **The 0x0085 `@targets` line in `opendisplay_protocol.h` is stale.** It says "Silabs
+  (Firmware/NRF54/NRF52811: pending)", but the ESP32 and nordic builds set
+  `OD_CAP_DRIVE_WRITE=1` (`shared/core/od_cmd_drive.c`, also at release a519151), and the E1002
+  accepted the command. Worth reporting upstream.
+
 ### Facts learned from the firmware sources in piece 2b
 
 - **Two levels of colour scheme on 3.0** (`docs/CONFIG_DRIVEN_DISPLAY.md` "Mode conventions").
