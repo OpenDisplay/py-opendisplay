@@ -200,3 +200,20 @@ def test_fit_check_names_the_limit() -> None:
     problems = check_drive_packets_fit(entry.packets, TargetClass.DEFAULT, max_steps=3)
 
     assert problems and all("limit 3" in p for p in problems if "steps" in p)
+
+
+def test_nrf52811_panel_for_a_2x_firmware_nrf_id() -> None:
+    assert DB.nrf52811_panel_for(1001) == 0xE002
+    assert DB.nrf52811_panel_for(1016) == 0xE011
+    assert DB.nrf52811_panel_for(1002) is None  # no preset
+    assert DB.nrf52811_panel_for(0x0001) is None  # not a Firmware_NRF 2.x id
+
+
+def test_nrf52811_panel_for_prefers_entries_derived_from_the_2x_driver() -> None:
+    def panel(model_id: int | None) -> dict:
+        legacy = {"panel_ic_type": 1001, **({"model_id": model_id} if model_id is not None else {})}
+        return {"name": "P", "status": "glass", "legacy": legacy, "packets": [_PANEL_PACKET]}
+
+    db = PanelDatabase(_doc({}), {TargetClass.NRF52811: _doc({"0xE001": panel(None), "0xE005": panel(4)})})
+
+    assert db.nrf52811_panel_for(1001) == 0xE005
