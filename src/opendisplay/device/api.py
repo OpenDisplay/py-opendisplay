@@ -7,12 +7,14 @@ up, the identity, and builds a ``DeviceProfile`` from them.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
-from ..exceptions import IdentNotSupportedError, InvalidResponseError, NoStoredConfigError
+from ..exceptions import IdentNotSupportedError, InvalidResponseError, NoStoredConfigError, OpenDisplayTimeoutError
 from ..models.profile import DeviceProfile, build_profile
+from ..panels import MigrationPlan, PanelDatabase, plan_migration
 from ..protocol.config_parser import parse_config_response
 from .facade import OpenDisplayDevice
 
@@ -24,6 +26,11 @@ if TYPE_CHECKING:
     from ..transport.base import Transport
 
 _LOGGER = logging.getLogger(__name__)
+
+# Spectra and some other panels redraw for about 30 s after a config write and answer nothing
+# meanwhile; the read-back waits up to about 90 s for them before it gives up.
+_REDRAW_WAIT_S = 10.0
+_REDRAW_RETRIES = 9
 
 _IDENT_MIN_MAJOR = 3  # earlier firmware is silent on READ_IDENT and would cost every connect its timeout
 
@@ -74,10 +81,30 @@ class ConfigView:
         self._cached = config
         return config
 
+    def plan_migration(self, db: PanelDatabase | None = None) -> MigrationPlan:
+        """What the cached config needs before a firmware 3.0 device can draw (no I/O)."""
+        return plan_migration(self.cached, self._device.profile, db or PanelDatabase.load())
+
     async def write(self, config: GlobalConfig) -> None:
-        """Write ``config`` to the device, then refresh the profile from the device."""
+        """Write ``config`` to the device, then refresh the profile from the device.
+
+        The device may redraw its panel after storing a config (Spectra panels take about 30 s)
+        and answers nothing meanwhile, so the read-back is retried for about 90 s.
+
+        Raises:
+            OpenDisplayTimeoutError: The device stayed silent after the write. The write itself
+                was acknowledged; only the read-back is missing.
+        """
         await self._device.legacy.write_config(config)
-        await self._device.refresh()
+        for attempt in range(_REDRAW_RETRIES + 1):
+            try:
+                await self._device.refresh()
+                return
+            except OpenDisplayTimeoutError:
+                if attempt == _REDRAW_RETRIES:
+                    raise
+                _LOGGER.info("Device silent after the config write (redrawing?); retrying in %.0f s", _REDRAW_WAIT_S)
+                await asyncio.sleep(_REDRAW_WAIT_S)
 
 
 class Device:
