@@ -8,6 +8,7 @@ a refused config write is ``[FF][41|42][01][00]`` while a display pass is runnin
 from __future__ import annotations
 
 import zlib
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -17,13 +18,18 @@ from test_pipe_write import ScriptedConn, make_config, make_device, make_region,
 
 from opendisplay import OpenDisplayDevice, PartialState, RefreshMode
 from opendisplay.exceptions import (
+    ConfigKeyMismatchError,
+    ConfigSecretNeedsClaimError,
     ConfigWriteBusyError,
     InvalidResponseError,
     NeedsMigrationError,
     PanelBusyError,
+    ProtocolError,
 )
 from opendisplay.models.capabilities import DeviceCapabilities
 from opendisplay.models.enums import ColorScheme
+from opendisplay.protocol import serialize_config
+from opendisplay.protocol.config_parser import parse_config_response
 
 ZIP_ONLY = 0x02  # no pipe bit: uploads go straight to DIRECT_WRITE
 ZIP_AND_PIPE = 0x12
@@ -176,3 +182,46 @@ async def test_config_write_other_refusal_is_unchanged() -> None:
 
     with pytest.raises(InvalidResponseError):
         await dev.write_config(make_config())
+
+
+# ─── Config write refused by firmware 3.0 security (SECURITY_V2.md § 10.3, § 10.4) ────────────
+# [FF][41|42][err][00]; 0x10 / 0x11 from Firmware_Unified f6d3a83 shared/core/od_sec2_wire.h.
+
+_BG22_CONFIG = parse_config_response(
+    (Path(__file__).parent.parent / "fixtures" / "configs" / "bg22_alpha_drive_packets.bin").read_bytes()
+)
+
+
+async def test_unclaimed_device_refusing_secrets_raises_secret_needs_claim() -> None:
+    dev, _ = make_device([bytes.fromhex("ff411000")])
+
+    with pytest.raises(ConfigSecretNeedsClaimError, match="claim"):
+        await dev.write_config(make_config())
+
+
+async def test_secret_refusal_on_the_last_chunk_of_a_chunked_write() -> None:
+    chunks = -(-len(serialize_config(_BG22_CONFIG)) // 200)
+    dev, _ = make_device([bytes.fromhex("0041")] + [bytes.fromhex("0042")] * (chunks - 2) + [bytes.fromhex("ff421000")])
+
+    with pytest.raises(ConfigSecretNeedsClaimError):
+        await dev.write_config(_BG22_CONFIG)
+
+
+async def test_claimed_device_refusing_another_key_raises_key_mismatch() -> None:
+    dev, _ = make_device([bytes.fromhex("ff411100")])
+
+    with pytest.raises(ConfigKeyMismatchError, match="key"):
+        await dev.write_config(make_config())
+
+
+async def test_key_mismatch_on_a_later_chunk() -> None:
+    dev, _ = make_device([bytes.fromhex("0041"), bytes.fromhex("ff421100")])
+
+    with pytest.raises(ConfigKeyMismatchError):
+        await dev.write_config(_BG22_CONFIG)
+
+
+def test_new_config_write_refusals_are_protocol_errors() -> None:
+    assert issubclass(ConfigSecretNeedsClaimError, ProtocolError)
+    assert issubclass(ConfigKeyMismatchError, ProtocolError)
+    assert not issubclass(ConfigSecretNeedsClaimError, ConfigWriteBusyError)  # not transient

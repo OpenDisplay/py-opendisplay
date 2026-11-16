@@ -9,11 +9,14 @@ from ..exceptions import (
     AuthenticationFailedError,
     AuthenticationRequiredError,
     AuthenticationSessionExistsError,
+    ConfigKeyMismatchError,
+    ConfigSecretNeedsClaimError,
     ConfigWriteBusyError,
     InvalidResponseError,
     NeedsMigrationError,
     NfcWriteError,
     PanelBusyError,
+    ProtocolError,
 )
 from ..models.firmware import FirmwareVersion
 from ..models.ident import DeviceIdent, FirmwareTarget, IdentDisplay
@@ -363,6 +366,10 @@ UPLOAD_START_NACK_NEEDS_MIGRATION = 0x08
 UPLOAD_START_NACK_PANEL_BUSY = 0x09
 # Config write refusal (section 4g): nothing was stored, a display pass was reading the config.
 CONFIG_WRITE_NACK_BUSY = 0x01
+# Firmware 3.0 security refusals (SECURITY_V2.md § 10.3/10.4). Provisional: defined in
+# Firmware_Unified shared/core/od_sec2_wire.h, not yet in the protocol header's section 4g.
+CONFIG_WRITE_NACK_SECRET_NEEDS_CLAIM = 0x10
+CONFIG_WRITE_NACK_KEY_MISMATCH = 0x11
 
 _UPLOAD_START_OPCODES = (
     CommandCode.DIRECT_WRITE_START & 0xFF,
@@ -392,17 +399,28 @@ def raise_for_upload_start_refusal(opcode: int, err: int) -> None:
         raise PanelBusyError()
 
 
+_CONFIG_WRITE_REFUSALS: dict[int, type[ProtocolError]] = {
+    CONFIG_WRITE_NACK_BUSY: ConfigWriteBusyError,
+    CONFIG_WRITE_NACK_SECRET_NEEDS_CLAIM: ConfigSecretNeedsClaimError,
+    CONFIG_WRITE_NACK_KEY_MISMATCH: ConfigKeyMismatchError,
+}
+
+
 def raise_for_config_write_refusal(response: bytes) -> None:
-    """Raise ConfigWriteBusyError for ``[FF][41|42][01][00]``; return for anything else."""
+    """Raise the typed error for a config write refusal ``[FF][41|42][err][00]`` that names its reason.
+
+    Raises:
+        ConfigWriteBusyError: err 0x01
+        ConfigSecretNeedsClaimError: err 0x10
+        ConfigKeyMismatchError: err 0x11
+
+    Any other frame returns, so the caller's existing handling applies.
+    """
     opcodes = (CommandCode.WRITE_CONFIG & 0xFF, CommandCode.WRITE_CONFIG_CHUNK & 0xFF)
-    if (
-        len(response) == 4
-        and response[0] == 0xFF
-        and response[1] in opcodes
-        and response[2] == CONFIG_WRITE_NACK_BUSY
-        and response[3] == 0x00
-    ):
-        raise ConfigWriteBusyError()
+    if len(response) == 4 and response[0] == 0xFF and response[1] in opcodes and response[3] == 0x00:
+        error = _CONFIG_WRITE_REFUSALS.get(response[2])
+        if error is not None:
+            raise error()
 
 
 _IDENT_HEADER_LEN = 5  # echo:2 + proto_minor + fw_target + display_count
