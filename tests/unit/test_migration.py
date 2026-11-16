@@ -298,3 +298,14 @@ def test_naming_the_configured_panel_rewrites_its_drive_data() -> None:
 
     assert (plan.needed, plan.blocked, plan.remap_panel_ic_type) == (True, False, None)
     assert plan.remove == tuple(config.length_prefixed_packets)
+
+
+def test_a_block_without_an_identity_says_the_restrictive_class_was_assumed() -> None:  # review M5
+    config = _esp32(panel_ic_type=768)
+    unknown = dataclasses.replace(build_profile(FW3, config, None), target=None)
+
+    plan = plan_migration(config, unknown, DB)
+
+    assert plan.blocked and plan.target_class is TargetClass.BG22
+    assert "identity could not be read" in plan.reason
+    assert "identity" not in plan_migration(config, build_profile(FW3, config, None), DB).reason

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +64,19 @@ class _FakeConfigView:
         if self._device.write_error is not None:
             raise self._device.write_error
         self._device.written.append(config)
-        self.cached = self._device.stored_after_write or config
+        stored = self._device.stored_after_write or config
+        if self._device.unclaimed and stored.security_config is not None:
+            # od_cfg_policy.c unclaimed_form: what an unclaimed 3.0 device stores for every 0x27.
+            sec = stored.security_config
+            sec = dataclasses.replace(
+                sec,
+                encryption_enabled=0,
+                encryption_key=bytes(16),
+                flags=sec.flags & ~0x02,
+                reserved=bytes(1) + sec.reserved[1:],
+            )
+            stored = dataclasses.replace(stored, security_config=sec)
+        self.cached = stored
 
     async def read(self) -> GlobalConfig:
         assert self.cached is not None
@@ -80,6 +95,7 @@ class _FakeDevice:
         self.written: list[GlobalConfig] = []
         self.write_error: Exception | None = None
         self.stored_after_write: GlobalConfig | None = None
+        self.unclaimed = True
 
     async def __aenter__(self) -> _FakeDevice:
         return self
@@ -277,7 +293,7 @@ def test_backup_with_secrets_is_refused_before_connecting(
 def test_strip_secrets_writes_the_backup_without_them(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    findmy = bytes([0, 0x2D]) + bytes(range(128))
+    findmy = bytes([0, 0x2D]) + bytes(range(1, 129))
     backup = _backup(
         tmp_path,
         _plain(panel=GLASS_PANEL, security_config=_security(), wifi_config=_wifi(), findmy_config_raw=findmy),
@@ -294,7 +310,10 @@ def test_strip_secrets_writes_the_backup_without_them(
     assert written.security_config.flags & 0x02 == 0 and written.security_config.reserved[0] == 0
     assert written.wifi_config is not None and written.wifi_config.password == bytes(32)
     assert written.wifi_config.ssid == _wifi().ssid
-    assert written.findmy_config_raw is None
+    assert written.findmy_config_raw is not None  # FindMy settings kept, only the key fields zeroed
+    body = written.findmy_config_raw[2:]
+    assert body[8:40] == bytes(32) and body[40:68] == bytes(28) and body[76:96] == bytes(20)
+    assert body[:8] == bytes(range(1, 9)) and body[68:76] == bytes(range(69, 77)) and body[96:] == bytes(range(97, 129))
     assert written.length_prefixed_packets == list(DB.entry_for(GLASS_PANEL, TargetClass.DEFAULT).packets)  # type: ignore[union-attr]
     err = " ".join(capsys.readouterr().err.split())
     assert "encryption key" in err and "FindMy" in err
@@ -429,3 +448,151 @@ def test_a_key_without_the_enable_flag_is_still_a_secret() -> None:
         cli_migrate.find_secrets(_plain(security_config=_security(encryption_enabled=0, encryption_key=bytes(16))))
         == []
     )
+
+
+# ── review fixes (piece 3a review, I1 I2 M1 M7 M8 M9) ─────────────────────────
+
+ALPHA = Path(__file__).parent.parent / "fixtures" / "configs" / "bg22_alpha_drive_packets.bin"
+
+
+def _alpha_config() -> GlobalConfig:
+    from opendisplay.protocol.config_parser import parse_config_response
+
+    return parse_config_response(ALPHA.read_bytes())
+
+
+def test_already_migrated_backup_is_restored_to_a_device_without_config(  # I1
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    backup_config = _alpha_config()
+    device = _device(None, ident=None)  # no needs-migration flag: the backup's drive data is kept
+    _patch(monkeypatch, device)
+
+    # The fixture's key is zeroed but encryption_enabled is 1, which the firmware counts as a secret.
+    _migrate("--from-backup", str(_backup(tmp_path, backup_config)), "--strip-secrets")
+
+    err = " ".join(capsys.readouterr().err.split())
+    assert len(device.written) == 1
+    assert device.written[0].length_prefixed_packets == backup_config.length_prefixed_packets
+    assert "verified" in err
+
+
+def test_backup_the_device_already_stores_is_not_written_again(  # I1
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from opendisplay.models.config_json import config_from_json
+
+    path = _backup(tmp_path, _alpha_config())
+    stored = cli_migrate.strip_secrets(config_from_json(json.loads(path.read_text())))
+    device = _device(stored, ident=None)
+    _patch(monkeypatch, device)
+
+    _migrate("--from-backup", str(path), "--strip-secrets")
+
+    assert device.written == []
+    assert "already stored, nothing written" in " ".join(capsys.readouterr().err.split())
+
+
+def test_backup_of_a_panel_without_drive_data_is_still_restored(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:  # I1
+    device = _device(None)
+    _patch(monkeypatch, device)
+
+    _migrate("--from-backup", str(_backup(tmp_path, _plain(panel=1500))))
+
+    assert len(device.written) == 1
+
+
+def test_backup_security_packet_is_written_in_the_unclaimed_form(  # I2
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    security = _security(encryption_enabled=0, encryption_key=bytes(16), flags=0x02 | 0x04)  # not a secret
+    device = _device(None)
+    _patch(monkeypatch, device)
+
+    _migrate("--from-backup", str(_backup(tmp_path, _plain(panel=GLASS_PANEL, security_config=security))))
+
+    written = device.written[0].security_config
+    assert written is not None and written.flags == 0x04
+    err = " ".join(capsys.readouterr().err.split())
+    assert "verified" in err and "unclaimed" in err
+
+
+def test_findmy_without_key_material_is_not_a_secret() -> None:  # M1
+    findmy = bytes([0, 0x2D]) + bytes(8) + bytes(32) + bytes(28) + b"\x05" * 8 + bytes(20) + b"\x01" * 32
+    assert cli_migrate.find_secrets(_plain(findmy_config_raw=findmy)) == []
+    keyed = findmy[: 2 + 8] + b"\x01" + findmy[2 + 9 :]
+    assert cli_migrate.find_secrets(_plain(findmy_config_raw=keyed)) == ["FindMy keys"]
+
+
+def test_every_findmy_packet_is_checked_and_stripped() -> None:  # M1
+    clean = bytes([0, 0x2D]) + bytes(128)
+    keyed = bytes([1, 0x2D]) + bytes(76) + b"\x09" * 20 + bytes(32)
+    config = _plain(findmy_config_raw=clean + keyed)
+
+    assert cli_migrate.find_secrets(config) == ["FindMy keys"]
+    stripped = cli_migrate.strip_secrets(config).findmy_config_raw
+    assert stripped == clean + bytes([1, 0x2D]) + bytes(128)
+
+
+def test_backup_file_is_private(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:  # M9
+    _patch(monkeypatch, _device(_plain(security_config=_security())))
+    path = tmp_path / "backup.json"
+
+    _backup_cmd(path)
+
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
+def test_blocked_reason_is_printed_once(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:  # M7
+    _patch(monkeypatch, _device(_plain(panel=768)))
+
+    with pytest.raises(SystemExit):
+        _migrate()
+
+    assert " ".join(capsys.readouterr().err.split()).count("panel_ic_type 768") == 1
+
+
+def test_strip_secrets_needs_from_backup(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:  # M8
+    calls = _patch(monkeypatch, _device(_plain()))  # never a real connect, even if the check is missing
+
+    with pytest.raises(SystemExit) as exit_info:
+        _migrate("--strip-secrets")
+
+    assert exit_info.value.code == 2
+    assert "--from-backup" in capsys.readouterr().err
+    assert calls == []
+
+
+def test_own_config_whose_security_packet_the_device_normalises_still_verifies(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Seen on OD58D951 (3.0.2, unclaimed): its own config kept 0x27 flags 0x02 from 0.25, and the
+    # device stores every 0x27 in the unclaimed form, so the bytes read back differ in 0x27 only.
+    security = _security(encryption_enabled=0, encryption_key=bytes(16), flags=0x02)
+    device = _device(_plain(panel=GLASS_PANEL, security_config=security))
+    _patch(monkeypatch, device)
+
+    _migrate()
+
+    err = " ".join(capsys.readouterr().err.split())
+    assert "verified" in err
+    assert "security packet" in err
+
+
+def test_a_difference_outside_the_security_packet_still_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    device = _device(
+        _plain(panel=GLASS_PANEL, security_config=_security(encryption_enabled=0, encryption_key=bytes(16)))
+    )
+    device.stored_after_write = _plain(panel=GLASS_PANEL, security_config=device.config.cached.security_config)  # type: ignore[union-attr]
+    _patch(monkeypatch, device)
+
+    with pytest.raises(SystemExit) as exit_info:
+        _migrate()
+
+    assert exit_info.value.code == 1
