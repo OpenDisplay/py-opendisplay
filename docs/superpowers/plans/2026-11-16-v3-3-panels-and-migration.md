@@ -1,0 +1,252 @@
+# Piece 3: Panel Database, Migration and Drive Modes — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Read `EXECUTOR_RULES.md` in this folder first.
+
+**Goal:** Give a firmware 3.0 device a config it can draw with, from a 2.x config or from nothing, and then use what that config declares: the panel's colour code map and its named drive modes.
+
+**Architecture:** A vendored copy of the firmware's generated panel database (`drive-presets.json`) is loaded by a small pure module. A pure planner decides which packets to add and remove (a port of `planMigration` in the website's `od-v3.js`), and a pure function applies the plan to a `GlobalConfig`. Device access goes through `Device.config` from piece 2b. Drive modes are a second, separate part (3b).
+
+**Tech Stack:** Python 3.13, `uv`, pytest, ruff, mypy strict, pylint, prek.
+
+**Spec:** `../specs/2026-11-15-v3-architecture-design.md`. Reference code: `Web` repo `origin/v3/website`, `httpdocs/js/od-v3.js` (functions named below) and `httpdocs/firmware/toolbox/drive-presets.json`. Firmware: `docs/CONFIG_DRIVEN_DISPLAY.md`, `panels/README.md`.
+
+**Depends on:** pieces 2a and 2b merged.
+
+## Decisions to confirm with the user
+
+1. **Restoring a 2.x backup that contains a key onto 3.0.** 3.0 adopts a 2.x key as the device key. Until piece 4 the library cannot open a SEC2 session, so the device would be locked until a factory reset. **Plan default: `migrate` refuses a config whose security packet has encryption enabled, unless `--drop-key` is given, which zeroes the key and clears `encryption_enabled`.** After piece 4 that refusal is replaced by the real key handover.
+2. **Panels marked `equivalent` (70 of 77) are offered with one extra confirmation; `glass` (7) without.** `equivalent` means the generated drive data replays byte-identically but nobody has seen it draw.
+3. **The database is vendored as package data** (about 0.8 MB of JSON). An update is a copy of the file plus a test run. Alternative if the size is a problem: ship it gzip-compressed.
+4. **Part 3b sends multi-pass frames only on targets where the firmware documents `0x0085`.** The header currently lists Silabs only ("Firmware/NRF54/NRF52811: pending"), although the status deck shows hardware runs on BG22 and nRF52840. Re-read the header's `@targets` line when 3b starts.
+
+## Global Constraints
+
+- Everything in `EXECUTOR_RULES.md`.
+- **Never write to a device in an automated test run.** Every hardware write in this plan is its own step and needs the user's go-ahead.
+- Raw bytes stay the source: migration adds and removes whole packets; it never edits inside a drive packet.
+- Legacy packets (`0x00`–`0x7F`) of a migrated config are written back byte for byte, except the one field `panel_ic_type` in `0x20` when the planner remaps it (nRF52811 only).
+- Length-prefixed packets go after every legacy packet (the serializer already does this).
+
+## Review Focus
+
+1. **A panel id with no database entry.** The plan must come back `blocked` with a reason; nothing is written.
+2. **A database entry that does not fit the device's limits** (`max_config`, `max_seq_steps`, a required escape the device lacks). Blocked, with the limit named. Use the identity's limits, not the per-class table, when an identity exists.
+3. **A config that already has drive data.** No migration, no write, and the reason says so; running `migrate` twice is harmless.
+4. **A board with a built-in controller (IT8951, parallel).** It needs one `0xB3` packet and no `0xAE`–`0xB1`. The E1003 is such a board. ESP32 only: on any other target the plan is blocked.
+5. **Interrupted write.** `migrate` reads the config back after writing and compares; a mismatch is reported with both sizes and the command exits non-zero. The backup file is never deleted.
+
+---
+
+## Part 3a: database, planner, `backup-config` and `migrate`
+
+### File Structure
+
+| File | Responsibility |
+|---|---|
+| `src/opendisplay/panels/__init__.py` | exports |
+| `src/opendisplay/panels/drive_presets.json` | vendored from `Web` `origin/v3/website` `httpdocs/firmware/toolbox/drive-presets.json`; record its source commit in `panels/SOURCE.md` |
+| `src/opendisplay/panels/database.py` | load and query the database |
+| `src/opendisplay/panels/migration.py` | `plan_migration`, `apply_migration`, `MigrationPlan` |
+| `src/opendisplay/cli_migrate.py` | the `backup-config` and `migrate` commands (new module: `cli.py` is near its line limit) |
+| `tests/unit/test_panel_database.py`, `test_migration.py`, `test_cli_migrate.py` | tests |
+
+### Task 1: The panel database
+
+**Branch:** `feat/panel-database`
+
+**Interfaces:**
+- Produces:
+
+```python
+class TargetClass(Enum):            # which limits apply; mirrors od-v3.js targetClassFromIdent / normalizeClass
+    DEFAULT = "default"             # ESP32, nRF52840, nRF54
+    BG22 = "bg22"
+    NRF52811 = "nrf52811"
+
+@dataclass(frozen=True)
+class PanelEntry:
+    panel_ic_type: int
+    name: str
+    width: int
+    height: int
+    color_scheme: int
+    verified: str                               # "glass" or "equivalent"
+    packets: tuple[LengthPrefixedPacket, ...]   # the drive packets for this target class
+    drive_bytes: int
+    requires_escapes: tuple[str, ...]
+    blocked_reason: str | None                  # not None when the entry cannot be used on this class
+    @property
+    def usable(self) -> bool
+
+@dataclass(frozen=True)
+class NativeController:                          # boards with a built-in controller driver (0xB3)
+    panel_ic_type: int
+    name: str
+    board: str
+    controller_class: str
+    packets: tuple[LengthPrefixedPacket, ...]
+
+class PanelDatabase:
+    schema_minor: int
+    caps: Mapping[str, int]                      # the file's "caps"
+    @classmethod
+    def load(cls, path: Path | None = None) -> PanelDatabase      # None: the vendored file
+    def entry_for(self, panel_ic_type: int, target_class: TargetClass) -> PanelEntry | None
+    def native_controller_for(self, panel_ic_type: int) -> NativeController | None
+    def needs_drive_data(self, panel_ic_type: int) -> bool         # port of panelNeedsDriveData
+
+def target_class_for(target: FirmwareTarget | int | None) -> TargetClass
+```
+
+Port these `od-v3.js` functions and keep their names in the docstrings so the two stay comparable: `targetClassFromIdent`, `normalizeClass`, `driveView`, `entryFromGenerated`, `driveEntryFor`, `nativeControllerFor`, `panelNeedsDriveData`. Where the JSON gives per-class data (`targets`, `fits_target`), `entry_for` returns the view for the requested class, as `driveView` does.
+
+- [ ] **Step 1:** Branch. Copy the JSON file in; write `panels/SOURCE.md` with the `Web` commit and the file's `sources` block; add the file to the package data in `pyproject.toml` and confirm with `uv build` that the wheel contains it.
+
+- [ ] **Step 2: Write the failing tests** (`tests/unit/test_panel_database.py`):
+
+```python
+def test_database_loads_and_declares_its_schema():
+    db = PanelDatabase.load()
+    assert db.schema_minor >= 3 and db.caps["max_steps"] == 128
+
+def test_known_panel_has_drive_packets_that_start_with_the_panel_packet():
+    entry = PanelDatabase.load().entry_for(0x0001, TargetClass.DEFAULT)
+    assert entry.name == "EP42_400x300" and entry.usable
+    assert entry.packets[0].packet_type == 0xB1
+    assert {p.packet_type for p in entry.packets} <= {0xAE, 0xAF, 0xB0, 0xB1}
+
+def test_every_usable_entry_decodes_with_the_library_models():
+    # for each panel and each TargetClass: build a GlobalConfig carrying entry.packets, and assert
+    # display_panels and display_modes decode, mode 0 exists, and every LUT has crc_valid
+def test_unknown_panel_has_no_entry():                                   # Review Focus 1
+    assert PanelDatabase.load().entry_for(0x7FFF, TargetClass.DEFAULT) is None
+
+def test_native_controller_board():                                      # Review Focus 4
+    native = PanelDatabase.load().native_controller_for(3000)
+    assert native.controller_class == "IT8951" and [p.packet_type for p in native.packets] == [0xB3]
+
+def test_entry_that_does_not_fit_a_class_says_why():                     # Review Focus 2
+    # pick, by scanning the file in the test, a panel whose fits_target["bg22"] is False:
+    # entry_for(id, BG22).usable is False and blocked_reason is a non-empty sentence
+
+def test_glass_verified_panels_are_marked():
+    # count entries with verified == "glass" for DEFAULT: equals the count in the JSON file
+```
+
+- [ ] **Step 3:** Run to see them fail. **Step 4:** Implement. **Step 5:** `uv run pytest -q && uv run prek run --all-files`, commit `feat: vendor the panel drive database and query it`.
+
+### Task 2: The migration planner
+
+**Branch:** `feat/migration-planner`
+
+**Interfaces:**
+- Consumes: `PanelDatabase`, `DeviceProfile` (piece 2b), `GlobalConfig`.
+- Produces:
+
+```python
+@dataclass(frozen=True)
+class MigrationPlan:
+    needed: bool
+    blocked: bool
+    reason: str                                   # one sentence, always set
+    panel_ic_type: int | None
+    target_class: TargetClass
+    entry: PanelEntry | NativeController | None
+    add: tuple[LengthPrefixedPacket, ...]
+    remove: tuple[LengthPrefixedPacket, ...]      # existing drive packets to drop
+    needs_confirmation: bool                      # entry is "equivalent", not seen on glass
+    remap_panel_ic_type: int | None               # nRF52811 only: the 3.0 id that replaces the 2.x id in 0x20
+
+def plan_migration(config: GlobalConfig | None, profile: DeviceProfile, db: PanelDatabase, *,
+                   panel_ic_type: int | None = None) -> MigrationPlan
+def apply_migration(config: GlobalConfig, plan: MigrationPlan) -> GlobalConfig
+def check_fits(config: GlobalConfig, profile: DeviceProfile) -> list[str]      # problems; empty when fine
+```
+
+`plan_migration` is a port of `planMigration` and `planNativeController` in `od-v3.js`; follow their branches in order and keep their reason strings. Differences from the JS: the "burned lab packet" branches (`isBurnedPid`, ids 0x2E–0x31) are not ported, because the library has no such packets outside `unparsed_tail`; if `config.unparsed_tail` is non-empty, the plan is `blocked` with the reason "the config has packets this library cannot read; migrate it with the website toolbox". `check_fits` ports `checkDrivePacketsFit` and uses `profile.max_config` and the identity's `max_seq_steps` and escapes when present, else the database's `caps` for the class.
+
+- [ ] **Step 1: Write the failing tests** (`tests/unit/test_migration.py`). Build profiles with `build_profile` and real inputs:
+
+```python
+def test_2x_config_on_3_0_gets_the_panels_drive_packets():
+    # config: one display, panel_ic_type 0x0001, no length-prefixed packets; profile V3 ESP32 needs_migration
+    plan = plan_migration(config, profile, db)
+    assert (plan.needed, plan.blocked) == (True, False) and plan.add == db.entry_for(1, DEFAULT).packets
+    migrated = apply_migration(config, plan)
+    assert migrated.display_modes[0].mode_index == 0
+    assert serialize_config(migrated)[: <length of the legacy part>] == serialize_config(config)[: <same>]   # legacy bytes untouched
+
+def test_not_a_3_0_device_needs_nothing():                 # profile V2 -> needed False, reason "not a 3.x device"
+def test_already_migrated_config_needs_nothing():          # Review Focus 3; use tests/fixtures/configs/bg22_alpha_drive_packets.bin
+def test_unknown_panel_blocks():                           # Review Focus 1; reason names the panel id
+def test_entry_too_large_for_the_device_blocks():          # Review Focus 2; profile with max_config 600
+def test_equivalent_panel_asks_for_confirmation():         # needs_confirmation True; a "glass" panel False
+def test_it8951_board_gets_one_controller_packet():        # Review Focus 4; panel 3000 on ESP32 -> add == the 0xB3 packet, no 0xAE-0xB1
+def test_it8951_board_on_another_target_blocks():
+def test_panel_override_replaces_existing_drive_packets(): # panel_ic_type=... given: plan.remove holds the old drive packets
+def test_config_with_an_unparsed_tail_blocks():
+def test_no_config_and_no_panel_id_blocks():               # reason "no display configured"
+```
+
+- [ ] **Step 2:** Run to see them fail. **Step 3:** Implement. **Step 4:** Verify, commit `feat: plan and apply the migration of a config to firmware 3.0 drive data`.
+
+### Task 3: `backup-config` and `migrate`
+
+**Branch:** `feat/cli-migrate`
+
+**Interfaces:**
+
+```
+opendisplay backup-config FILE [--device/--host/--key ...]
+    Like export-config, but refuses to overwrite an existing file and prints a warning that
+    the file contains the key when it does.
+opendisplay migrate [--dry-run] [--from-backup FILE] [--panel ID] [--yes-untested] [--drop-key]
+    Without --from-backup: read the device's config, plan, show the plan, write, read back, compare.
+    With --from-backup: use the file as the starting config (for a device whose config was erased).
+```
+
+Behaviour of `migrate`:
+1. Connect with `opendisplay.connect()`; print generation, target, configured, needs-migration from the profile.
+2. Plan. Print `plan.reason`. If not needed: exit 0. If blocked: exit 1.
+3. Refuse a starting config with encryption enabled unless `--drop-key` (Decision 1).
+4. If `plan.needs_confirmation` and not `--yes-untested`: ask "This panel's drive data has not been seen on a real panel. Continue?".
+5. With `--dry-run`: print the packets to add and remove, with sizes, and stop.
+6. Write through `dev.config.write()`, then `dev.config.read()` and compare the serialized bytes; report.
+
+Also add `Device.config.plan_migration(db=None)` to `device/api.py`, returning `plan_migration(self.cached, device.profile, db or PanelDatabase.load())`.
+
+- [ ] **Step 1: Write the failing tests** (`tests/unit/test_cli_migrate.py`) with a fake `Device`, as `tests/unit/test_cli_write_config.py` fakes `OpenDisplayDevice`: dry run writes nothing; a blocked plan exits 1 and writes nothing; an encrypted starting config is refused without `--drop-key` and written with a zero key with it; an `equivalent` panel is not written when the confirmation is declined; a read-back mismatch exits non-zero (Review Focus 5); `backup-config` refuses an existing file.
+
+- [ ] **Step 2–4:** fail, implement, verify, commit `feat(cli): add backup-config and migrate`.
+
+- [ ] **Step 5: Hardware — needs the user's go-ahead for each write.** Target: the E1002 `OD4064C9` (ESP32-S3, firmware 3.0.2, no config; Spectra 800x480, panel_ic_type 35; backup at `scratch/backup-OD4064C9-fw2.26.7.json`, which contains a key).
+
+```bash
+uv run opendisplay migrate --device OD4064C9 --from-backup scratch/backup-OD4064C9-fw2.26.7.json --drop-key --dry-run
+```
+
+Expected: a plan that adds the drive packets for panel 35 and reports whether that panel is `glass` or `equivalent`. Stop and show the plan to the user. With their go-ahead, run it without `--dry-run`. Then: `opendisplay info` shows a display and "Needs migration: no"; upload a test image with `opendisplay upload`; the user confirms what the panel shows. Record the result, including a wrong or blank image, in the ledger. If the upload START is refused, record the frame and stop.
+
+## Part 3b: using the drive data
+
+Start 3b only after 3a is merged and proven on hardware. Before writing code, read `docs/CONFIG_DRIVEN_DISPLAY.md` sections "Mode conventions", "Image markers and plane order" and "code_map", and the `CMD_DRIVE_WRITE_START` block in `opendisplay_protocol.h`, and write a one-page design note for the user: the code below is an outline, and two points need facts that only that reading and hardware can give.
+
+### Task 4: Apply `code_map` on the host
+
+On a 3.0 device with 4-colour scheme (BWRY, scheme 3) the palette-index-to-panel-code table comes from the config's `0xB1` `code_map`, not from the library's built-in table (`get_bwry_codes` in `display_palettes.py`). Port `wireMapFromCodeMap` (reject a map that is not a permutation of 0..3). `prepare_image` takes the map through `DeviceCapabilities` (add an optional field) so the encoding stays pure. Never apply it to calibration (`0xB0`) codes.
+
+Tests: a profile with `code_map == (0, 1, 3, 2)` encodes a red pixel and a yellow pixel to swapped codes compared with the identity map; an invalid map raises; a 2.x device is untouched (`tests/unit/test_wire_bytes_golden.py` must stay green).
+
+**Open point to settle by reading and on glass:** whether the built-in table and `code_map` agree for the panels the library already special-cases (0x001D). PR #198 recorded `code_map (0, 1, 3, 2)` on panel 0x001C, where the built-in table uses the identity.
+
+### Task 5: Named drive modes through `0x0085`
+
+`Device.display.show(image, mode="colour16")`: look the mode up by name in the config, encode one frame per pass, send `[0x00][0x85][mode][refresh][flags][rsv:2]` (+ `uncompressed_size:4` when compressed), stream all passes back to back over `0x71`, finish with `0x72`. Read the ACK `[mode][passes][temp_c]`: the device may substitute another mode, so use the mode and pass count from the ACK. New errors from the `OD_ERR_DRIVE_*` namespace (section 4e), including `0x08` panel busy and `0x07` sequence unsupported.
+
+**What is not specified here and must be designed first:** how an image becomes N pass frames for a multi-pass mode (which 2-bit code each pass carries comes from the mode's calibration packet, `0xB0`, via `CalibrationEntry.code_for_pass`), and the per-chunk timeout for a mode whose pass boundary is a refresh of up to 35 seconds. The unmerged branch `origin/feat/od-epd-driver` has an `encoding/multipass.py` worth reading for intent; do not copy it unreviewed.
+
+Modes `fast` and `partial` need no new command: they are reached through the existing refresh byte and the existing partial path, and mode 0 through every existing upload.
+
+## Not in this piece
+
+Key handover on upgrade (piece 4), the guided upgrade flow (piece 5).
