@@ -24,6 +24,7 @@ from ..models.config import (
     TouchController,
     WifiConfig,
 )
+from ..models.panel_drive import LENGTH_PREFIXED_MIN_TYPE, LengthPrefixedPacket
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ PACKET_TYPE_PASSIVE_BUZZER = 0x29
 PACKET_TYPE_NFC_CONFIG = 0x2A
 PACKET_TYPE_FLASH_CONFIG = 0x2B
 PACKET_TYPE_DATA_EXTENDED = 0x2C
+PACKET_TYPE_FINDMY = 0x2D  # the last legacy-range id; kept raw
+FINDMY_CONFIG_SIZE = 128
 
 WIFI_CONFIG_SIZE = 160
 WIFI_CONFIG_LEGACY_SIZE = 65
@@ -90,31 +93,23 @@ def parse_config_response(raw_data: bytes) -> GlobalConfig:
     return parse_tlv_config(packet_data, version=config_version)
 
 
-def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
-    """Parse complete TLV configuration from device response.
-
-    BLE format: [TLV packets...] (raw TLV data, no header)
-
-    Each TLV packet: [packet_number:1][packet_type:1][data:fixed_size]
-
-    Args:
-        data: Raw TLV data from device (after echo bytes stripped)
-        version: Config version from wrapper (default 1 if called directly)
+def _walk_packets(data: bytes) -> tuple[dict[tuple[int, int], bytes], bytes, list[LengthPrefixedPacket], bytes]:
+    """Split raw config data into its packets.
 
     Returns:
-        GlobalConfig with all parsed configuration
+        Legacy packets by (type, number), every FindMy packet (0x2D) verbatim and
+        in order with its header, the length-prefixed packets in order,
+        and the unparsed tail: everything from the first packet that could not
+        be read to the end of the data.
 
     Raises:
-        ConfigParseError: If parsing fails
+        ConfigParseError: If a known legacy packet is truncated
     """
-    if len(data) < 2:
-        raise ConfigParseError(f"TLV data too short: {len(data)} bytes (need at least 2)")
-
-    _LOGGER.debug("Parsing TLV config, %d bytes", len(data))
-
     # Parse TLV packets (OEPL format: [packet_number:1][packet_id:1][fixed_data])
     offset = 0
-    packets = {}
+    packets: dict[tuple[int, int], bytes] = {}
+    length_prefixed_packets: list[LengthPrefixedPacket] = []
+    findmy_raw = b""
     unparsed_tail = b""
 
     while offset < len(data) - 1:
@@ -123,6 +118,25 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
 
         packet_number = data[offset]
         packet_type = data[offset + 1]
+
+        # Types 0x80+ carry their body length, so they are kept whole whether or
+        # not this library models them, and parsing continues past them.
+        if packet_type >= LENGTH_PREFIXED_MIN_TYPE:
+            body_start = offset + LengthPrefixedPacket.HEADER_SIZE
+            body_end = body_start + int.from_bytes(data[offset + 2 : body_start], "little")
+            if body_start > len(data) or body_end > len(data):
+                unparsed_tail = data[offset:]
+                _LOGGER.warning(
+                    "Truncated length-prefixed packet 0x%02x at offset %d; keeping the remaining %d bytes unparsed",
+                    packet_type,
+                    offset,
+                    len(unparsed_tail),
+                )
+                break
+            length_prefixed_packets.append(LengthPrefixedPacket(packet_number, packet_type, data[body_start:body_end]))
+            offset = body_end
+            continue
+
         offset += 2
 
         # Determine packet size based on type
@@ -156,11 +170,44 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         packet_data = data[offset : offset + packet_size]
         offset += packet_size
 
+        if packet_type == PACKET_TYPE_FINDMY:
+            # Not modelled and kept whole. Collected here, not in the dict, so that a config
+            # with more than one (a singleton violation) still loses none of them.
+            findmy_raw += bytes([packet_number, packet_type]) + packet_data
+            continue
+
         # Store packet
         key = (packet_type, packet_number)
         packets[key] = packet_data
 
         _LOGGER.debug("Parsed packet: type=0x%02x, num=%d, size=%d", packet_type, packet_number, packet_size)
+
+    return packets, findmy_raw, length_prefixed_packets, unparsed_tail
+
+
+def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
+    """Parse complete TLV configuration from device response.
+
+    BLE format: [TLV packets...] (raw TLV data, no header)
+
+    Each TLV packet: [packet_number:1][packet_type:1][data:fixed_size]
+
+    Args:
+        data: Raw TLV data from device (after echo bytes stripped)
+        version: Config version from wrapper (default 1 if called directly)
+
+    Returns:
+        GlobalConfig with all parsed configuration
+
+    Raises:
+        ConfigParseError: If parsing fails
+    """
+    if len(data) < 2:
+        raise ConfigParseError(f"TLV data too short: {len(data)} bytes (need at least 2)")
+
+    _LOGGER.debug("Parsing TLV config, %d bytes", len(data))
+
+    packets, findmy_raw, length_prefixed_packets, unparsed_tail = _walk_packets(data)
 
     # Parse packets in a single pass
     # Note: Firmware uses global sequential numbering across all packet types
@@ -180,7 +227,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     flash_configs = []
     data_extended = None
 
-    for (packet_type, packet_number), packet_data in packets.items():
+    for (packet_type, _number), packet_data in packets.items():
         if packet_type == PACKET_TYPE_SYSTEM:
             system = _parse_system_config(packet_data)
         elif packet_type == PACKET_TYPE_MANUFACTURER:
@@ -245,6 +292,8 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
         nfc_configs=nfc_configs,
         flash_configs=flash_configs,
         data_extended=data_extended,
+        findmy_config_raw=findmy_raw or None,
+        length_prefixed_packets=length_prefixed_packets,
         unparsed_tail=unparsed_tail,
         version=version,  # From firmware wrapper
         minor_version=1,  # Not stored in device (only single version byte exists)
@@ -277,6 +326,7 @@ def _get_packet_size(packet_type: int) -> int | None:
         PACKET_TYPE_NFC_CONFIG: 32,
         PACKET_TYPE_FLASH_CONFIG: 32,
         PACKET_TYPE_DATA_EXTENDED: DataExtended.SIZE,
+        PACKET_TYPE_FINDMY: FINDMY_CONFIG_SIZE,
     }
     return sizes.get(packet_type)
 

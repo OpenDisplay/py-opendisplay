@@ -6,10 +6,12 @@ Reference: OpenDisplayFirmware/src/structs.h
 
 from __future__ import annotations
 
+import logging
 import math
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import ClassVar, TypeVar
 
 from .advertisement import SHT40_DEFAULT_MSD_START
 from .enums import (
@@ -37,6 +39,23 @@ from .enums import (
     get_board_type_name,
     get_manufacturer_name,
 )
+from .panel_drive import (
+    PACKET_TYPE_ACTION_TABLE,
+    PACKET_TYPE_DISPLAY_CALIBRATION,
+    PACKET_TYPE_DISPLAY_CONTROLLER,
+    PACKET_TYPE_DISPLAY_LUT,
+    PACKET_TYPE_DISPLAY_MODE,
+    PACKET_TYPE_DISPLAY_PANEL,
+    DisplayCalibration,
+    DisplayLut,
+    DisplayMode,
+    DisplayPanel,
+    LengthPrefixedPacket,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+_P = TypeVar("_P")
 
 
 def _encode_c_string(value: str, size: int) -> bytes:
@@ -1306,12 +1325,64 @@ class GlobalConfig:
     flash_configs: list[FlashConfig] = field(default_factory=list)
     data_extended: DataExtended | None = None
 
+    # The FindMy packet (legacy type 0x2D), which this library does not model: the whole
+    # packet, [number][0x2D] header included (130 bytes), written back as it was read.
+    # A config should have one; if it has more, they are all here, in order.
+    findmy_config_raw: bytes | None = None
+
+    # Packets from the length-prefixed range (types 0x80-0xFF), verbatim and in
+    # device order. They are written back as they were read; the display_* views
+    # below decode the ones this library models.
+    length_prefixed_packets: list[LengthPrefixedPacket] = field(default_factory=list)
+
     # Raw bytes from the first packet this library does not recognise to the end of
-    # the blob. Packets carry no length, so parsing stops there; keeping the rest
-    # verbatim lets a read-modify-write put it back instead of deleting it.
+    # the blob. Legacy packets carry no length, so parsing stops there; keeping the
+    # rest verbatim lets a read-modify-write put it back instead of deleting it.
     unparsed_tail: bytes = b""
 
     # Metadata
     version: int = 0
     minor_version: int = 0
     loaded: bool = False
+
+    def _decode_packets(self, packet_type: int, decode: Callable[[bytes], _P]) -> list[_P]:
+        """Decode every length-prefixed packet of one type, skipping malformed ones."""
+        decoded = []
+        for packet in self.length_prefixed_packets:
+            if packet.packet_type != packet_type:
+                continue
+            try:
+                decoded.append(decode(packet.body))
+            except ValueError as err:
+                _LOGGER.warning("Ignoring malformed config packet 0x%02x: %s", packet_type, err)
+        return decoded
+
+    @property
+    def action_table(self) -> LengthPrefixedPacket | None:
+        """The action table (packet 0xB2), raw. A config has at most one; the first wins."""
+        return next((p for p in self.length_prefixed_packets if p.packet_type == PACKET_TYPE_ACTION_TABLE), None)
+
+    @property
+    def display_controllers(self) -> list[LengthPrefixedPacket]:
+        """Built-in controller driver selections (packet 0xB3, ESP32 only), raw."""
+        return [p for p in self.length_prefixed_packets if p.packet_type == PACKET_TYPE_DISPLAY_CONTROLLER]
+
+    @property
+    def display_modes(self) -> list[DisplayMode]:
+        """Drive modes the device declares (packet 0xAE); empty on firmware without panel drive data."""
+        return self._decode_packets(PACKET_TYPE_DISPLAY_MODE, DisplayMode.from_body)
+
+    @property
+    def display_luts(self) -> list[DisplayLut]:
+        """Waveform slots (packet 0xAF)."""
+        return self._decode_packets(PACKET_TYPE_DISPLAY_LUT, DisplayLut.from_body)
+
+    @property
+    def display_calibrations(self) -> list[DisplayCalibration]:
+        """Measured palettes, one per calibrated drive mode (packet 0xB0)."""
+        return self._decode_packets(PACKET_TYPE_DISPLAY_CALIBRATION, DisplayCalibration.from_body)
+
+    @property
+    def display_panels(self) -> list[DisplayPanel]:
+        """Per-panel drive properties (packet 0xB1)."""
+        return self._decode_packets(PACKET_TYPE_DISPLAY_PANEL, DisplayPanel.from_body)

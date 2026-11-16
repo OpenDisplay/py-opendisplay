@@ -2,8 +2,8 @@
 
 Packet bodies have no length field, so the parser cannot step over an unknown
 packet ID and stops there. Re-serializing only what was parsed would then drop
-the unknown packet and everything after it from the device (e.g. findmy_config
-0x2D, which this library does not model yet).
+the unknown packet and everything after it from the device. The example id, 0x2E, is one
+that lab builds used and that no released header defines.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from test_config_json_roundtrip import _base_config, _display
 from opendisplay.protocol.config_parser import parse_config_response
 from opendisplay.protocol.config_serializer import calculate_config_crc, serialize_config
 
-UNKNOWN_PACKET = bytes([0, 0x2D]) + bytes(range(128))
+UNKNOWN_PACKET = bytes([0, 0x2E]) + bytes(range(128))
 # A known packet (led 0x21) after the unknown one: the parser cannot reach it either.
 KNOWN_AFTER_UNKNOWN = bytes([0, 0x21]) + b"\x5a" * 22
 TAIL = UNKNOWN_PACKET + KNOWN_AFTER_UNKNOWN
