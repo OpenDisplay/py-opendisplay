@@ -333,3 +333,82 @@ def test_first_mode_packet_per_index_wins_and_other_displays_are_left_out() -> N
 
     assert p.drive_mode_names == ("full", "fast")
     assert p.supports_partial is False  # the duplicate "partial" at index 1 is ignored
+
+
+# ── native controller drivers (0xB3, ESP32 FastEPD builds) ───────────────────
+# Firmware_Unified f6d3a83 targets/esp32-idf: od_controller_esp.cpp from_packet() accepts the
+# first 0xB3 for the display's instance with a body of at least 12 bytes, version 0 and class
+# 1 (IT8951) or 2 (parallel, panel 1..3); display_service.cpp od_xfer_app_panel_info() then
+# enables partial for any scheme but GRAY8 (9), whatever the modes say. C3/C6 builds have no FastEPD.
+
+
+def _controller(
+    cls: int, *, instance: int = 0, version: int = 0, panel: int = 0, size: int = 12
+) -> LengthPrefixedPacket:
+    body = bytes([instance, version, cls, 0, 0, 0, 0x7F, panel, 0xFF, 0xFF, 0xFF, 0])
+    return LengthPrefixedPacket(number=9, packet_type=0xB3, body=body[:size])
+
+
+def _native(*packets: LengthPrefixedPacket, scheme: int = ColorScheme.GRAYSCALE_16, **kw: Any) -> GlobalConfig:
+    return _config(displays=[_display(color_scheme=scheme)], length_prefixed_packets=list(packets), **kw)
+
+
+def test_it8951_board_supports_partial_without_a_partial_mode() -> None:  # e.g. reTerminal E1003
+    assert build_profile(FW3, _native(_controller(1)), None).supports_partial is True
+
+
+def test_parallel_panel_supports_partial() -> None:
+    assert build_profile(FW3, _native(_controller(2, panel=3)), None).supports_partial is True
+
+
+@pytest.mark.parametrize(
+    "packet",
+    [
+        _controller(0),  # command-driven: the drive packets decide
+        _controller(1, version=1),  # unknown version: ignored by the firmware
+        _controller(3),  # unknown class: ignored
+        _controller(2, panel=0),  # parallel without a known panel: ignored
+        _controller(1, size=11),  # short body: ignored
+        _controller(1, instance=1),  # another display's controller
+    ],
+)
+def test_controller_packets_the_firmware_ignores_do_not_enable_partial(packet: LengthPrefixedPacket) -> None:
+    assert build_profile(FW3, _native(packet), None).supports_partial is False
+
+
+def test_first_controller_packet_for_the_display_wins() -> None:
+    assert build_profile(FW3, _native(_controller(0), _controller(1)), None).supports_partial is False
+
+
+def test_native_gray8_has_no_partial() -> None:
+    assert build_profile(FW3, _native(_controller(1), scheme=9), None).supports_partial is False
+
+
+def test_esp32_c3_build_has_no_native_driver() -> None:
+    assert build_profile(FW3, _native(_controller(1), ic_type=ICType.ESP32_C3), None).supports_partial is False
+
+
+def test_native_controller_on_2x_follows_the_display_flag() -> None:
+    assert build_profile(FW2, _native(_controller(1)), None).supports_partial is False
+
+
+# ── code_map belongs to display 0 ────────────────────────────────────────────
+
+
+def _panel(instance: int, code_map: tuple[int, int, int, int]) -> LengthPrefixedPacket:
+    body = bytearray(next(p for p in ALPHA_CONFIG.length_prefixed_packets if p.packet_type == 0xB1).body)
+    body[0] = instance
+    body[7:11] = bytes(code_map)  # <BBBHH4s...: instance, flags, idle level, timeout, delay, code_map
+    return LengthPrefixedPacket(number=instance, packet_type=0xB1, body=bytes(body))
+
+
+def test_code_map_comes_from_display_0s_panel_packet() -> None:
+    config = _config(length_prefixed_packets=[_panel(1, (3, 2, 1, 0)), _panel(0, (0, 1, 2, 3))])
+
+    assert build_profile(FW3, config, None).code_map == (0, 1, 2, 3)
+
+
+def test_controller_packet_on_a_non_esp32_board_is_not_a_native_driver() -> None:
+    config = _native(_controller(1), ic_type=ICType.NRF52840)
+
+    assert build_profile(FW3, config, None).supports_partial is False
