@@ -614,6 +614,14 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             max_stray=self.MAX_STRAY_CONFIG_FRAMES,
         )
 
+    def _adopt_config(self, config: GlobalConfig) -> None:
+        """Hold a config ``Device`` read; capabilities only when display 0 can describe them."""
+        self._config = config
+        try:
+            self._capabilities = self._extract_capabilities_from_config()
+        except (RuntimeError, ImageEncodingError):
+            self._capabilities = None
+
     @_serialized
     async def interrogate(self) -> GlobalConfig:
         """Read device configuration from device.

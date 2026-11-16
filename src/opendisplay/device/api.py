@@ -11,8 +11,9 @@ import logging
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
-from ..exceptions import IdentNotSupportedError, ImageEncodingError, InvalidResponseError, NoStoredConfigError
+from ..exceptions import IdentNotSupportedError, InvalidResponseError, NoStoredConfigError
 from ..models.profile import DeviceProfile, build_profile
+from ..protocol.config_parser import parse_config_response
 from .facade import OpenDisplayDevice
 
 if TYPE_CHECKING:
@@ -28,23 +29,23 @@ _IDENT_MIN_MAJOR = 3  # earlier firmware is silent on READ_IDENT and would cost 
 
 
 async def _read_config(legacy: OpenDisplayDevice) -> GlobalConfig:
-    """Read the stored config, also when the legacy capability step cannot describe it.
+    """Read the stored config leniently and hand it to ``legacy``.
 
-    ``interrogate()`` stores the parsed config, then derives capabilities from display 0. That
-    step raises ``ImageEncodingError`` for a display (0x20) colour scheme the legacy enum lacks,
-    such as one a newer firmware defines. The profile describes it, so the config is kept. Any
-    other failure, or one before a config was stored, is re-raised. (A config without displays
-    never gets this far: the parser rejects it with ``ConfigParseError``.)
+    A config without a display packet parses to ``displays=[]`` with every other packet kept
+    (firmware 3.0 stores a write as sent), so a repair can keep them. ``legacy`` gets the config,
+    and capabilities only when display 0 can describe them: not for a config without displays,
+    and not for a 0x20 colour scheme the legacy enum lacks. ``OpenDisplayDevice`` itself stays
+    strict.
 
     Raises:
         NoStoredConfigError: The device has no config.
+        ConfigParseError: The config cannot be parsed even leniently.
     """
-    try:
-        return await legacy.interrogate()
-    except ImageEncodingError:
-        if legacy.config is None:
-            raise
-        return legacy.config
+    # Device wraps OpenDisplayDevice until piece 7 inverts the two; these are its internals.
+    raw = await legacy._read_config_bytes()  # pylint: disable=protected-access
+    config = parse_config_response(raw, require_display=False)
+    legacy._adopt_config(config)  # pylint: disable=protected-access
+    return config
 
 
 class ConfigView:
@@ -85,8 +86,9 @@ class Device:
     Attributes:
         config: The stored config.
         legacy: The wrapped ``OpenDisplayDevice``, for everything not yet on the new surface.
-            Its config is the one read on entry. When that config's display has a colour scheme
-            the legacy API does not know, ``legacy`` has no capabilities:
+            Its config is the one read on entry. When that config has no display, or its
+            display has a colour scheme the legacy API does not know, ``legacy`` has no
+            capabilities:
             ``legacy.width`` and ``legacy.upload_image()`` raise "capabilities unknown".
             Use ``profile`` for what the device is. After a ``refresh()`` that finds the
             device changed, ``legacy`` can still hold the previous config (when the device now

@@ -53,7 +53,7 @@ WIFI_CONFIG_LEGACY_SIZE = 65
 SECURITY_CONFIG_SIZE = 64
 
 
-def parse_config_response(raw_data: bytes) -> GlobalConfig:
+def parse_config_response(raw_data: bytes, *, require_display: bool = True) -> GlobalConfig:
     """Parse complete TLV config response from device.
 
     Firmware sends config data with a wrapper: [length:2][version:1][packets...][crc:2]
@@ -61,6 +61,9 @@ def parse_config_response(raw_data: bytes) -> GlobalConfig:
 
     Args:
         raw_data: Complete TLV data assembled from all BLE chunks
+        require_display: Reject a config without a display packet (the default). With
+            ``False`` such a config parses to ``displays=[]`` with every other packet kept;
+            firmware 3.0 stores a config write as sent, so this is a real device state.
 
     Returns:
         Parsed GlobalConfig
@@ -90,7 +93,7 @@ def parse_config_response(raw_data: bytes) -> GlobalConfig:
     _LOGGER.debug("Packet data after wrapper strip: %d bytes", len(packet_data))
 
     # Parse TLV packets
-    return parse_tlv_config(packet_data, version=config_version)
+    return parse_tlv_config(packet_data, version=config_version, require_display=require_display)
 
 
 def _walk_packets(data: bytes) -> tuple[dict[tuple[int, int], bytes], bytes, list[LengthPrefixedPacket], bytes]:
@@ -185,7 +188,7 @@ def _walk_packets(data: bytes) -> tuple[dict[tuple[int, int], bytes], bytes, lis
     return packets, findmy_raw, length_prefixed_packets, unparsed_tail
 
 
-def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
+def parse_tlv_config(data: bytes, version: int = 1, *, require_display: bool = True) -> GlobalConfig:
     """Parse complete TLV configuration from device response.
 
     BLE format: [TLV packets...] (raw TLV data, no header)
@@ -195,6 +198,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
     Args:
         data: Raw TLV data from device (after echo bytes stripped)
         version: Config version from wrapper (default 1 if called directly)
+        require_display: Reject a config without a display packet; see ``parse_config_response``
 
     Returns:
         GlobalConfig with all parsed configuration
@@ -265,7 +269,7 @@ def parse_tlv_config(data: bytes, version: int = 1) -> GlobalConfig:
             ("system", system),
             ("manufacturer", manufacturer),
             ("power", power),
-            ("display", displays),
+            ("display", displays or not require_display),
         ]
         if not present
     ]
