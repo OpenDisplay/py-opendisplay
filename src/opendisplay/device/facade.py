@@ -20,11 +20,9 @@ from ..exceptions import (
     BLEConnectionError,
     IdentNotSupportedError,
     ImageEncodingError,
-    NoStoredConfigError,
     OpenDisplayConnectionError,
     OpenDisplayTimeoutError,
     ProtocolError,
-    TruncatedConfigError,
 )
 from ..landing import build_landing_url
 from ..models.advertisement import AdvertisementData, parse_advertisement
@@ -46,7 +44,6 @@ from ..protocol import (
     build_enter_dfu_command,
     build_led_activate_command,
     build_power_off_command,
-    build_read_config_command,
     build_read_fw_version_command,
     build_read_ident_command,
     build_read_msd_command,
@@ -58,18 +55,16 @@ from ..protocol import (
     validate_ack_response,
 )
 from ..protocol.responses import (
-    describe_command_code,
     is_ident_unsupported_frame,
-    matches_command_echo,
     parse_read_ident,
     parse_read_msd,
     raise_for_config_write_refusal,
-    strip_command_echo,
     unpack_command_code,
 )
 from ..sensors import SensorReading, read_sensor_values
 from ..transport import BLEConnection, TcpTransport, Transport
 from .channel import MAX_STRAY_AUTH_FRAMES, SecureChannel
+from .config_read import read_config_blob
 from .imaging import _capabilities_from_config, prepare_image
 from .nfc import write_nfc_record
 from .upload import Uploader, UploadTarget
@@ -609,46 +604,23 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 pass
         return bytes.fromhex(self.mac_address.replace(":", ""))[-3:]
 
-    async def _read_config_frame(self, timeout: float) -> bytes:
-        """Read the next READ_CONFIG frame, ignoring frames from other commands.
-
-        The notification queue has no request/response correlation, so a frame
-        belonging to a different exchange — a duplicated response, or one the
-        firmware held in its TX ring until notifications were enabled — can land
-        mid-transfer. It must not reach ``strip_command_echo``, which returns a
-        non-matching frame *unchanged*: its 2-byte echo would then be consumed as
-        the chunk-number field and its body spliced into the config, silently
-        corrupting it (no length check catches this — the loop only counts bytes).
-        Skipping such frames keeps the config read on its own command stream.
-
-        The device's no-config error frame ({0xFF, 0x40, ...}) is passed through
-        rather than skipped: it answers this command and the caller reports it.
-
-        Raises:
-            OpenDisplayTimeoutError: If no frame arrives within ``timeout``
-            ProtocolError: If more than ``MAX_STRAY_CONFIG_FRAMES`` foreign frames
-                arrive while waiting for this chunk
-        """
-        for _ in range(self.MAX_STRAY_CONFIG_FRAMES + 1):
-            response = await self._channel.read(timeout)
-            if matches_command_echo(response, CommandCode.READ_CONFIG):
-                return response
-            # NACK form of the same command: {0xFF, <cmd low byte>, ...}
-            if len(response) >= 2 and response[0] == 0xFF and response[1] == CommandCode.READ_CONFIG:
-                return response
-            _LOGGER.warning(
-                "Ignoring stray %s frame (%d B) while reading config",
-                (
-                    describe_command_code(unpack_command_code(response))
-                    if len(response) >= 2
-                    else f"malformed {response.hex() or '<empty>'}"
-                ),
-                len(response),
-            )
-        raise ProtocolError(
-            f"Config read aborted: more than {self.MAX_STRAY_CONFIG_FRAMES} frames from other "
-            "commands arrived while waiting for a config chunk"
+    @_serialized
+    async def _read_config_bytes(self) -> bytes:
+        """The stored config as sent, assembled from its READ_CONFIG chunks (``config_read``)."""
+        return await read_config_blob(
+            self._channel,
+            first_timeout=self.TIMEOUT_FIRST_CHUNK,
+            chunk_timeout=self.TIMEOUT_CONFIG_CHUNK,
+            max_stray=self.MAX_STRAY_CONFIG_FRAMES,
         )
+
+    def _adopt_config(self, config: GlobalConfig) -> None:
+        """Hold a config ``Device`` read; capabilities only when display 0 can describe them."""
+        self._config = config
+        try:
+            self._capabilities = self._extract_capabilities_from_config()
+        except (RuntimeError, ImageEncodingError):
+            self._capabilities = None
 
     @_serialized
     async def interrogate(self) -> GlobalConfig:
@@ -661,60 +633,10 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             ProtocolError: If interrogation fails
         """
         _LOGGER.debug("Interrogating device %s", self.mac_address)
-
-        # Send read config command
-        cmd = build_read_config_command()
-        await self._channel.write(cmd)
-
-        # Read first chunk
-        response = await self._read_config_frame(self.TIMEOUT_FIRST_CHUNK)
-
-        # Firmware answers a device-with-no-config with the 4-byte error frame
-        # {0xFF, 0x40, 0x00, 0x00}. Without this check the {0x00,0x00} length
-        # field is misread as a zero-length config instead of "no config".
-        if len(response) == 4 and response[0] == 0xFF and response[1] == CommandCode.READ_CONFIG:
-            raise NoStoredConfigError()
-
-        chunk_data = strip_command_echo(response, CommandCode.READ_CONFIG)
-
-        # Parse first chunk header
-        total_length = int.from_bytes(chunk_data[2:4], "little")
-        tlv_data = bytearray(chunk_data[4:])
-
-        _LOGGER.debug("First chunk: %d bytes, total length: %d", len(chunk_data), total_length)
-
-        # Read remaining chunks. Firmware caps config-read chunks, so a broken or
-        # older firmware can stop sending before `total_length` is reached. Guard
-        # against both a mid-transfer read timeout and a stalled transfer (empty
-        # chunk making no progress) so we raise a typed error instead of hanging
-        # or returning a partial config.
-        while len(tlv_data) < total_length:
-            try:
-                next_response = await self._read_config_frame(self.TIMEOUT_CONFIG_CHUNK)
-            except OpenDisplayTimeoutError as err:
-                raise TruncatedConfigError(
-                    f"Config read truncated: device stopped sending chunks at {len(tlv_data)}/{total_length} bytes"
-                ) from err
-            next_chunk_data = strip_command_echo(next_response, CommandCode.READ_CONFIG)
-
-            # Skip chunk number field (2 bytes) and append data
-            chunk_payload = next_chunk_data[2:]
-            if not chunk_payload:
-                raise TruncatedConfigError(
-                    f"Config read stalled: device sent an empty chunk at {len(tlv_data)}/{total_length} bytes"
-                )
-            tlv_data.extend(chunk_payload)
-
-            _LOGGER.debug(
-                "Received chunk, total: %d/%d bytes",
-                len(tlv_data),
-                total_length,
-            )
-
-        _LOGGER.info("Received complete TLV data: %d bytes", len(tlv_data))
+        tlv_data = await self._read_config_bytes()
 
         # Parse complete config response (handles wrapper strip)
-        self._config = parse_config_response(bytes(tlv_data))
+        self._config = parse_config_response(tlv_data)
         self._capabilities = self._extract_capabilities_from_config()
 
         _LOGGER.info(

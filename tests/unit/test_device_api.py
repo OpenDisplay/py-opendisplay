@@ -14,7 +14,6 @@ from opendisplay.exceptions import (
     AuthenticationRequiredError,
     BLEConnectionError,
     ConfigParseError,
-    ImageEncodingError,
     InvalidResponseError,
     NoStoredConfigError,
     OpenDisplayTimeoutError,
@@ -104,16 +103,38 @@ async def test_3_0_device_that_does_not_answer_the_identity_is_still_v3(fake_tra
         assert dev.profile.configured is True
 
 
-async def test_stored_config_without_displays_fails_the_connect_and_closes_the_link(fake_transport) -> None:
-    # Review Focus 2 at the wire: the parser requires a display packet, so such a config never
-    # reaches the profile. Unchanged behaviour, pinned so a change to it is deliberate.
-    fake = fake_transport([_version(2, 27), _config_reply(dataclasses.replace(ESP32_CONFIG, displays=[]))])
+async def test_stored_config_without_displays_connects_unconfigured_and_keeps_its_other_packets(
+    fake_transport,
+) -> None:
+    # Firmware 3.0 stores a config write as sent, so a config without 0x20 is a real state. The
+    # new entry point reads it leniently so that a repair keeps the other packets.
+    stored = dataclasses.replace(BG22_CONFIG, displays=[])
+    fake = fake_transport([_version(3, 0), _config_reply(stored), IDENT_V3_NO_DISPLAY])
+
+    async with opendisplay.connect(transport=fake) as dev:
+        assert dev.profile.configured is False
+        assert dev.config.cached == parse_config_response(serialize_config(stored), require_display=False)
+        assert dev.config.cached is not None
+        assert dev.config.cached.security_config is not None
+        assert dev.config.cached.length_prefixed_packets == BG22_CONFIG.length_prefixed_packets
+        with pytest.raises(RuntimeError, match="capabilities unknown"):
+            _ = dev.legacy.width
+
+
+async def test_legacy_object_still_works_after_a_normal_connect(fake_transport) -> None:
+    fake = fake_transport([_version(2, 27), _config_reply(ESP32_CONFIG)])
+
+    async with opendisplay.connect(transport=fake) as dev:
+        assert (dev.legacy.width, dev.legacy.height) == (184, 360)
+        assert dev.legacy.config is dev.config.cached
+
+
+async def test_legacy_open_display_device_stays_strict(fake_transport) -> None:
+    fake = fake_transport([_config_reply(dataclasses.replace(ESP32_CONFIG, displays=[]))])
 
     with pytest.raises(ConfigParseError, match="display"):
-        async with opendisplay.connect(transport=fake):
-            pytest.fail("entered despite the rejected config")
-
-    assert fake.is_connected is False
+        async with OpenDisplayDevice(transport=fake):
+            pytest.fail("entered")
 
 
 async def test_unknown_colour_scheme_does_not_stop_the_connect(fake_transport) -> None:  # Review Focus 3
@@ -126,7 +147,6 @@ async def test_unknown_colour_scheme_does_not_stop_the_connect(fake_transport) -
     async with opendisplay.connect(transport=fake) as dev:
         assert dev.profile.color_scheme == 0x7E
         assert dev.profile.configured is True
-        # Pins that interrogate() stored the parsed config before its capability step failed.
         assert dev.config.cached == parse_config_response(serialize_config(config))
         assert dev.legacy.config is dev.config.cached
         # The legacy object has the config but no capabilities (documented on Device.legacy).
@@ -134,32 +154,29 @@ async def test_unknown_colour_scheme_does_not_stop_the_connect(fake_transport) -
             _ = dev.legacy.width
 
 
-async def test_encoding_error_before_a_config_is_stored_still_propagates(fake_transport, monkeypatch) -> None:
+async def test_errors_from_the_config_read_propagate(fake_transport, monkeypatch) -> None:
     fake = fake_transport([_version(2, 27)])
 
-    async def fails_early(self: OpenDisplayDevice) -> GlobalConfig:
-        raise ImageEncodingError("raised before any config was stored")
-
-    monkeypatch.setattr(OpenDisplayDevice, "interrogate", fails_early)
-
-    with pytest.raises(ImageEncodingError, match="before any config"):
-        async with opendisplay.connect(transport=fake):
-            pytest.fail("entered without a config")
-
-    assert fake.is_connected is False
-
-
-async def test_runtime_error_before_a_config_is_stored_still_propagates(fake_transport, monkeypatch) -> None:
-    fake = fake_transport([_version(2, 27)])
-
-    async def not_connected(self: OpenDisplayDevice) -> GlobalConfig:
+    async def not_connected(self: OpenDisplayDevice) -> bytes:
         raise RuntimeError("Not connected")
 
-    monkeypatch.setattr(OpenDisplayDevice, "interrogate", not_connected)
+    monkeypatch.setattr(OpenDisplayDevice, "_read_config_bytes", not_connected)
 
     with pytest.raises(RuntimeError, match="Not connected"):
         async with opendisplay.connect(transport=fake):
             pytest.fail("entered despite the failed config read")
+
+    assert fake.is_connected is False
+
+
+async def test_a_config_the_parser_rejects_for_another_reason_still_fails(fake_transport) -> None:
+    reply = bytearray(_config_reply(ESP32_CONFIG))
+    reply[6 + 3 + 1] = 0x7D  # first packet's type byte: an unknown legacy id where the system packet was
+    fake = fake_transport([_version(2, 27), bytes(reply)])
+
+    with pytest.raises(ConfigParseError, match="system"):
+        async with opendisplay.connect(transport=fake):
+            pytest.fail("entered")
 
     assert fake.is_connected is False
 
