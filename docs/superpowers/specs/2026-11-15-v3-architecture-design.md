@@ -390,6 +390,14 @@ Piece 2 was split: 2a is pure reading, 2b is `DeviceProfile` plus `opendisplay.c
 - **PR #198's packet layouts are the same in `Firmware_Unified`.** Calibration L*, a*, b* are
   all signed. The host applies `code_map`.
 
+- **Piece 3a migration proven on glass (2026-11-16).** `opendisplay migrate --from-backup
+  scratch/backup-OD4064C9-fw2.26.7.json --strip-secrets` on the E1002 (Firmware_Unified 3.0.2,
+  unclaimed, no config) stored a 1036-byte config byte-identical to the plan, and a 6-colour test
+  image drew with correct colours. Panel 0x0023 (EP73_SPECTRA_800x480), "equivalent" in the
+  database, is now seen drawing on glass with mode 0 (`full`); worth reporting upstream so the
+  database can mark it. The device answers nothing for about 30 s after a config write while it
+  redraws; `Device.config.write()` retries its read-back for about 90 s.
+
 ### Facts learned from the firmware sources in piece 2b
 
 - **Two levels of colour scheme on 3.0** (`docs/CONFIG_DRIVEN_DISPLAY.md` "Mode conventions").
