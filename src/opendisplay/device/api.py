@@ -28,7 +28,8 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 # Spectra and some other panels redraw for about 30 s after a config write and answer nothing
-# meanwhile; the read-back waits up to about 90 s for them before it gives up.
+# meanwhile; the read-back retries every 10 s, 9 times. Each attempt first waits out its own
+# command timeout (5 s), so it gives up after about 2.5 minutes at most.
 _REDRAW_WAIT_S = 10.0
 _REDRAW_RETRIES = 9
 
@@ -89,7 +90,8 @@ class ConfigView:
         """Write ``config`` to the device, then refresh the profile from the device.
 
         The device may redraw its panel after storing a config (Spectra panels take about 30 s)
-        and answers nothing meanwhile, so the read-back is retried for about 90 s.
+        and answers nothing meanwhile, so the read-back is retried: every 10 s, 9 times, each attempt
+        after its own 5 s timeout, about 2.5 minutes at most.
 
         Raises:
             OpenDisplayTimeoutError: The device stayed silent after the write. The write itself

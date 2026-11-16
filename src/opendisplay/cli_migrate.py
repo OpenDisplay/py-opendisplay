@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,11 @@ from .protocol import config_parser as packet_ids
 from .protocol.config_serializer import serialize_config
 
 _SHOW_KEY_ON_SCREEN = 0x02  # SecurityConfig.flags bit 1
+# 0x2D FindMyConfig key fields (od_cfg_policy.c S2D_*): eik[32] at 8, net_a_adv_key[28] at 40,
+# advertisement_key[20] at 76; the check applies to bodies of at least 96 bytes.
+_FINDMY_KEY_FIELDS = ((8, 32), (40, 28), (76, 20))
+_FINDMY_MIN_BODY = 96
+_FINDMY_PACKET = 2 + packet_ids.FINDMY_CONFIG_SIZE  # [number][0x2D][body]
 _SECRETS_REFUSAL = (
     "The backup carries secrets: {found}. An unclaimed firmware 3.0 device does not store secrets; "
     "claim it first, then enter WiFi / FindMy settings again. "
@@ -48,6 +54,25 @@ def _ask(prompt: str) -> bool:
 # ── secrets (SECURITY_V2.md § 10.4, the closed list) ─────────────────────────
 
 
+def _findmy_packets(raw: bytes) -> list[bytes]:
+    """Split ``findmy_config_raw`` (every 0x2D packet, header included, in order) into packets."""
+    return [raw[i : i + _FINDMY_PACKET] for i in range(0, len(raw), _FINDMY_PACKET)]
+
+
+def _findmy_has_keys(packet: bytes) -> bool:
+    body = packet[2:]
+    return len(body) >= _FINDMY_MIN_BODY and any(any(body[o : o + n]) for o, n in _FINDMY_KEY_FIELDS)
+
+
+def _findmy_without_keys(packet: bytes) -> bytes:
+    if len(packet) - 2 < _FINDMY_MIN_BODY:
+        return packet
+    out = bytearray(packet)
+    for offset, size in _FINDMY_KEY_FIELDS:
+        out[2 + offset : 2 + offset + size] = bytes(size)
+    return bytes(out)
+
+
 def find_secrets(config: GlobalConfig) -> list[str]:
     """The secrets a config carries, by name; never their values."""
     found = []
@@ -56,31 +81,46 @@ def find_secrets(config: GlobalConfig) -> list[str]:
         found.append("encryption key")
     if config.wifi_config is not None and any(config.wifi_config.password):
         found.append("WiFi password")
-    if config.findmy_config_raw:
-        found.append("FindMy settings")
+    if config.findmy_config_raw and any(_findmy_has_keys(p) for p in _findmy_packets(config.findmy_config_raw)):
+        found.append("FindMy keys")
     return found
 
 
-def strip_secrets(config: GlobalConfig) -> GlobalConfig:
-    """The config without secrets, in the form an unclaimed 3.0 device stores.
+def unclaimed_form(config: GlobalConfig) -> GlobalConfig:
+    """The config with its 0x27 as an unclaimed 3.0 device stores every 0x27 it is written.
 
-    Zeroes the 0x27 key and ``encryption_enabled`` and, as the firmware's ``unclaimed_form``
-    does, clears the show-key flag and the first reserved byte; zeroes the 0x26 password; drops
-    the 0x2D packet (the library keeps it raw, so its key material cannot be zeroed in place).
+    The firmware's ``unclaimed_form`` (od_cfg_policy.c) clears ``encryption_enabled``, the key,
+    the show-key flag and the first reserved byte on every write to an unclaimed device.
     """
     security: SecurityConfig | None = config.security_config
-    if security is not None:
-        security = dataclasses.replace(
+    if security is None:
+        return config
+    return dataclasses.replace(
+        config,
+        security_config=dataclasses.replace(
             security,
             encryption_enabled=0,
             encryption_key=bytes(16),
             flags=security.flags & ~_SHOW_KEY_ON_SCREEN,
             reserved=bytes(1) + security.reserved[1:],
-        )
+        ),
+    )
+
+
+def strip_secrets(config: GlobalConfig) -> GlobalConfig:
+    """The config without secrets, in the form an unclaimed 3.0 device stores.
+
+    The 0x27 in its unclaimed form (``unclaimed_form``), the 0x26 password zeroed, and the key
+    fields of every 0x2D zeroed in place; the other FindMy settings stay.
+    """
+    config = unclaimed_form(config)
     wifi: WifiConfig | None = config.wifi_config
     if wifi is not None:
         wifi = dataclasses.replace(wifi, password=bytes(len(wifi.password)))
-    return dataclasses.replace(config, security_config=security, wifi_config=wifi, findmy_config_raw=None)
+    findmy = config.findmy_config_raw
+    if findmy:
+        findmy = b"".join(_findmy_without_keys(p) for p in _findmy_packets(findmy))
+    return dataclasses.replace(config, wifi_config=wifi, findmy_config_raw=findmy)
 
 
 # ── describing packets ───────────────────────────────────────────────────────
@@ -160,7 +200,8 @@ async def _backup_config(device_kwargs: dict[str, Any], path: Path) -> None:
         _handle_ble_error(exc)
     if config is None:
         _error("The device has no stored configuration to back up.")
-    with path.open("x", encoding="utf-8") as file:
+    # The backup can hold the device key: create it readable by its owner only, never overwriting.
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as file:
         json.dump(config_to_json(config), file, indent=2)
     _console.print(f"Backup written to [bold]{path}[/bold]")
     secrets = find_secrets(config)
@@ -186,10 +227,12 @@ def add_migrate_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         action="store_true",
         help="With --from-backup: write the backup without its key, WiFi password and FindMy settings",
     )
-    p.set_defaults(func=_cmd_migrate)
+    p.set_defaults(func=_cmd_migrate, parser=p)
 
 
 def _cmd_migrate(args: argparse.Namespace) -> None:
+    if args.strip_secrets and not args.from_backup:
+        args.parser.error("--strip-secrets applies only with --from-backup")
     backup = _load_backup(args.from_backup, args.strip_secrets) if args.from_backup else None
     kwargs = _device_kwargs(args.device, _parse_hex_key(args.key), args.timeout, args.host, args.port, args.tls)
     _run(_migrate(kwargs, args, backup))
@@ -209,7 +252,10 @@ def _load_backup(path: str, strip: bool) -> GlobalConfig:
         _console.print(f"Writing the backup without its {', '.join(secrets)}.")
         # TODO(piece 4): claim the device first, then write the secrets inside the SEC2 session.
         config = strip_secrets(config)
-    return config
+    stored_form = unclaimed_form(config)
+    if stored_form != config:
+        _console.print("Writing the security packet as an unclaimed device stores it (show-key flag cleared).")
+    return stored_form
 
 
 async def _migrate(device_kwargs: dict[str, Any], args: argparse.Namespace, backup: GlobalConfig | None) -> None:
@@ -237,10 +283,12 @@ async def _migrate_connected(dev: Any, args: argparse.Namespace, backup: GlobalC
 
     db = PanelDatabase.load()
     plan = plan_migration(start, profile, db, panel_ic_type=args.panel)
-    _console.print(plan.reason)
     if plan.blocked:
         _error(plan.reason)
+    _console.print(plan.reason)
     if not plan.needed:
+        if backup is not None:
+            await _restore(dev, backup, dry_run=args.dry_run)
         return
     _print_plan(plan)
     if args.dry_run:
@@ -251,11 +299,27 @@ async def _migrate_connected(dev: Any, args: argparse.Namespace, backup: GlobalC
         if not _ask(_UNTESTED_PROMPT.format(name=entry.name, panel=entry.panel_ic_type)):
             _error("Not written.")
     assert start is not None  # a plan that is needed and not blocked has a starting config
-    migrated = apply_migration(start, plan)
+    await _write_and_verify(dev, apply_migration(start, plan))
+
+
+async def _restore(dev: Any, backup: GlobalConfig, *, dry_run: bool) -> None:
+    """Write a backup that needs no migration, unless the device already stores exactly it."""
+    stored = dev.config.cached
+    if stored is not None and serialize_config(stored) == serialize_config(backup):
+        _console.print("The device already stores this backup: already stored, nothing written.")
+        return
+    if dry_run:
+        _console.print(f"Dry run: would write the backup ({len(serialize_config(backup))} bytes); nothing written.")
+        return
+    await _write_and_verify(dev, backup)
+
+
+async def _write_and_verify(dev: Any, config: GlobalConfig) -> None:
+    """Write ``config``, read it back and compare the bytes; exit 1 on a mismatch."""
     _console.print("Writing. Some panels (Spectra) redraw for about 30 s before the device answers again...")
-    await dev.config.write(migrated)
+    await dev.config.write(config)
     stored = await dev.config.read()
-    expected, actual = serialize_config(migrated), serialize_config(stored)
+    expected, actual = serialize_config(config), serialize_config(stored)
     if actual != expected:
         _error(
             f"The config read back ({len(actual)} bytes) does not match what was written ({len(expected)} bytes). "

@@ -50,6 +50,9 @@ NO_DISPLAY_REASON: Final = (
     "no display configured: a display packet cannot be made from a panel id alone (pins, size and wiring "
     "are board-specific); restore a backup that has one, or configure the display with the website toolbox"
 )
+UNKNOWN_TARGET_NOTE: Final = (
+    " (The device's identity could not be read, so the most restrictive class, EFR32BG22, was assumed.)"
+)
 UNPARSED_TAIL_REASON: Final = "the config has packets this library cannot read; migrate it with the website toolbox"
 
 
@@ -168,7 +171,7 @@ def _plan_native(
     )
 
 
-def plan_migration(  # pylint: disable=too-many-return-statements
+def plan_migration(
     config: GlobalConfig | None,
     profile: DeviceProfile,
     db: PanelDatabase,
@@ -183,6 +186,18 @@ def plan_migration(  # pylint: disable=too-many-return-statements
         db: The panel database.
         panel_ic_type: The panel to migrate to, overriding the config's.
     """
+    plan = _plan(config, profile, db, panel_ic_type)
+    if plan.blocked and profile.target is None:
+        return dataclasses.replace(plan, reason=plan.reason + UNKNOWN_TARGET_NOTE)
+    return plan
+
+
+def _plan(  # pylint: disable=too-many-return-statements
+    config: GlobalConfig | None,
+    profile: DeviceProfile,
+    db: PanelDatabase,
+    panel_ic_type: int | None,
+) -> MigrationPlan:
     target_class = target_class_for(profile.target)
     plan = MigrationPlan(needed=False, blocked=False, reason="", panel_ic_type=None, target_class=target_class)
     if profile.generation is not Generation.V3:
