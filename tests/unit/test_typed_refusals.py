@@ -13,7 +13,7 @@ import pytest
 from PIL import Image
 from test_device_partial import _config as partial_config
 from test_device_partial import _image
-from test_pipe_write import ScriptedConn, make_config, make_device, start_nack
+from test_pipe_write import ScriptedConn, make_config, make_device, make_region, start_nack
 
 from opendisplay import OpenDisplayDevice, PartialState, RefreshMode
 from opendisplay.exceptions import (
@@ -139,6 +139,26 @@ async def test_pipe_start_other_nack_still_falls_back_to_direct_write() -> None:
     await dev.upload_prepared_image((b"\x00" * 8, None, Image.new("P", (8, 8), 0)), compress=False)
 
     assert _opcodes(conn)[:2] == [0x80, 0x70]
+
+
+async def test_pipe_partial_start_needs_migration() -> None:
+    dev, conn = make_device([start_nack(0x08)], transmission_modes=ZIP_AND_PIPE)
+
+    with pytest.raises(NeedsMigrationError):
+        await dev._uploader.negotiate_pipe_partial(compressed=False, total_size=16, old_etag=0x1, region=make_region())
+
+    assert _opcodes(conn) == [0x80]
+
+
+async def test_pipe_start_0x09_is_not_panel_busy() -> None:
+    """PIPE never sends "panel busy": it ACKs before the panel comes up. 0x09 there stays a plain NACK."""
+    dev, conn = make_device(
+        [start_nack(0x09), ACK_START, ACK_DATA, ACK_END, ACK_REFRESH], transmission_modes=ZIP_AND_PIPE
+    )
+
+    await dev.upload_prepared_image((b"\x00" * 8, None, Image.new("P", (8, 8), 0)), compress=False)
+
+    assert _opcodes(conn)[:2] == [0x80, 0x70]  # fell back to DIRECT_WRITE as for any other pipe NACK
 
 
 # ─── Config write (0x41 / 0x42) ──────────────────────────────────────────────
