@@ -90,7 +90,8 @@ class Sec2KeyRequiredError(Sec2Error):
             f"The display is claimed and none of the {tried} keys tried opened a session; every key was kept. "
             "Pass its device key, or factory-reset it (five quick power cycles) if the key is lost."
             if tried
-            else "The display is claimed and no key for it is known. Pass its device key or a key store that has it."
+            else "The display is claimed and no key for it is known. Pass its device key or a key store that has it; "
+            "if the key is lost, factory-reset the display (five quick power cycles)."
         )
 
 
