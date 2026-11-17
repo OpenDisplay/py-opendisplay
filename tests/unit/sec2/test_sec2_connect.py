@@ -205,3 +205,10 @@ def test_typed_credentials_check_their_length() -> None:
         DeviceKey(bytes(15))
     with pytest.raises(ValueError, match="16"):
         LegacyKey(bytes(17))
+
+
+async def test_a_key_for_an_unclaimed_display_is_reported_unused(caplog: pytest.LogCaptureFixture) -> None:
+    async with opendisplay.connect(transport=RefDevice(), encryption_key=LegacyKey(bytes(16))) as dev:
+        assert not dev.security.sec2_session_open
+
+    assert "not used" in caplog.text

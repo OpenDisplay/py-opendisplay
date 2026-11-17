@@ -98,9 +98,16 @@ class SecurityView:
                 0x54, 0, int(SecErr.LOCKED), "The display is locked; factory-reset it (five quick power cycles)."
             )
         if status.state != SecState.CLAIMED:
+            if self._credential is not None:
+                _LOGGER.warning("The display is unclaimed and open; the key passed to connect() is not used")
             return
         if isinstance(self._transport(), TcpTransport):
-            _LOGGER.warning("SEC2 sessions are BLE only; over LAN a claimed display answers only plaintext commands")
+            # § 12: SEC_* is BLE-only; a claimed display serves LAN over TLS with K_lan, which
+            # this library does not derive yet (piece 4 follow-up).
+            _LOGGER.warning(
+                "SEC2 sessions are BLE only, and TLS with a firmware 3.0 key is not supported yet; "
+                "over LAN this claimed display answers only plaintext commands"
+            )
             return
         await self._open_session(status)
         if status.key_legacy and self._rotate_legacy_key:
