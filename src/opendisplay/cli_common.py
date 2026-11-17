@@ -6,11 +6,13 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Coroutine
+from pathlib import Path
 from typing import Any, NoReturn, TypeVar
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from .device import Device, connect
 from .exceptions import (
     AuthenticationFailedError,
     AuthenticationRequiredError,
@@ -18,6 +20,7 @@ from .exceptions import (
     BLETimeoutError,
     OpenDisplayError,
 )
+from .sec2.keystore import DEFAULT_PATH, JsonFileKeyStore
 
 _T = TypeVar("_T")
 
@@ -69,14 +72,17 @@ def _device_kwargs(
     host: str | None = None,
     port: int | None = None,
     tls: bool = False,
+    key_store: str | None = None,
 ) -> dict[str, Any]:
-    """Build OpenDisplayDevice constructor kwargs from CLI args.
+    """Build OpenDisplayDevice constructor kwargs from CLI args (plus ``key_store`` for ``_open_device``).
 
     With ``--host`` the device is addressed over TCP/LAN (WiFi). Otherwise a
     ``--device`` MAC address (contains ':') / macOS UUID (36-char, 4 dashes) or a
     human-readable device name is used over BLE.
     """
     kwargs: dict[str, Any] = {"timeout": timeout, "encryption_key": key}
+    if key_store is not None:
+        kwargs["key_store"] = key_store
     if host is not None:
         kwargs["host"] = host
         if port is not None:
@@ -90,6 +96,33 @@ def _device_kwargs(
     else:
         kwargs["device_name"] = device
     return kwargs
+
+
+def _add_key_store_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--key-store",
+        metavar="PATH",
+        default=str(DEFAULT_PATH),
+        help=f"Where firmware 3.0 device keys are kept (default: {DEFAULT_PATH})",
+    )
+
+
+def _connect_args(device_kwargs: dict[str, Any]) -> dict[str, Any]:
+    """``_device_kwargs`` as ``opendisplay.connect()`` takes them, with the key store opened."""
+    names = {"mac_address": "address", "device_name": "name"}
+    out = {names.get(key, key): value for key, value in device_kwargs.items()}
+    if isinstance(out.get("key_store"), (str, Path)):
+        out["key_store"] = JsonFileKeyStore(Path(out["key_store"]))
+    return out
+
+
+def _open_device(device_kwargs: dict[str, Any]) -> Device:
+    """Connect through ``opendisplay.connect()``: SEC2 on a claimed firmware 3.0 display, else as before.
+
+    The commands use ``dev.legacy``, the ``OpenDisplayDevice`` inside, for what the new surface
+    does not cover yet.
+    """
+    return connect(**_connect_args(device_kwargs))
 
 
 def _add_device_options(parser: argparse.ArgumentParser) -> None:
@@ -114,6 +147,7 @@ def _add_device_options(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Fail at once if the display does not answer, instead of allowing about 60 s for it to finish redrawing",
     )
+    _add_key_store_option(parser)
     parser.add_argument(
         "--timeout",
         type=float,

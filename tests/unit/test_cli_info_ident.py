@@ -18,6 +18,19 @@ FW3 = {"major": 3, "minor": 0, "patch": 0, "sha": "0" * 40}
 FW2 = {"major": 2, "minor": 27, "patch": 1, "sha": "a" * 40}
 
 
+class _Opened:
+    """What ``cli._open_device`` returns: a connected ``Device`` whose ``legacy`` is the fake."""
+
+    def __init__(self, legacy: object) -> None:
+        self.legacy = legacy
+
+    async def __aenter__(self) -> _Opened:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
 class _Device:
     """Counts identity reads; ``ic_type`` None stands for a device without a config."""
 
@@ -83,7 +96,7 @@ def test_info_on_a_device_without_config_reports_firmware_and_identity(
         async def read_sec_status(self):  # firmware that does not answer SEC_STATUS
             raise OpenDisplayTimeoutError("silent")
 
-    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)
+    monkeypatch.setattr(cli, "_open_device", lambda kwargs: _Opened(FakeDevice(capabilities=None)))
 
     asyncio.run(cli._info({}, output_json=True))
 

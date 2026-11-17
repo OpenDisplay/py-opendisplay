@@ -25,6 +25,7 @@ from .cli_common import (
     _device_kwargs,
     _error,
     _handle_ble_error,
+    _open_device,
     _parse_hex_key,
     _run,
     _spinner,
@@ -40,11 +41,9 @@ from .exceptions import (
     BLEConnectionError,
     BLETimeoutError,
     IdentNotSupportedError,
-    NoStoredConfigError,
     OpenDisplayError,
 )
 from .models.advertisement import AdvertisementData
-from .models.capabilities import DeviceCapabilities
 from .models.config import GlobalConfig
 from .models.enums import (
     CapacityEstimator,
@@ -240,7 +239,12 @@ def _add_info_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPar
 
 def _cmd_info(args: argparse.Namespace) -> None:
     key = _parse_hex_key(args.key)
-    _run(_info(_device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls), args.output_json))
+    _run(
+        _info(
+            _device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls, args.key_store),
+            args.output_json,
+        )
+    )
 
 
 async def _read_sensors(device: OpenDisplayDevice, progress: Progress, task: TaskID) -> dict[int, SensorReading]:
@@ -294,13 +298,16 @@ async def _read_sec_status(device: OpenDisplayDevice, fw: FirmwareVersion) -> Se
 
 
 async def _info_with_config(device_kwargs: dict[str, Any]) -> _InfoContext:
-    """Gather the full report from a device that has a config."""
+    """Gather the report: the full one with a stored config, firmware and identity without."""
     with _spinner() as progress:
         task = progress.add_task("Connecting...", total=None)
-        async with OpenDisplayDevice(**device_kwargs) as device:
+        async with _open_device(device_kwargs) as dev:
+            device = dev.legacy
             progress.update(task, description="Reading info...")
             fw = await device.read_firmware_version()
             config = device.config
+            if config is None:
+                return await _context_without_config(device, fw)
             display = config.displays[0] if config and config.displays else None
             return _InfoContext(
                 mac=device.mac_address,
@@ -318,48 +325,40 @@ async def _info_with_config(device_kwargs: dict[str, Any]) -> _InfoContext:
             )
 
 
-async def _info_without_config(device_kwargs: dict[str, Any]) -> _InfoContext:
-    """Gather what a device with no stored config can still say: firmware and identity.
+async def _context_without_config(device: OpenDisplayDevice, fw: FirmwareVersion) -> _InfoContext:
+    """What a device with no stored config can still say: firmware and identity.
 
-    Connects with placeholder capabilities so the device object does not try to read the
-    config again. Display size and colours come from the identity's first display record
-    when the firmware reports one (devices with factory data do), otherwise they are left out.
+    Display size and colours come from the identity's first display record when the firmware
+    reports one (devices with factory data do), otherwise they are left out.
     """
-    placeholder = DeviceCapabilities(width=0, height=0, color_scheme=ColorScheme.MONO)
-    async with OpenDisplayDevice(**device_kwargs, capabilities=placeholder) as device:
-        fw = await device.read_firmware_version()
-        ident = await _read_ident(device, fw)
-        record = ident.displays[0] if ident and ident.displays else None
-        try:
-            scheme_name = ColorScheme.from_value(record.color_scheme).name if record else ""
-        except ValueError:
-            scheme_name = ""
-        return _InfoContext(
-            mac=device.mac_address,
-            device_name=device.device_name,
-            fw=fw,
-            config=None,
-            width=record.pixel_width if record else 0,
-            height=record.pixel_height if record else 0,
-            color_scheme_name=scheme_name,
-            rotation=0,
-            board_type_name=None,
-            ident=ident,
-            sec_status=await _read_sec_status(device, fw),
-        )
+    ident = await _read_ident(device, fw)
+    record = ident.displays[0] if ident and ident.displays else None
+    try:
+        scheme_name = ColorScheme.from_value(record.color_scheme).name if record else ""
+    except ValueError:
+        scheme_name = ""
+    return _InfoContext(
+        mac=device.mac_address,
+        device_name=device.device_name,
+        fw=fw,
+        config=None,
+        width=record.pixel_width if record else 0,
+        height=record.pixel_height if record else 0,
+        color_scheme_name=scheme_name,
+        rotation=0,
+        board_type_name=None,
+        ident=ident,
+        sec_status=await _read_sec_status(device, fw),
+    )
 
 
 async def _info(device_kwargs: dict[str, Any], output_json: bool) -> None:
     try:
         ctx = await _info_with_config(device_kwargs)
-    except NoStoredConfigError:
-        _console.print("[yellow]The device has no stored configuration; showing firmware and identity only.[/yellow]")
-        try:
-            ctx = await _info_without_config(device_kwargs)
-        except OpenDisplayError as exc:
-            _handle_ble_error(exc)
     except OpenDisplayError as exc:
         _handle_ble_error(exc)
+    if ctx.config is None:
+        _console.print("[yellow]The device has no stored configuration; showing firmware and identity only.[/yellow]")
 
     if output_json:
         _stdout.print_json(json.dumps(_info_to_json(ctx)))
@@ -472,7 +471,7 @@ def _cmd_upload(args: argparse.Namespace) -> None:
     gamut = _parse_compression_value("--gamut", args.gamut)
     _run(
         _upload(
-            _device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls),
+            _device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls, args.key_store),
             args.image,
             _REFRESH_CHOICES[args.refresh_mode],
             _DITHER_CHOICES[args.dither_mode],
@@ -542,7 +541,8 @@ async def _upload(
             refresh_task = spinner_progress.add_task("Refreshing display...", total=None, visible=False)
             bar_task = bar_progress.add_task("", total=None, visible=False)
 
-            async with OpenDisplayDevice(**device_kwargs) as device:
+            async with _open_device(device_kwargs) as dev:
+                device = dev.legacy
                 spinner_progress.update(connect_task, visible=False)
                 spinner_progress.update(upload_task, visible=True)
                 bar_progress.update(bar_task, visible=True)
@@ -594,7 +594,7 @@ def _add_reboot_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
 
 def _cmd_reboot(args: argparse.Namespace) -> None:
     key = _parse_hex_key(args.key)
-    _run(_reboot(_device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls)))
+    _run(_reboot(_device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls, args.key_store)))
 
 
 async def _reboot(device_kwargs: dict[str, Any]) -> None:
@@ -602,7 +602,8 @@ async def _reboot(device_kwargs: dict[str, Any]) -> None:
     with _spinner() as progress:
         progress.add_task("Connecting...", total=None)
         try:
-            async with OpenDisplayDevice(**device_kwargs) as device:
+            async with _open_device(device_kwargs) as dev:
+                device = dev.legacy
                 await device.reboot()
                 rebooted = True
         except (BLEConnectionError, BLETimeoutError):
@@ -625,7 +626,7 @@ def _add_sleep_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
 
 def _cmd_sleep(args: argparse.Namespace) -> None:
     key = _parse_hex_key(args.key)
-    _run(_sleep(_device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls)))
+    _run(_sleep(_device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls, args.key_store)))
 
 
 async def _sleep(device_kwargs: dict[str, Any]) -> None:
@@ -633,7 +634,8 @@ async def _sleep(device_kwargs: dict[str, Any]) -> None:
     with _spinner() as progress:
         progress.add_task("Connecting...", total=None)
         try:
-            async with OpenDisplayDevice(**device_kwargs) as device:
+            async with _open_device(device_kwargs) as dev:
+                device = dev.legacy
                 await device.deep_sleep()
                 slept = True
         except (BLEConnectionError, BLETimeoutError):
@@ -669,14 +671,19 @@ def _add_export_config_parser(subparsers: argparse._SubParsersAction[argparse.Ar
 def _cmd_export_config(args: argparse.Namespace) -> None:
     key = _parse_hex_key(args.key)
     output = args.output or _default_export_path(args.device)
-    _run(_export_config(_device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls), output))
+    _run(
+        _export_config(
+            _device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls, args.key_store), output
+        )
+    )
 
 
 async def _export_config(device_kwargs: dict[str, Any], output_path: str) -> None:
     try:
         with _spinner() as progress:
             task = progress.add_task("Connecting...", total=None)
-            async with OpenDisplayDevice(**device_kwargs) as device:
+            async with _open_device(device_kwargs) as dev:
+                device = dev.legacy
                 progress.update(task, description="Reading config...")
                 device.export_config_json(output_path)
     except OpenDisplayError as exc:
@@ -712,7 +719,7 @@ def _add_write_config_parser(subparsers: argparse._SubParsersAction[argparse.Arg
 
 def _cmd_write_config(args: argparse.Namespace) -> None:
     key = _parse_hex_key(args.key)
-    device_kwargs = _device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls)
+    device_kwargs = _device_kwargs(args.device, key, args.timeout, args.host, args.port, args.tls, args.key_store)
     _run(_write_config(device_kwargs, args.input, args.unknown_packets))
 
 
@@ -771,7 +778,8 @@ async def _write_config(device_kwargs: dict[str, Any], input_path: str, unknown_
     try:
         with _spinner() as progress:
             task = progress.add_task("Connecting...", total=None)
-            async with OpenDisplayDevice(**device_kwargs) as device:
+            async with _open_device(device_kwargs) as dev:
+                device = dev.legacy
                 on_device = device.config
                 lost = _packets_lost_by_writing(on_device, config) if on_device else {}
                 if lost:
