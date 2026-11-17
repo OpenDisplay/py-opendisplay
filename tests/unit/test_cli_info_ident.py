@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from opendisplay import cli
-from opendisplay.exceptions import InvalidResponseError, NoStoredConfigError
+from opendisplay.exceptions import InvalidResponseError, NoStoredConfigError, OpenDisplayTimeoutError
 from opendisplay.models.enums import ICType
 from opendisplay.protocol.responses import parse_read_ident
 
@@ -79,6 +79,9 @@ def test_info_on_a_device_without_config_reports_firmware_and_identity(
 
         async def read_ident(self):
             return IDENT
+
+        async def read_sec_status(self):  # firmware that does not answer SEC_STATUS
+            raise OpenDisplayTimeoutError("silent")
 
     monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)
 

@@ -29,6 +29,7 @@ from .models.enums import (
 from .models.firmware import FirmwareVersion
 from .models.ident import DeviceIdent, FirmwareTarget
 from .models.profile import ProfileMode, build_profile
+from .sec2.wire import SecState, SecStatus
 from .sensors import SensorReading
 
 _COLOR_SCHEME_STYLES: dict[str, str] = {"R": "red", "Y": "yellow", "G": "green"}
@@ -124,6 +125,8 @@ class _InfoContext:
     sensor_readings: dict[int, SensorReading] = field(default_factory=dict)
     # READ_IDENT answer; None when the firmware predates the command or it was not asked.
     ident: DeviceIdent | None = None
+    # SEC_STATUS answer (firmware 3.0); None when not asked or not answered.
+    sec_status: SecStatus | None = None
 
     @property
     def display(self) -> Any:
@@ -377,6 +380,26 @@ def _display_attr(ctx: _InfoContext, attr: str) -> Any:
     return getattr(display, attr) if display else None
 
 
+def _sec_attr(ctx: _InfoContext, name: str) -> Any:
+    return getattr(ctx.sec_status, name) if ctx.sec_status is not None else None
+
+
+def _sec_state(ctx: _InfoContext) -> str | None:
+    if ctx.sec_status is None:
+        return None
+    state = ctx.sec_status.state
+    return state.name if isinstance(state, SecState) else f"state {state}"
+
+
+def _claim_mode_label(ctx: _InfoContext) -> str | None:
+    status = ctx.sec_status
+    if status is None:
+        return None
+    if not status.claim_mode:
+        return "no"
+    return f"claim mode, {status.window_s} s left, {status.renders_left} codes left"
+
+
 # ── the report spec ──────────────────────────────────────────────────────────
 
 _INFO_SECTIONS: tuple[_Section, ...] = (
@@ -463,6 +486,23 @@ _INFO_SECTIONS: tuple[_Section, ...] = (
             ),
             _Field("", "deep_sleep_current_ua", lambda c: _config_attr(c, "power", "deep_sleep_current_ua") or None),
             _Field("TX power", "tx_power_dbm", lambda c: _config_attr(c, "power", "tx_power"), lambda v: f"{v} dBm"),
+        ),
+    ),
+    _Section(
+        title="Device security",
+        key="sec2",
+        available=lambda c: c.sec_status is not None,
+        json_nullable=True,
+        fields=(
+            _Field("Version", "sec_ver", lambda c: _sec_attr(c, "sec_ver")),
+            _Field("State", "state", _sec_state),
+            _Field("Claim mode", "claim_mode", lambda c: _sec_attr(c, "claim_mode"), tree_value=_claim_mode_label),
+            _Field("", "claim_window_s", lambda c: _sec_attr(c, "window_s")),
+            _Field("", "renders_left", lambda c: _sec_attr(c, "renders_left")),
+            _Field("UID", "uid", lambda c: c.sec_status.uid.hex() if c.sec_status else None),
+            _Field("Session", "session_timeout_s", lambda c: _sec_attr(c, "timeout_s"), lambda v: f"{v}s"),
+            _Field("Rotate key", "rotation_suggested", lambda c: _sec_attr(c, "rotation_suggested"), _yes_no),
+            _Field("", "key_legacy", lambda c: _sec_attr(c, "key_legacy")),
         ),
     ),
     _Section(

@@ -37,6 +37,7 @@
     "read_firmware_version": "async (self) -> 'FirmwareVersion'",
     "read_ident": "async (self) -> 'DeviceIdent'",
     "read_msd": "async (self) -> 'AdvertisementData'",
+    "read_sec_status": "async (self) -> 'SecStatus'",
     "read_sensors": "async (self) -> 'list[SensorReading]'",
     "reboot": "async (self) -> 'None'",
     "rotation": "property",

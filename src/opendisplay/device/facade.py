@@ -61,6 +61,7 @@ from ..protocol.responses import (
     raise_for_config_write_refusal,
     unpack_command_code,
 )
+from ..sec2.wire import CMD_SEC_STATUS, SecStatus, parse_sec_status
 from ..sensors import SensorReading, read_sensor_values
 from ..transport import BLEConnection, TcpTransport, Transport
 from .channel import MAX_STRAY_AUTH_FRAMES, SecureChannel
@@ -703,6 +704,20 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         if is_ident_unsupported_frame(response):
             raise IdentNotSupportedError()
         return parse_read_ident(response)
+
+    @_serialized
+    async def read_sec_status(self) -> SecStatus:
+        """Read the device's security state (CMD_SEC_STATUS 0x0054, firmware 3.0).
+
+        Plaintext and always allowed, like READ_IDENT, so it works before any session. The answer
+        is unauthenticated and therefore advisory (SECURITY_V2.md § 5.1).
+
+        Raises:
+            OpenDisplayTimeoutError: The device did not answer (2.x firmware does not know it).
+            InvalidResponseError: The answer is not a SEC_STATUS frame.
+        """
+        await self._conn.write_command(bytes([0x00, CMD_SEC_STATUS & 0xFF]))
+        return parse_sec_status(await self._conn.read_response(timeout=self.TIMEOUT_IDENT))
 
     @_serialized
     async def read_msd(self) -> AdvertisementData:
