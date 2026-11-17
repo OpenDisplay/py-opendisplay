@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from epaper_dithering import DitherMode
 
+from .. import redraw
 from ..credentials import DeviceKey
 from ..encoding import compress_image_data
 from ..encoding.compression import FIRMWARE_ZLIB_WINDOW_BITS
@@ -304,10 +305,19 @@ class Device:
         self._profile = build_profile(firmware, config, ident, ident_missing=ident_missing)
         return self._profile
 
+    async def _first_read(self) -> FirmwareVersion:
+        """The firmware version; a silence with no redraw noted says the display may be redrawing."""
+        try:
+            return await self.legacy.read_firmware_version()
+        except OpenDisplayTimeoutError as err:
+            if redraw.remaining(*self.legacy._redraw_keys()):  # pylint: disable=protected-access
+                raise
+            raise type(err)(f"{err} {redraw.REDRAW_HINT}") from err
+
     async def __aenter__(self) -> Device:
         await self.legacy.__aenter__()
         try:
-            firmware = await self.legacy.read_firmware_version()
+            firmware = await self._first_read()
             await self.security.establish(firmware["major"])
             await self.refresh(firmware)
         except BaseException:

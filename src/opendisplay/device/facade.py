@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, TypeVar
 from epaper_dithering import DbsParams, DitherMode
 from PIL import Image
 
+from .. import redraw
 from ..crypto import (
     aes_cmac,
 )
@@ -74,6 +75,7 @@ if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
 
 _LOGGER = logging.getLogger(__name__)
+_RECONNECT_WAIT_S = 2.0  # between BLE connect attempts while the display is noted redrawing
 
 
 _T = TypeVar("_T")
@@ -266,24 +268,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # Resolve device name to MAC address if needed (BLE addressing only;
         # explicit-transport and host modes skip this block).
         if self._device_name:
-            _LOGGER.debug("Resolving device name '%s' to MAC address", self._device_name)
-
-            from ..discovery import discover_devices
-
-            devices = await discover_devices(timeout=self._discovery_timeout)
-
-            if self._device_name not in devices:
-                raise BLEConnectionError(
-                    f"Device '{self._device_name}' not found during discovery. "
-                    f"Available devices: {list(devices.keys())}"
-                )
-
-            self.mac_address = devices[self._device_name]
-            _LOGGER.info(
-                "Resolved device name '%s' to MAC address %s",
-                self._device_name,
-                self.mac_address,
-            )
+            await self._resolve_name()
         else:
             # MAC was provided directly — validated non-empty in __init__
             self.mac_address = self._mac_address_param or ""
@@ -319,7 +304,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             )
 
         self._attach(transport)
-        await self._conn.connect()
+        await self._connect_link()
 
         # Over TCP the device gates AES-CCM decrypt on origin: TLS frames are
         # already-secure, plaintext frames are never decrypted. Running the
@@ -374,6 +359,40 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         if self._connection is None:
             raise RuntimeError("Device not connected")
         return self._connection
+
+    async def _resolve_name(self) -> None:
+        """Resolve ``device_name`` to an address by scanning; keep scanning while it is noted redrawing."""
+        from ..discovery import discover_devices  # pylint: disable=import-outside-toplevel
+
+        name = self._device_name
+        pending = redraw.remaining(name)
+        if pending:
+            _LOGGER.info("%s may be redrawing; waiting up to %.0f s", name, pending)
+        while True:
+            pending = redraw.remaining(name)
+            scan = min(self._discovery_timeout, pending) if pending else self._discovery_timeout
+            devices = await discover_devices(timeout=scan)
+            if name in devices:
+                self.mac_address = devices[name]
+                redraw.link(name, self.mac_address)
+                _LOGGER.info("Resolved device name '%s' to MAC address %s", name, self.mac_address)
+                return
+            if not redraw.remaining(name):
+                raise BLEConnectionError(
+                    f"Device '{name}' not found during discovery. Available devices: {list(devices.keys())}. "
+                    f"{redraw.REDRAW_HINT}"
+                )
+
+    async def _connect_link(self) -> None:
+        """Open the transport; retry a failed BLE connect while the display is noted redrawing."""
+        while True:
+            try:
+                await self._conn.connect()
+                return
+            except BLEConnectionError as err:
+                if not redraw.remaining(*self._redraw_keys()):
+                    raise type(err)(f"{err} {redraw.REDRAW_HINT}") from err
+                await redraw._sleep(_RECONNECT_WAIT_S)  # pylint: disable=protected-access
 
     def _redraw_keys(self) -> tuple[str, ...]:
         """Every identity of this display, for ``opendisplay.redraw`` notes."""
