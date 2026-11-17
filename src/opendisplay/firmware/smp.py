@@ -37,6 +37,14 @@ class SmpTransferError(SmpError):
     """The upload stopped part-way; the device keeps its old image."""
 
 
+class SmpStallError(SmpTransferError):
+    """The link stopped carrying the upload (no reply, or a disconnect): worth starting over.
+
+    An ESPHome Bluetooth proxy drops a burst of unacknowledged writes it cannot queue; the device
+    then waits for the rest of a request and never replies. Not the device refusing the image.
+    """
+
+
 def _require_extra() -> None:
     try:
         import smpclient  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
@@ -101,13 +109,22 @@ def _transport_class() -> type[Any]:
 
 
 @asynccontextmanager
-async def session(ble_device: BLEDevice) -> AsyncIterator[SMPClient]:
-    """An SMP client connected to ``ble_device``; disconnected on exit."""
-    _require_extra()
-    from smpclient import SMPClient  # pylint: disable=import-outside-toplevel
+async def session(ble_device: BLEDevice, *, burst_writes: int | None = None) -> AsyncIterator[SMPClient]:
+    """An SMP client connected to ``ble_device``; disconnected on exit.
 
-    client = SMPClient(_transport_class()(ble_device), ble_device.address, timeout_s=_REQUEST_TIMEOUT_S)
+    Args:
+        ble_device: The display.
+        burst_writes: Cap each request at this many writes of one MTU. By default a request fills
+            the device's buffer (8 KB on ESP32: about 33 writes, sent without acknowledgement).
+    """
+    _require_extra()
+    import smpclient  # pylint: disable=import-outside-toplevel
+
+    client = smpclient.SMPClient(_transport_class()(ble_device), ble_device.address, timeout_s=_REQUEST_TIMEOUT_S)
     await client.connect(_CONNECT_TIMEOUT_S)
+    if burst_writes is not None:
+        transport = client._transport  # pylint: disable=protected-access
+        transport.initialize(min(transport.max_unencoded_size, burst_writes * transport.mtu))
     try:
         yield client
     finally:
@@ -125,7 +142,8 @@ async def upload(client: SMPClient, image: bytes, *, on_progress: Callable[[int,
     """Upload ``image`` to the update slot (image 0).
 
     Raises:
-        SmpTransferError: The upload stopped; the device keeps running its old image.
+        SmpStallError: The link stopped carrying it; starting over may work.
+        SmpTransferError: The device refused the image. Either way it keeps running its old image.
     """
     done = 0
     try:
@@ -134,7 +152,11 @@ async def upload(client: SMPClient, image: bytes, *, on_progress: Callable[[int,
             if on_progress is not None:
                 on_progress(offset, len(image))
     except Exception as err:  # smpclient raises its own and asyncio/bleak errors alike
-        raise SmpTransferError(f"Upload stopped at {done} of {len(image)} bytes: {err}") from err
+        from smpclient.exceptions import SMPUploadError  # pylint: disable=import-outside-toplevel
+
+        if isinstance(err, SMPUploadError):
+            raise SmpTransferError(f"The device refused the image at {done} of {len(image)} bytes: {err}") from err
+        raise SmpStallError(f"Upload stopped at {done} of {len(image)} bytes: {err}") from err
 
 
 async def test_and_reset(client: SMPClient) -> bytes:

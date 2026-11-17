@@ -45,6 +45,7 @@ REBOOT_ALLOWANCE_S: Final = 180.0  # reboot + a Spectra redraw: not seen for 1.5
 _SCAN_TIMEOUT_S: Final = 30.0
 _SCAN_ATTEMPTS: Final = 3  # macOS sometimes misses a display that has just been disconnected
 _APPLOADER_NAME: Final = "OTA"
+STALL_BURST_WRITES: Final = 8  # writes per request after a stall; the Bedroom proxy failed at 20+
 
 SMP: Final = "smp"
 APPLOADER: Final = "silabs-apploader"
@@ -197,20 +198,40 @@ def _running(states: list[Any]) -> Any:
     return next((s for s in states if s.active), states[0])
 
 
+async def _attempt(
+    find: FindDevice,
+    address: str,
+    image: bytes,
+    on_progress: Callable[[int, int], None] | None,
+    *,
+    burst_writes: int | None,
+) -> tuple[Any, bytes | None, smp.SmpTransferError | None]:
+    """One upload on its own link: (running slot before, hash marked for the test boot, failure)."""
+    async with smp.session(await _find(find, address), burst_writes=burst_writes) as client:
+        before = _running(await smp.image_states(client)) if burst_writes is None else None
+        try:
+            await smp.upload(client, image, on_progress=on_progress)
+        except smp.SmpTransferError as err:
+            return before, None, err
+        return before, await smp.test_and_reset(client), None
+
+
 async def _update_smp(
     device: Device, image: bytes, find: FindDevice, on_progress: Callable[[int, int], None] | None
 ) -> UpdateResult:
     address = device.legacy.mac_address
-    failed: smp.SmpTransferError | None = None
-    async with smp.session(await _find(find, address)) as client:
-        before = _running(await smp.image_states(client))
-        try:
-            await smp.upload(client, image, on_progress=on_progress)
-        except smp.SmpTransferError as err:
-            failed = err
-        else:
-            new_hash = await smp.test_and_reset(client)
+    before, new_hash, failed = await _attempt(find, address, image, on_progress, burst_writes=None)
     old = str(before.version)
+    if isinstance(failed, smp.SmpStallError):
+        # An ESP32 aborts the upload when its link drops, so this starts over, on a new link, in
+        # bursts short enough for an ESPHome proxy's queue (reliable up to 16 there, failing at 20+).
+        _LOGGER.info(
+            "The upload to %s stalled (%s); starting over, %d writes per request", address, failed, STALL_BURST_WRITES
+        )
+        try:
+            _, new_hash, failed = await _attempt(find, address, image, on_progress, burst_writes=STALL_BURST_WRITES)
+        except Exception as err:  # pylint: disable=broad-exception-caught  # smpclient/bleak/asyncio alike
+            failed = smp.SmpStallError(f"Could not open a link for a second attempt: {err}")
     if failed is not None:
         _LOGGER.debug("SMP upload to %s failed", address, exc_info=failed)
         await _reconnect_quietly(device)

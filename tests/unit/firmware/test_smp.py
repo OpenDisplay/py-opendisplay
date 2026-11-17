@@ -213,3 +213,58 @@ async def test_a_stale_service_cache_is_cleared_once_and_the_link_reopened(monke
 
     assert events == ["connect", "clear_cache:stale", "disconnect:stale", "connect", "notify:fresh"]
     assert transport.mtu == 244
+
+
+async def test_a_reply_that_never_comes_is_a_stall_worth_retrying() -> None:
+    client = _FakeClient(upload_error=TimeoutError("no response"))
+
+    with pytest.raises(smp.SmpStallError, match="4096 of 10240"):
+        await smp.upload(client, IMAGE)  # type: ignore[arg-type]
+
+
+async def test_a_device_that_refuses_the_image_is_not_a_stall() -> None:
+    from smpclient.exceptions import SMPUploadError
+
+    client = _FakeClient(upload_error=SMPUploadError("rc 9 (corrupt)"))
+
+    with pytest.raises(smp.SmpTransferError) as caught:
+        await smp.upload(client, IMAGE)  # type: ignore[arg-type]
+
+    assert not isinstance(caught.value, smp.SmpStallError)
+
+
+async def test_a_session_can_cap_each_request_at_a_number_of_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The Bedroom proxy dropped bursts above ~16 write-without-response packets.
+    from types import SimpleNamespace
+
+    import smpclient
+
+    sizes: list[int] = []
+
+    class _Transport:
+        mtu = 253
+        max_unencoded_size = 8192
+
+        def initialize(self, size: int) -> None:
+            sizes.append(size)
+
+    class _Client:
+        def __init__(self, transport: Any, address: str, timeout_s: float) -> None:
+            self._transport = _Transport()
+
+        async def connect(self, timeout_s: float) -> None:
+            return None
+
+        async def disconnect(self) -> None:
+            return None
+
+    monkeypatch.setattr(smpclient, "SMPClient", _Client)
+    monkeypatch.setattr(smp, "_transport_class", lambda: lambda ble_device: None)
+    device = SimpleNamespace(name="OD4064C9", address="AA:BB:CC:DD:EE:FF")
+
+    async with smp.session(device) as _:  # type: ignore[arg-type]
+        pass
+    async with smp.session(device, burst_writes=8) as _:  # type: ignore[arg-type]
+        pass
+
+    assert sizes == [8 * 253]  # uncapped sessions keep the device's buffer size
