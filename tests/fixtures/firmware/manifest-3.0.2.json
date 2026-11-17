@@ -1,0 +1,1287 @@
+{
+  "schema": "opendisplay-release/1",
+  "repository": "OpenDisplay/Firmware_Unified",
+  "version": "3.0.2",
+  "tag": "3.0.2",
+  "commit": "a519151badc65b498d8266371532a058cf47aa7b",
+  "built_at": "2026-11-15T09:33:27Z",
+  "signing": {
+    "bg22": "unsigned",
+    "esp32": "unsigned",
+    "mcuboot": "debug-key"
+  },
+  "boards": [
+    {
+      "board": "bg22",
+      "target": "efr32bg22-slc",
+      "chip": "efr32bg22",
+      "legacy_names": [
+        "opendisplay-bg22"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-bg22-bootloader.s37",
+            "opendisplay-bg22-app.s37"
+          ],
+          "protocol": "swd",
+          "erases_config": true,
+          "requires": "none (virgin part)"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-bg22-ota.gbl"
+          ],
+          "protocol": "silabs-apploader",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota-from-2x": {
+          "files": [
+            "opendisplay-bg22-ota.gbl"
+          ],
+          "protocol": "silabs-apploader",
+          "erases_config": false,
+          "requires": "MANDATORY config migration (0xAE-0xB1 drive packets) written right after the OTA; without it the panel stays blank"
+        }
+      }
+    },
+    {
+      "board": "c3-n16",
+      "target": "esp32-idf",
+      "chip": "esp32c3",
+      "legacy_names": [
+        "esp32-c3-N16"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-c3-n16-merged.bin"
+          ],
+          "web_manifest": "opendisplay-c3-n16-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-c3-n16-bootloader.bin",
+            "opendisplay-c3-n16-partition-table.bin",
+            "opendisplay-c3-n16-ota-data.bin",
+            "opendisplay-c3-n16-app.bin"
+          ],
+          "web_manifest": "opendisplay-c3-n16-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-c3-n16-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "c3-n4",
+      "target": "esp32-idf",
+      "chip": "esp32c3",
+      "legacy_names": [
+        "esp32-c3-N4"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-c3-n4-merged.bin"
+          ],
+          "web_manifest": "opendisplay-c3-n4-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-c3-n4-bootloader.bin",
+            "opendisplay-c3-n4-partition-table.bin",
+            "opendisplay-c3-n4-ota-data.bin",
+            "opendisplay-c3-n4-app.bin"
+          ],
+          "web_manifest": "opendisplay-c3-n4-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-c3-n4-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "c6-n4",
+      "target": "esp32-idf",
+      "chip": "esp32c6",
+      "legacy_names": [
+        "esp32-c6-N4"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-c6-n4-merged.bin"
+          ],
+          "web_manifest": "opendisplay-c6-n4-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-c6-n4-bootloader.bin",
+            "opendisplay-c6-n4-partition-table.bin",
+            "opendisplay-c6-n4-ota-data.bin",
+            "opendisplay-c6-n4-app.bin"
+          ],
+          "web_manifest": "opendisplay-c6-n4-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-c6-n4-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "esp32-n4",
+      "target": "esp32-idf",
+      "chip": "esp32",
+      "legacy_names": [
+        "esp32-N4"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-esp32-n4-merged.bin"
+          ],
+          "web_manifest": "opendisplay-esp32-n4-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-esp32-n4-bootloader.bin",
+            "opendisplay-esp32-n4-partition-table.bin",
+            "opendisplay-esp32-n4-ota-data.bin",
+            "opendisplay-esp32-n4-app.bin"
+          ],
+          "web_manifest": "opendisplay-esp32-n4-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-esp32-n4-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "esp32-wrover-e-n4r8",
+      "target": "esp32-idf",
+      "chip": "esp32",
+      "legacy_names": [
+        "esp32-wrover-e-N4R8"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-esp32-wrover-e-n4r8-merged.bin"
+          ],
+          "web_manifest": "opendisplay-esp32-wrover-e-n4r8-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-esp32-wrover-e-n4r8-bootloader.bin",
+            "opendisplay-esp32-wrover-e-n4r8-partition-table.bin",
+            "opendisplay-esp32-wrover-e-n4r8-ota-data.bin",
+            "opendisplay-esp32-wrover-e-n4r8-app.bin"
+          ],
+          "web_manifest": "opendisplay-esp32-wrover-e-n4r8-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-esp32-wrover-e-n4r8-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "s3-n16r8-extuart",
+      "target": "esp32-idf",
+      "chip": "esp32s3",
+      "legacy_names": [
+        "esp32-s3-N16R8-extuart"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-s3-n16r8-extuart-merged.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n16r8-extuart-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-s3-n16r8-extuart-bootloader.bin",
+            "opendisplay-s3-n16r8-extuart-partition-table.bin",
+            "opendisplay-s3-n16r8-extuart-ota-data.bin",
+            "opendisplay-s3-n16r8-extuart-app.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n16r8-extuart-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-s3-n16r8-extuart-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "s3-n16r8",
+      "target": "esp32-idf",
+      "chip": "esp32s3",
+      "legacy_names": [
+        "esp32-s3-N16R8"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-s3-n16r8-merged.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n16r8-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-s3-n16r8-bootloader.bin",
+            "opendisplay-s3-n16r8-partition-table.bin",
+            "opendisplay-s3-n16r8-ota-data.bin",
+            "opendisplay-s3-n16r8-app.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n16r8-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-s3-n16r8-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "s3-n32r8-extuart",
+      "target": "esp32-idf",
+      "chip": "esp32s3",
+      "legacy_names": [
+        "esp32-s3-N32R8-extuart"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-s3-n32r8-extuart-merged.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n32r8-extuart-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-s3-n32r8-extuart-bootloader.bin",
+            "opendisplay-s3-n32r8-extuart-partition-table.bin",
+            "opendisplay-s3-n32r8-extuart-ota-data.bin",
+            "opendisplay-s3-n32r8-extuart-app.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n32r8-extuart-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-s3-n32r8-extuart-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "s3-n32r8",
+      "target": "esp32-idf",
+      "chip": "esp32s3",
+      "legacy_names": [
+        "esp32-s3-N32R8"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-s3-n32r8-merged.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n32r8-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-s3-n32r8-bootloader.bin",
+            "opendisplay-s3-n32r8-partition-table.bin",
+            "opendisplay-s3-n32r8-ota-data.bin",
+            "opendisplay-s3-n32r8-app.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n32r8-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-s3-n32r8-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "s3-n4r2",
+      "target": "esp32-idf",
+      "chip": "esp32s3",
+      "legacy_names": [
+        "esp32-s3-N4R2"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-s3-n4r2-merged.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n4r2-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-s3-n4r2-bootloader.bin",
+            "opendisplay-s3-n4r2-partition-table.bin",
+            "opendisplay-s3-n4r2-ota-data.bin",
+            "opendisplay-s3-n4r2-app.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n4r2-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-s3-n4r2-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "s3-n8r8",
+      "target": "esp32-idf",
+      "chip": "esp32s3",
+      "legacy_names": [
+        "esp32-s3-N8R8"
+      ],
+      "flows": {
+        "usb-install": {
+          "files": [
+            "opendisplay-s3-n8r8-merged.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n8r8-install-manifest.json",
+          "erases_config": true
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-s3-n8r8-bootloader.bin",
+            "opendisplay-s3-n8r8-partition-table.bin",
+            "opendisplay-s3-n8r8-ota-data.bin",
+            "opendisplay-s3-n8r8-app.bin"
+          ],
+          "web_manifest": "opendisplay-s3-n8r8-manifest.json",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        },
+        "ble-ota": {
+          "files": [
+            "opendisplay-s3-n8r8-app.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs 3.x"
+        }
+      }
+    },
+    {
+      "board": "xiao_nrf52840",
+      "target": "nordic-zephyr",
+      "chip": "nrf52840",
+      "legacy_names": [
+        "NRF52840"
+      ],
+      "flows": {
+        "ble-ota": {
+          "files": [
+            "opendisplay-xiao_nrf52840-ota.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs the 3.x MCUboot layout"
+        },
+        "usb-install": {
+          "files": [
+            "opendisplay-xiao_nrf52840-usb-1-sd-erase.zip",
+            "opendisplay-xiao_nrf52840-usb-2-install.zip"
+          ],
+          "protocol": "adafruit-serial-dfu",
+          "erases_config": true,
+          "requires": "Adafruit nRF52 bootloader with serial DFU; step 1 only while the s140 SoftDevice is present"
+        },
+        "usb-update": {
+          "files": [
+            "opendisplay-xiao_nrf52840-usb-2-install.zip"
+          ],
+          "protocol": "adafruit-serial-dfu",
+          "erases_config": null,
+          "requires": "device already on the 3.x layout (SoftDevice erased); config survival UNTESTED"
+        }
+      }
+    },
+    {
+      "board": "xiao_nrf54l15",
+      "target": "nordic-zephyr",
+      "chip": "nrf54l15",
+      "legacy_names": [
+        "nrf54l15"
+      ],
+      "flows": {
+        "ble-ota": {
+          "files": [
+            "opendisplay-xiao_nrf54l15-ota.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs the 3.x MCUboot layout"
+        },
+        "usb-install": {
+          "files": [
+            "opendisplay-xiao_nrf54l15-merged.hex"
+          ],
+          "protocol": "swd",
+          "erases_config": true
+        },
+        "ble-ota-from-2x": {
+          "files": [
+            "opendisplay-xiao_nrf54l15-ota.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "Firmware_NRF54 1.1.x (same partition map and MCUboot key); UNTESTED on hardware"
+        }
+      }
+    },
+    {
+      "board": "xiao_nrf54lm20a",
+      "target": "nordic-zephyr",
+      "chip": "nrf54lm20a",
+      "legacy_names": [
+        "nrf54lm20a"
+      ],
+      "flows": {
+        "ble-ota": {
+          "files": [
+            "opendisplay-xiao_nrf54lm20a-ota.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "device runs the 3.x MCUboot layout"
+        },
+        "usb-install": {
+          "files": [
+            "opendisplay-xiao_nrf54lm20a-merged.hex"
+          ],
+          "protocol": "swd",
+          "erases_config": true
+        },
+        "ble-ota-from-2x": {
+          "files": [
+            "opendisplay-xiao_nrf54lm20a-ota.bin"
+          ],
+          "protocol": "mcumgr-smp",
+          "erases_config": false,
+          "requires": "Firmware_NRF54 1.1.x (same partition map and MCUboot key); UNTESTED on hardware"
+        }
+      }
+    }
+  ],
+  "artefacts": [
+    {
+      "file": "opendisplay-bg22-ota.gbl",
+      "board": "bg22",
+      "type": "gbl",
+      "offset": null,
+      "size": 228016,
+      "sha256": "60277b1d2ce9cb657429ee81521bd133be6d1b26a7df788577d79e8e991ffbae"
+    },
+    {
+      "file": "opendisplay-bg22-app.s37",
+      "board": "bg22",
+      "type": "s37",
+      "offset": null,
+      "size": 655458,
+      "sha256": "617ef733bab99f0b78386eb6e0ada80853ecfa59dce42b6690dacdcbc47c1eb3"
+    },
+    {
+      "file": "opendisplay-bg22-app.hex",
+      "board": "bg22",
+      "type": "hex",
+      "offset": null,
+      "size": 641206,
+      "sha256": "d0e358af9ae12c2eca1f353b046c6cdfe1ce529a11f3dce76cef924c21b3913d"
+    },
+    {
+      "file": "opendisplay-bg22-bootloader.s37",
+      "board": "bg22",
+      "type": "bootloader-s37",
+      "offset": null,
+      "size": 764948,
+      "sha256": "9f51ce5f90d9f931ceb9bcb0fbade2a7ea9e918e4350232159e7839f14a6321e"
+    },
+    {
+      "file": "opendisplay-c3-n16-bootloader.bin",
+      "board": "c3-n16",
+      "type": "bootloader",
+      "offset": 0,
+      "size": 21152,
+      "sha256": "f0606b3b52d4990dc879659476cf8260d15015a02310ffe94dc9be77bfff8eab"
+    },
+    {
+      "file": "opendisplay-c3-n16-partition-table.bin",
+      "board": "c3-n16",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "bd0f7954aca2ef7d925ee21aaa1f3dc8822d1d6ce5cbbd26a135e5886bfff6ce"
+    },
+    {
+      "file": "opendisplay-c3-n16-ota-data.bin",
+      "board": "c3-n16",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-c3-n16-app.bin",
+      "board": "c3-n16",
+      "type": "app",
+      "offset": 65536,
+      "size": 756096,
+      "sha256": "f94b949318425041557ae28889717ae4b9b577468052c21a7dbe708f24139584"
+    },
+    {
+      "file": "opendisplay-c3-n16-merged.bin",
+      "board": "c3-n16",
+      "type": "merged",
+      "offset": 0,
+      "size": 821632,
+      "sha256": "55d2e311d1cbc4a1bd8d1e664633a9d189945aa12d195b5862abd85db1904333"
+    },
+    {
+      "file": "opendisplay-c3-n16-manifest.json",
+      "board": "c3-n16",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 663,
+      "sha256": "4bdce772f89b2bd3dac25969b2aaef5b603758ea0dffce89b0463ddb9ba28489"
+    },
+    {
+      "file": "opendisplay-c3-n16-install-manifest.json",
+      "board": "c3-n16",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 356,
+      "sha256": "e75c94ce0113a18d44d828e5e185725f9f435181bb759e1af91a13a3a2ce2ee6"
+    },
+    {
+      "file": "opendisplay-c3-n4-bootloader.bin",
+      "board": "c3-n4",
+      "type": "bootloader",
+      "offset": 0,
+      "size": 21152,
+      "sha256": "a6f8fa1d64b9a0131d938097f0d5b16e13c083a56d64d568f0875669169e01eb"
+    },
+    {
+      "file": "opendisplay-c3-n4-partition-table.bin",
+      "board": "c3-n4",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "0a8b5720e7b77ff11f1462458c3a509dee79224e5279898f26d6a2e3ae0517b7"
+    },
+    {
+      "file": "opendisplay-c3-n4-ota-data.bin",
+      "board": "c3-n4",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-c3-n4-app.bin",
+      "board": "c3-n4",
+      "type": "app",
+      "offset": 65536,
+      "size": 756096,
+      "sha256": "4c8fa57671c1b8edbd509b4c7aab09f13fa6719e61771fff73e71fa357a02385"
+    },
+    {
+      "file": "opendisplay-c3-n4-merged.bin",
+      "board": "c3-n4",
+      "type": "merged",
+      "offset": 0,
+      "size": 821632,
+      "sha256": "f6a7cca05524ea6c310e37948d508616087e86638fad6804a742dbeccdc1acb1"
+    },
+    {
+      "file": "opendisplay-c3-n4-manifest.json",
+      "board": "c3-n4",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 659,
+      "sha256": "b4b3252852cab3725ab659132138e845e766b25c3d942edacc85e622fbea2af8"
+    },
+    {
+      "file": "opendisplay-c3-n4-install-manifest.json",
+      "board": "c3-n4",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 355,
+      "sha256": "98b5ce4f62d5996eba6fe36ac6b4b2b74463e56e239955bcdf1ee62010768f73"
+    },
+    {
+      "file": "opendisplay-c6-n4-bootloader.bin",
+      "board": "c6-n4",
+      "type": "bootloader",
+      "offset": 0,
+      "size": 22592,
+      "sha256": "0b6aeed631f319176324ee175d132dc1d6074e7c9898a838e43055e86366d76c"
+    },
+    {
+      "file": "opendisplay-c6-n4-partition-table.bin",
+      "board": "c6-n4",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "0a8b5720e7b77ff11f1462458c3a509dee79224e5279898f26d6a2e3ae0517b7"
+    },
+    {
+      "file": "opendisplay-c6-n4-ota-data.bin",
+      "board": "c6-n4",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-c6-n4-app.bin",
+      "board": "c6-n4",
+      "type": "app",
+      "offset": 65536,
+      "size": 860688,
+      "sha256": "10cf1d152fd7c084e17d0d67b9e031e9026e37dcaa0d04bca469973f6dbee0a9"
+    },
+    {
+      "file": "opendisplay-c6-n4-merged.bin",
+      "board": "c6-n4",
+      "type": "merged",
+      "offset": 0,
+      "size": 926224,
+      "sha256": "2eee2fbda8ab1d43c5e91e067e8ba181dda9b6b27eadad92874b7ed47a9280ed"
+    },
+    {
+      "file": "opendisplay-c6-n4-manifest.json",
+      "board": "c6-n4",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 659,
+      "sha256": "5a1a55b924afd8669cc82c83115051207846f3b4aa92b78b4da8765d2001a59b"
+    },
+    {
+      "file": "opendisplay-c6-n4-install-manifest.json",
+      "board": "c6-n4",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 355,
+      "sha256": "8892da8fb68e5bb1767f2cbdd32c9af700054fdd6dc4513389b1514114181785"
+    },
+    {
+      "file": "opendisplay-esp32-n4-bootloader.bin",
+      "board": "esp32-n4",
+      "type": "bootloader",
+      "offset": 4096,
+      "size": 26240,
+      "sha256": "0488e8e8830c8d0771854cb581f6ae60e09ce868dbf0a446ceb553aa10319736"
+    },
+    {
+      "file": "opendisplay-esp32-n4-partition-table.bin",
+      "board": "esp32-n4",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "0a8b5720e7b77ff11f1462458c3a509dee79224e5279898f26d6a2e3ae0517b7"
+    },
+    {
+      "file": "opendisplay-esp32-n4-ota-data.bin",
+      "board": "esp32-n4",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-esp32-n4-app.bin",
+      "board": "esp32-n4",
+      "type": "app",
+      "offset": 65536,
+      "size": 717616,
+      "sha256": "aac7a85019f2cd9c8ea3dac6409b9d3cc49187c7fa26c7ea539e1f3e3bcb4f15"
+    },
+    {
+      "file": "opendisplay-esp32-n4-merged.bin",
+      "board": "esp32-n4",
+      "type": "merged",
+      "offset": 0,
+      "size": 783152,
+      "sha256": "1c9a89e61c386ce9e87ce2c556b38a3a4322f2cc1aaea312ed03f022a910604a"
+    },
+    {
+      "file": "opendisplay-esp32-n4-manifest.json",
+      "board": "esp32-n4",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 671,
+      "sha256": "885db87331e33b64ffbdba131736c2d74c1bb51aa5aace76b3340c38ae3ace31"
+    },
+    {
+      "file": "opendisplay-esp32-n4-install-manifest.json",
+      "board": "esp32-n4",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 355,
+      "sha256": "4062485789fd433a5b3817bf41afadfb143894d3140a01208be391f04e60e4f9"
+    },
+    {
+      "file": "opendisplay-esp32-wrover-e-n4r8-bootloader.bin",
+      "board": "esp32-wrover-e-n4r8",
+      "type": "bootloader",
+      "offset": 4096,
+      "size": 26240,
+      "sha256": "5df9762cc26ab5de75d03ab3262f5c66c070e10b67f1090d17e6156cf808fd8c"
+    },
+    {
+      "file": "opendisplay-esp32-wrover-e-n4r8-partition-table.bin",
+      "board": "esp32-wrover-e-n4r8",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "0a8b5720e7b77ff11f1462458c3a509dee79224e5279898f26d6a2e3ae0517b7"
+    },
+    {
+      "file": "opendisplay-esp32-wrover-e-n4r8-ota-data.bin",
+      "board": "esp32-wrover-e-n4r8",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-esp32-wrover-e-n4r8-app.bin",
+      "board": "esp32-wrover-e-n4r8",
+      "type": "app",
+      "offset": 65536,
+      "size": 802448,
+      "sha256": "1f8426090f27f9916f3ee9afc4cbe591d4605abce395bb7b087f00dad7e08fe1"
+    },
+    {
+      "file": "opendisplay-esp32-wrover-e-n4r8-merged.bin",
+      "board": "esp32-wrover-e-n4r8",
+      "type": "merged",
+      "offset": 0,
+      "size": 867984,
+      "sha256": "21835a2b95379e0f4d362c46a4aa93e3e4153fc42b7e0796606be52feb7a3bba"
+    },
+    {
+      "file": "opendisplay-esp32-wrover-e-n4r8-manifest.json",
+      "board": "esp32-wrover-e-n4r8",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 715,
+      "sha256": "440c4643f5d731ab7f2ea696c8ae939edc4b82adf712535111670dbabe0cbd9a"
+    },
+    {
+      "file": "opendisplay-esp32-wrover-e-n4r8-install-manifest.json",
+      "board": "esp32-wrover-e-n4r8",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 366,
+      "sha256": "633bf2ddf86f1c0d7185ace6fd7e5c2a888d44d7426ac6d5b464057fb18106cd"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-extuart-bootloader.bin",
+      "board": "s3-n16r8-extuart",
+      "type": "bootloader",
+      "offset": 0,
+      "size": 20912,
+      "sha256": "c6cd6f1791a77b5ee4c403303849f7d65f46cab5152c6a632088be8c0642c33d"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-extuart-partition-table.bin",
+      "board": "s3-n16r8-extuart",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "bd0f7954aca2ef7d925ee21aaa1f3dc8822d1d6ce5cbbd26a135e5886bfff6ce"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-extuart-ota-data.bin",
+      "board": "s3-n16r8-extuart",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-extuart-app.bin",
+      "board": "s3-n16r8-extuart",
+      "type": "app",
+      "offset": 65536,
+      "size": 1276992,
+      "sha256": "1291516034750363c50f418b83ae4a918410f08f666cde72c0177d766b8bb65d"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-extuart-merged.bin",
+      "board": "s3-n16r8-extuart",
+      "type": "merged",
+      "offset": 0,
+      "size": 1342528,
+      "sha256": "6b47349452ed5591a765198997ba26293890e4b25578a5332392e5dd048850d4"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-extuart-manifest.json",
+      "board": "s3-n16r8-extuart",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 703,
+      "sha256": "5f57ef760062cca45f22e50985a1e09485edb46bc0b774f92f0e8cbb05b60982"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-extuart-install-manifest.json",
+      "board": "s3-n16r8-extuart",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 366,
+      "sha256": "5b2a4b9d5f3fd730ed96cc3784c9a35fb5f2ef6e09079e14892f049524d80f14"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-bootloader.bin",
+      "board": "s3-n16r8",
+      "type": "bootloader",
+      "offset": 0,
+      "size": 21184,
+      "sha256": "fdcc51e4ce1fe41c75c3714820b529c8ce084a51b761676d405c1ca04690b0da"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-partition-table.bin",
+      "board": "s3-n16r8",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "bd0f7954aca2ef7d925ee21aaa1f3dc8822d1d6ce5cbbd26a135e5886bfff6ce"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-ota-data.bin",
+      "board": "s3-n16r8",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-app.bin",
+      "board": "s3-n16r8",
+      "type": "app",
+      "offset": 65536,
+      "size": 1256880,
+      "sha256": "20ac525765a2f6022a57507ef840885210621729ffa51351604fd99fd0a5d857"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-merged.bin",
+      "board": "s3-n16r8",
+      "type": "merged",
+      "offset": 0,
+      "size": 1322416,
+      "sha256": "fac8e02645dc94786449d46554c7ed7b2c01a8f65cec1deb849bdcc555933bbd"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-manifest.json",
+      "board": "s3-n16r8",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 671,
+      "sha256": "8edfda376fec60c17d032d783087bb15662a307bf481e66d57f7289704106221"
+    },
+    {
+      "file": "opendisplay-s3-n16r8-install-manifest.json",
+      "board": "s3-n16r8",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 358,
+      "sha256": "f9ac8ee430b732cf0da38162401491253adfdb629fec3a65d602498e0b308ea3"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-extuart-bootloader.bin",
+      "board": "s3-n32r8-extuart",
+      "type": "bootloader",
+      "offset": 0,
+      "size": 20912,
+      "sha256": "01027935bb50c15c79cce1e9838c1f3d800db4c6fc807b4b5d4695be4c3e7397"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-extuart-partition-table.bin",
+      "board": "s3-n32r8-extuart",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "f6f5126d16e9560c84b145a793e9466d321bb2ee83f2f42264ccfcc75d92f656"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-extuart-ota-data.bin",
+      "board": "s3-n32r8-extuart",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-extuart-app.bin",
+      "board": "s3-n32r8-extuart",
+      "type": "app",
+      "offset": 65536,
+      "size": 1229968,
+      "sha256": "2960cfa6a627ec5ed42773ca764c188b27968b4f71098b838c41917ece6b67c7"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-extuart-merged.bin",
+      "board": "s3-n32r8-extuart",
+      "type": "merged",
+      "offset": 0,
+      "size": 1295504,
+      "sha256": "8780b371deca22ef821d34668405c9064e098eac1daeee375364cc89712695b5"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-extuart-manifest.json",
+      "board": "s3-n32r8-extuart",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 703,
+      "sha256": "b52fa9555ba4670079e7d65d0314b22b1cf42ed3ee5659b3389299bff2c8c87b"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-extuart-install-manifest.json",
+      "board": "s3-n32r8-extuart",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 366,
+      "sha256": "ebb409fe56667da7fe2441b66c32bdc1378c966f7df7e2b2ba216f516a394754"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-bootloader.bin",
+      "board": "s3-n32r8",
+      "type": "bootloader",
+      "offset": 0,
+      "size": 21184,
+      "sha256": "05cc42445adec772dc69fda6f4e68165aaff5b9dcbbcf6d5bda0521350e275c7"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-partition-table.bin",
+      "board": "s3-n32r8",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "f6f5126d16e9560c84b145a793e9466d321bb2ee83f2f42264ccfcc75d92f656"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-ota-data.bin",
+      "board": "s3-n32r8",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-app.bin",
+      "board": "s3-n32r8",
+      "type": "app",
+      "offset": 65536,
+      "size": 1256880,
+      "sha256": "61b55652ccca65538eae4f072392be162a784299b27ef406e111268077b09470"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-merged.bin",
+      "board": "s3-n32r8",
+      "type": "merged",
+      "offset": 0,
+      "size": 1322416,
+      "sha256": "abfa3679086f7b85580bd4a1e3ab64a757e04dd0fb543a47fa1ae1f26fc0ac50"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-manifest.json",
+      "board": "s3-n32r8",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 671,
+      "sha256": "710062a2f1f7582565affb0e9b1f86d5fd4b7c752cccde1d321ea1f012ed9cd6"
+    },
+    {
+      "file": "opendisplay-s3-n32r8-install-manifest.json",
+      "board": "s3-n32r8",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 358,
+      "sha256": "42dd2f1d515478587dadfbba908e62efe37447ce71e240a7fdeec930cff2234f"
+    },
+    {
+      "file": "opendisplay-s3-n4r2-bootloader.bin",
+      "board": "s3-n4r2",
+      "type": "bootloader",
+      "offset": 0,
+      "size": 21184,
+      "sha256": "ac7dacdd77742d548bce6210b2f62a63c0ad321cdba564933066aad1b56578d3"
+    },
+    {
+      "file": "opendisplay-s3-n4r2-partition-table.bin",
+      "board": "s3-n4r2",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "0a8b5720e7b77ff11f1462458c3a509dee79224e5279898f26d6a2e3ae0517b7"
+    },
+    {
+      "file": "opendisplay-s3-n4r2-ota-data.bin",
+      "board": "s3-n4r2",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-s3-n4r2-app.bin",
+      "board": "s3-n4r2",
+      "type": "app",
+      "offset": 65536,
+      "size": 1206688,
+      "sha256": "c074efadc29017301f20950eb453cac2d41f37a53226a9ba8a9c7bfb8e45d4a9"
+    },
+    {
+      "file": "opendisplay-s3-n4r2-merged.bin",
+      "board": "s3-n4r2",
+      "type": "merged",
+      "offset": 0,
+      "size": 1272224,
+      "sha256": "5e9cd812566c80848c3ca1aa87d9669c26385b9e8949eecafe2df2833686c632"
+    },
+    {
+      "file": "opendisplay-s3-n4r2-manifest.json",
+      "board": "s3-n4r2",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 667,
+      "sha256": "0ad7b2c30507fadb8b10bc7c223881982ad75c646e6ea924a786b32444ded62b"
+    },
+    {
+      "file": "opendisplay-s3-n4r2-install-manifest.json",
+      "board": "s3-n4r2",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 357,
+      "sha256": "56a3c4045cf57b400b9f2fe91f347c4ef95866f6dcaa6b37e71181dc77ae7160"
+    },
+    {
+      "file": "opendisplay-s3-n8r8-bootloader.bin",
+      "board": "s3-n8r8",
+      "type": "bootloader",
+      "offset": 0,
+      "size": 21184,
+      "sha256": "e01b1bd43d20d338a7cfb032bc239b9696914c75c45f2991be1050961ca7e3c6"
+    },
+    {
+      "file": "opendisplay-s3-n8r8-partition-table.bin",
+      "board": "s3-n8r8",
+      "type": "partition-table",
+      "offset": 32768,
+      "size": 3072,
+      "sha256": "1d9cca96de0fe07ad7fc0648b9878ddecd9ce565e38b589ad20fea698ed4c80c"
+    },
+    {
+      "file": "opendisplay-s3-n8r8-ota-data.bin",
+      "board": "s3-n8r8",
+      "type": "ota-data",
+      "offset": 57344,
+      "size": 8192,
+      "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+    },
+    {
+      "file": "opendisplay-s3-n8r8-app.bin",
+      "board": "s3-n8r8",
+      "type": "app",
+      "offset": 65536,
+      "size": 1256880,
+      "sha256": "d1fd5bed2f5a9643c2149081641a94c262f9e7cbd20a4b3e8982b1bfc3cb70eb"
+    },
+    {
+      "file": "opendisplay-s3-n8r8-merged.bin",
+      "board": "s3-n8r8",
+      "type": "merged",
+      "offset": 0,
+      "size": 1322416,
+      "sha256": "836cf9b5129465a438ed33b84558015bb9b91b32f6655a1918fdc839636b30b3"
+    },
+    {
+      "file": "opendisplay-s3-n8r8-manifest.json",
+      "board": "s3-n8r8",
+      "type": "web-manifest-update",
+      "offset": null,
+      "size": 667,
+      "sha256": "4c75e97b0848961e1849d3bfd743332b21a367b3543e9648892c0036b8cdcf2f"
+    },
+    {
+      "file": "opendisplay-s3-n8r8-install-manifest.json",
+      "board": "s3-n8r8",
+      "type": "web-manifest-install",
+      "offset": null,
+      "size": 357,
+      "sha256": "84a7d2d10f1dd2c213f2e3d6b468df9cd59405a3bd3a78bb971d4b6d57d9b2e5"
+    },
+    {
+      "file": "opendisplay-xiao_nrf52840-merged.hex",
+      "board": "xiao_nrf52840",
+      "type": "merged-hex",
+      "offset": null,
+      "size": 1141758,
+      "sha256": "c8d21577a917a4c8d01eeee9fe523d123df3b6df86dd20edb661568a2d5b9a06"
+    },
+    {
+      "file": "opendisplay-xiao_nrf52840-ota.bin",
+      "board": "xiao_nrf52840",
+      "type": "ota",
+      "offset": null,
+      "size": 383436,
+      "sha256": "96168c84314d95d435e72f26070bb7dc20c2a00d33d7ab3539f88a03cb7073f5"
+    },
+    {
+      "file": "opendisplay-xiao_nrf52840-dfu.zip",
+      "board": "xiao_nrf52840",
+      "type": "smp-dfu-zip",
+      "offset": null,
+      "size": 384176,
+      "sha256": "8399a10ac42aa287cbe8970443bae1813b670d05ee3cbe83b2c091ea4ab00aac"
+    },
+    {
+      "file": "opendisplay-xiao_nrf52840-usb-1-sd-erase.zip",
+      "board": "xiao_nrf52840",
+      "type": "nrfutil-dfu-zip",
+      "offset": null,
+      "load_address": 159744,
+      "size": 49241,
+      "sha256": "f70dfa4fa8efa72e59f0c930083c33c7991628e16cb653fb094ea76e43460c4a"
+    },
+    {
+      "file": "opendisplay-xiao_nrf52840-usb-2-install.zip",
+      "board": "xiao_nrf52840",
+      "type": "nrfutil-dfu-zip",
+      "offset": null,
+      "load_address": 4096,
+      "size": 433537,
+      "sha256": "8d1bdb1988b6dd44b5d734f024cd111fef22163de9b652ecac8064790207961e"
+    },
+    {
+      "file": "opendisplay-xiao_nrf54l15-merged.hex",
+      "board": "xiao_nrf54l15",
+      "type": "merged-hex",
+      "offset": null,
+      "size": 1291596,
+      "sha256": "023dae820415ca698e835ad07023f1d84da99cea647e831df14ad5450d502d6c"
+    },
+    {
+      "file": "opendisplay-xiao_nrf54l15-ota.bin",
+      "board": "xiao_nrf54l15",
+      "type": "ota",
+      "offset": null,
+      "size": 431232,
+      "sha256": "0c6f07078e6e8094084c9ef8ac34e683088b90b9cef1a335144ea45cf2cf54f7"
+    },
+    {
+      "file": "opendisplay-xiao_nrf54l15-dfu.zip",
+      "board": "xiao_nrf54l15",
+      "type": "smp-dfu-zip",
+      "offset": null,
+      "size": 431977,
+      "sha256": "330dbcbeba71148b1be6cbc8650128a0e5ee34a22659ea8de627396e1d5bc744"
+    },
+    {
+      "file": "opendisplay-xiao_nrf54lm20a-merged.hex",
+      "board": "xiao_nrf54lm20a",
+      "type": "merged-hex",
+      "offset": null,
+      "size": 1313296,
+      "sha256": "e0d1881b2be4f5618b5bad1b1b30b19bf3f0f46e66a63927bee09725b3934ab7"
+    },
+    {
+      "file": "opendisplay-xiao_nrf54lm20a-ota.bin",
+      "board": "xiao_nrf54lm20a",
+      "type": "ota",
+      "offset": null,
+      "size": 436444,
+      "sha256": "ab849d06271a3f7c1c13247fecfd6c4d14e166ccfde167c3f548eeb964a52131"
+    },
+    {
+      "file": "opendisplay-xiao_nrf54lm20a-dfu.zip",
+      "board": "xiao_nrf54lm20a",
+      "type": "smp-dfu-zip",
+      "offset": null,
+      "size": 437193,
+      "sha256": "13d0215da946c2c00fd18b67574847b62ba9e691b0cdbe74e861d8ccd61cc8da"
+    }
+  ]
+}
