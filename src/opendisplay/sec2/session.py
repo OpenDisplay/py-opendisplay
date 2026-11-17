@@ -19,12 +19,11 @@ from cryptography.exceptions import InvalidTag
 from ..protocol.commands import ENCRYPTED_CHUNK_SIZE
 from . import kdf, wire
 from .errors import (
-    Sec2AuthFailedError,
     Sec2DeviceError,
     Sec2MutualAuthError,
     Sec2RecordError,
     Sec2SessionLostError,
-    SecErr,
+    typed_device_error,
 )
 from .primitives import PrivateKey, ccm_decrypt, ccm_encrypt, ecdh, generate_key_pair
 
@@ -142,23 +141,24 @@ class Sec2Session:  # pylint: disable=too-many-instance-attributes
         return frame_eff - H2D_OVERHEAD - 1
 
 
-async def _send_fragments(transport: Transport, cmd_lo: int, sub: int, body: bytes, frag_max: int) -> None:
+async def send_fragments(transport: Transport, cmd_lo: int, sub: int, body: bytes, frag_max: int) -> None:
+    """Send one handshake message as fragments, each a write-with-response (§ 3.3)."""
     for frame in wire.fragment(cmd_lo, sub, body, frag_max):
         await transport.write_command(frame, response=True)
 
 
-async def _receive(transport: Transport, cmd_lo: int, sub: int, frag_max: int) -> bytes:
+async def receive(transport: Transport, cmd_lo: int, sub: int, frag_max: int) -> bytes:
+    """Reassemble one handshake reply; frames of other commands are skipped.
+
+    Raises:
+        Sec2DeviceError: The device answered with a SEC error.
+        Sec2FragmentError: The reply broke the fragment rules.
+    """
     reassembler = wire.Reassembler(cmd_lo, sub, wire.body_length("d2h", 0x0000 | cmd_lo, sub), frag_max)
     while True:
         body = reassembler.feed(await transport.read_response(timeout=TIMEOUT_HANDSHAKE))
         if body is not None:
             return body
-
-
-def _raise_typed(err: Sec2DeviceError) -> None:
-    if err.err == SecErr.AUTH_FAILED:
-        raise Sec2AuthFailedError(err.cmd_lo, err.sub, int(err.err)) from err
-    raise err
 
 
 async def authenticate(  # pylint: disable=too-many-arguments
@@ -186,16 +186,15 @@ async def authenticate(  # pylint: disable=too-many-arguments
     nc = _nc if _nc is not None else secrets.token_bytes(16)
     try:
         hello_body = bytes([wire.VERSION, frag_max]) + qc + nc
-        await _send_fragments(transport, cmd_lo, wire.AuthSub.HELLO, hello_body, frag_max)
-        hello = await _receive(transport, cmd_lo, wire.AuthSub.HELLO, frag_max)
+        await send_fragments(transport, cmd_lo, wire.AuthSub.HELLO, hello_body, frag_max)
+        hello = await receive(transport, cmd_lo, wire.AuthSub.HELLO, frag_max)
         dflags, qd, nd = hello[0], hello[1:65], hello[65:81]
         ta = kdf.auth_transcript(dflags, uid, qc, qd, nc, nd)
         prk = kdf.extract(kdf.key_hierarchy(k_dev, uid).k_ext, ecdh(private, qd))
-        await _send_fragments(transport, cmd_lo, wire.AuthSub.FINISH, kdf.kdf(prk, "OD2/auth-c", ta), frag_max)
-        finish = await _receive(transport, cmd_lo, wire.AuthSub.FINISH, frag_max)
+        await send_fragments(transport, cmd_lo, wire.AuthSub.FINISH, kdf.kdf(prk, "OD2/auth-c", ta), frag_max)
+        finish = await receive(transport, cmd_lo, wire.AuthSub.FINISH, frag_max)
     except Sec2DeviceError as err:
-        _raise_typed(err)
-        raise  # unreachable: _raise_typed always raises
+        raise typed_device_error(err) from err
     if not hmac.compare_digest(finish[:16], kdf.kdf(prk, "OD2/auth-d", ta)):
         raise Sec2MutualAuthError()
     keys = kdf.session_keys(prk, ta)

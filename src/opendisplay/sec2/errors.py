@@ -79,3 +79,92 @@ class Sec2SessionLostError(Sec2Error):
 
     Open a new session with a fresh handshake.
     """
+
+
+class Sec2StorageError(Sec2Error):
+    """A key could not be stored durably; the caller must not let the device take it (§ 8.8)."""
+
+
+class NotInClaimModeError(Sec2DeviceError):
+    """The device is unclaimed and in normal mode."""
+
+
+class AlreadyClaimedError(Sec2DeviceError):
+    """The device already has a key."""
+
+
+class ClaimAttemptsExhaustedError(Sec2DeviceError):
+    """The third code of this claim-mode session was used; the device rebooted into normal mode."""
+
+
+class DeviceLockedError(Sec2DeviceError):
+    """The device has evidence of a claim but cannot read its key record (§ 10.1)."""
+
+
+class RateLimitedError(Sec2DeviceError):
+    """Too many handshake starts in the last minute (§ 8.7)."""
+
+
+class Sec2BusyError(Sec2DeviceError):
+    """A display pass or flash erase holds the device."""
+
+
+_ADVICE: dict[SecErr, tuple[type[Sec2DeviceError], str]] = {
+    SecErr.NOT_IN_CLAIM_MODE: (
+        NotInClaimModeError,
+        "The display is not in claim mode. Power-cycle it twice quickly to start claim mode, then try again.",
+    ),
+    SecErr.ALREADY_CLAIMED: (
+        AlreadyClaimedError,
+        "The display is already claimed. Connect with its key; without the key it needs a factory reset "
+        "(five quick power cycles).",
+    ),
+    SecErr.ATTEMPTS_EXHAUSTED: (
+        ClaimAttemptsExhaustedError,
+        "All three codes of this claim attempt were used and the display left claim mode. Power-cycle it "
+        "twice quickly to try again.",
+    ),
+    SecErr.LOCKED: (
+        DeviceLockedError,
+        "The display cannot read its key record and is locked. It needs a factory reset (five quick power cycles).",
+    ),
+    SecErr.RATE_LIMITED: (
+        RateLimitedError,
+        "Too many attempts in the last minute. Wait a minute and try again.",
+    ),
+    SecErr.BUSY: (Sec2BusyError, "The display is busy (refreshing or erasing). Try again in a few seconds."),
+    SecErr.AUTH_FAILED: (
+        Sec2AuthFailedError,
+        "The display refused the key or the confirmation. If you have another key for it, try that one.",
+    ),
+}
+
+
+def typed_device_error(err: Sec2DeviceError) -> Sec2DeviceError:
+    """The typed error, with what the user has to do, for a device's SEC refusal."""
+    entry = _ADVICE.get(err.err) if isinstance(err.err, SecErr) else None
+    if entry is None:
+        return err
+    cls, advice = entry
+    return cls(err.cmd_lo, err.sub, int(err.err), advice)
+
+
+class Sec2CodeMismatchError(Sec2Error):
+    """The typed code differs from the client's own: the claim was aborted (§ 8.4)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The code does not match. Someone nearby may be interfering. The display may now be claimed by "
+            "someone else. If so, factory-reset it and try again."
+        )
+
+
+class Sec2InterferenceError(Sec2Error):
+    """A check that only an interfering party fails: the claim was aborted."""
+
+
+class Sec2ClaimUnconfirmedError(Sec2Error):
+    """The device did not confirm the claim (``tag_d`` mismatch); the key is kept as a candidate."""
+
+    def __init__(self) -> None:
+        super().__init__("Could not confirm the claim with the display; the key is kept and will be tried again.")
