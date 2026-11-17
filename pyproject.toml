@@ -48,6 +48,9 @@ nrf-ota = [
 silabs-ota = [
     "silabs-ble-ota>=0.1.0",
 ]
+smp = [
+    "smpclient[ble]>=7.4.0,<8",
+]
 
 [project.urls]
 Homepage = "https://opendisplay.org"
