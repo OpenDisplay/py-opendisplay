@@ -17,8 +17,6 @@ from ..models.enums import RefreshMode
 from ..models.panel_drive import DisplayMode
 from ..protocol import CommandCode, validate_ack_response
 from ..protocol.commands import (
-    ENCRYPTED_CHUNK_SIZE,
-    MAX_START_PAYLOAD,
     build_direct_write_end_command,
     build_drive_write_start,
 )
@@ -76,7 +74,7 @@ async def drive_write(  # pylint: disable=too-many-arguments
     """
     compressed = stream is not None
     if stream is not None:
-        room = (ENCRYPTED_CHUNK_SIZE if channel.session is not None else MAX_START_PAYLOAD) - _START_HEAD
+        room = channel.start_payload_limit() - _START_HEAD
         start = build_drive_write_start(
             mode.mode_index, refresh.value, uncompressed_size=len(frames), first_chunk=stream[:room]
         )
