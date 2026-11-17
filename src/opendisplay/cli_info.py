@@ -14,6 +14,7 @@ from .models.enums import (
     BinaryInputType,
     BusType,
     CapacityEstimator,
+    ColorScheme,
     DisplayTechnology,
     FlashIcType,
     ICType,
@@ -27,6 +28,7 @@ from .models.enums import (
 )
 from .models.firmware import FirmwareVersion
 from .models.ident import DeviceIdent, FirmwareTarget
+from .models.profile import ProfileMode, build_profile
 from .sensors import SensorReading
 
 _COLOR_SCHEME_STYLES: dict[str, str] = {"R": "red", "Y": "yellow", "G": "green"}
@@ -539,6 +541,40 @@ _INFO_SECTIONS: tuple[_Section, ...] = (
 )
 
 
+def _scheme_label(value: int) -> str:
+    try:
+        return ColorScheme(value).name
+    except ValueError:
+        return f"scheme {value}"
+
+
+def _drive_modes(ctx: _InfoContext) -> list[tuple[ProfileMode, int]]:
+    """Display 0's drive modes (0xAE), each with the scheme it renders (the display's when it inherits)."""
+    if ctx.config is None or not ctx.config.displays:
+        return []
+    base = ctx.config.displays[0].color_scheme
+    return [(mode, base) for mode in build_profile(ctx.fw, ctx.config, ctx.ident).drive_modes]
+
+
+def _drive_mode_line(item: tuple[ProfileMode, int]) -> str:
+    mode, base = item
+    scheme = _scheme_label(base if mode.color_scheme is None else mode.color_scheme)
+    return f"Mode {mode.mode_index}  {mode.name}  {scheme}, {mode.passes} pass{'' if mode.passes == 1 else 'es'}"
+
+
+def _drive_mode_entry(item: tuple[ProfileMode, int]) -> dict[str, Any]:
+    mode, base = item
+    value = base if mode.color_scheme is None else mode.color_scheme
+    return {
+        "index": mode.mode_index,
+        "name": mode.name,
+        "scheme": _scheme_label(value),
+        "scheme_value": value,
+        "inherits_scheme": mode.color_scheme is None,
+        "passes": mode.passes,
+    }
+
+
 def _bus_line(bus: Any) -> str:
     speed = f"{bus.bus_speed_hz / 1000:.0f} kHz" if bus.bus_speed_hz else "unset"
     bus_type = _enum_name(BusType, bus.bus_type) or "?"
@@ -546,6 +582,14 @@ def _bus_line(bus: Any) -> str:
 
 
 _INFO_LIST_SECTIONS: tuple[_ListSection, ...] = (
+    _ListSection(
+        title="Drive modes",
+        key="drive_modes",
+        json_parent="display",
+        items=_drive_modes,
+        line=_drive_mode_line,
+        entry=_drive_mode_entry,
+    ),
     _ListSection(
         title="LEDs",
         key="leds",
@@ -656,6 +700,8 @@ def _info_to_json(ctx: _InfoContext) -> dict[str, Any]:
     for list_section in _INFO_LIST_SECTIONS:
         entries = [list_section.entry(item) for item in list_section.items(ctx)]
         target = rendered.setdefault(list_section.json_parent, {}) if list_section.json_parent else rendered
+        if target is None:  # the parent section is null (e.g. no display): nothing to list under it
+            continue
         target[list_section.key] = entries
 
     fw = ctx.fw

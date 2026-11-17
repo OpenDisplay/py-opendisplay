@@ -9,20 +9,30 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
+from epaper_dithering import DitherMode
+
+from ..encoding import compress_image_data
+from ..encoding.compression import FIRMWARE_ZLIB_WINDOW_BITS
 from ..exceptions import IdentNotSupportedError, InvalidResponseError, NoStoredConfigError, OpenDisplayTimeoutError
+from ..models.enums import FitMode, RefreshMode, Rotation
 from ..models.profile import DeviceProfile, build_profile
 from ..panels import MigrationPlan, PanelDatabase, plan_migration
 from ..protocol.config_parser import parse_config_response
+from .drive_write import drive_write
 from .facade import OpenDisplayDevice
+from .imaging import prepare_multipass
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
+    from PIL import Image
 
     from ..models.config import GlobalConfig
     from ..models.ident import DeviceIdent
+    from ..models.panel_drive import DisplayMode
     from ..transport.base import Transport
 
 _LOGGER = logging.getLogger(__name__)
@@ -109,6 +119,131 @@ class ConfigView:
                 await asyncio.sleep(_REDRAW_WAIT_S)
 
 
+_RESERVED_MODES = {
+    "fast": "'fast' is reached with refresh_mode=RefreshMode.FAST",
+    "partial": "'partial' is reached with a PartialState (partial updates)",
+}
+
+
+class DisplayView:
+    """Drawing on the device's display."""
+
+    def __init__(self, device: Device) -> None:
+        self._device = device
+
+    def drive_mode(self, name: str) -> DisplayMode:
+        """Display 0's drive mode called ``name`` (case-insensitive), as the config declares it. No I/O.
+
+        Raises:
+            ValueError: ``name`` is "fast" or "partial" (reached through the refresh mode or a
+                PartialState), or a name the device's config does not declare.
+        """
+        key = name.lower()
+        if key in _RESERVED_MODES:
+            raise ValueError(f"{_RESERVED_MODES[key]}; mode= names a drive mode such as 'colour16'")
+        profile = self._device.profile
+        known = {m.name.lower(): m for m in profile.drive_modes}
+        if key not in known:
+            names = ", ".join(profile.drive_mode_names) or "none"
+            raise ValueError(f"Unknown drive mode '{name}'; the device has: {names}")
+        config = self._device.config.cached
+        assert config is not None and config.displays  # drive_modes come from display 0 of the cached config
+        index, instance = known[key].mode_index, config.displays[0].instance_number
+        return next(m for m in config.display_modes if m.mode_index == index and m.instance_number == instance)
+
+    def nominal_colours(self, mode: DisplayMode) -> bool:
+        """Whether a multi-pass mode's palette is nominal rather than measured on this unit."""
+        config = self._device.config.cached
+        if mode.passes <= 1 or config is None:
+            return False
+        return any(
+            c.mode_index == mode.mode_index and c.instance_number == mode.instance_number and not c.measured
+            for c in config.display_calibrations
+        )
+
+    async def show(  # pylint: disable=too-many-arguments
+        self,
+        image: Image.Image,
+        *,
+        mode: str | None = None,
+        refresh_mode: RefreshMode = RefreshMode.FULL,
+        dither_mode: DitherMode = DitherMode.BURKES,
+        serpentine: bool = True,
+        exposure: float = 1.0,
+        saturation: float = 1.0,
+        fit: FitMode = FitMode.CONTAIN,
+        rotate: Rotation = Rotation.ROTATE_0,
+        compress: bool = True,
+        use_measured_palettes: bool = True,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> int | None:
+        """Draw ``image``, in a config-declared drive mode when ``mode`` names one.
+
+        Without ``mode`` this is ``OpenDisplayDevice.upload_image`` with the same options
+        (``use_measured_palettes`` is then the device's own setting). With ``mode`` the image is
+        encoded for that mode (every pass of a multi-pass mode) off the event loop and sent with
+        CMD_DRIVE_WRITE_START. Options the drive-mode path cannot honour (tone, gamut, partial
+        state) are not parameters; ``OpenDisplayDevice.upload_image`` still has them.
+
+        Returns:
+            The panel temperature the device reported for a mode upload (``None`` when unknown),
+            or ``None`` without ``mode``.
+
+        Raises:
+            ValueError: See ``drive_mode``; raised before any I/O.
+            DriveModeSubstitutedError: The device runs another mode; nothing was uploaded.
+        """
+        legacy = self._device.legacy
+        if mode is None:
+            await legacy.upload_image(
+                image,
+                refresh_mode=refresh_mode,
+                dither_mode=dither_mode,
+                compress=compress,
+                serpentine=serpentine,
+                exposure=exposure,
+                saturation=saturation,
+                fit=fit,
+                rotate=rotate,
+                progress_callback=progress_callback,
+            )
+            return None
+        drive_mode = self.drive_mode(mode)
+        config = self._device.config.cached
+        assert config is not None
+        # Device wraps OpenDisplayDevice until piece 7 inverts the two; these are its internals.
+        uploader = legacy._uploader  # pylint: disable=protected-access
+        compressed = compress and uploader.supports_compression
+
+        def encode() -> tuple[bytes, bytes | None]:
+            frames, _ = prepare_multipass(
+                image,
+                config,
+                drive_mode,
+                use_measured_palettes=use_measured_palettes,
+                dither_mode=dither_mode,
+                serpentine=serpentine,
+                exposure=exposure,
+                saturation=saturation,
+                fit=fit,
+                rotate=rotate,
+            )
+            stream = compress_image_data(frames, level=6, window_bits=FIRMWARE_ZLIB_WINDOW_BITS) if compressed else None
+            return frames, stream
+
+        frames, stream = await asyncio.to_thread(encode)
+        async with legacy._transaction():  # pylint: disable=protected-access
+            return await drive_write(
+                uploader,
+                legacy._channel,  # pylint: disable=protected-access
+                drive_mode,
+                frames,
+                stream=stream,
+                refresh=refresh_mode,
+                progress_callback=progress_callback,
+            )
+
+
 class Device:
     """A connected OpenDisplay device. Use as ``async with opendisplay.connect(...) as dev``.
 
@@ -127,6 +262,7 @@ class Device:
     def __init__(self, legacy: OpenDisplayDevice) -> None:
         self.legacy = legacy
         self.config = ConfigView(self)
+        self.display = DisplayView(self)
         self._profile: DeviceProfile | None = None
 
     @property

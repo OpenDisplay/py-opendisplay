@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from epaper_dithering import DitherMode
 from PIL import Image
 
 from opendisplay.encoding.multipass import encode_multipass, mode_palette
@@ -221,3 +222,31 @@ def test_a_single_pass_mode_with_another_scheme_than_the_display_raises() -> Non
         prepare_multipass(_photo(), ALPHA, dataclasses.replace(FULL, color_scheme=5))
     # Inheriting (0xFF) or naming the display's own scheme (BWRY, 3) is fine.
     prepare_multipass(_photo(), ALPHA, dataclasses.replace(FULL, color_scheme=3))
+
+
+def test_code_map_applies_to_a_single_pass_mode_but_never_to_multi_pass_codes() -> None:  # review I3
+    import dataclasses
+
+    from opendisplay.models.panel_drive import LengthPrefixedPacket
+
+    def with_code_map(code_map: tuple[int, int, int, int]):  # noqa: ANN202
+        packets = []
+        for p in ALPHA.length_prefixed_packets:
+            if p.packet_type == 0xB1:
+                body = bytearray(p.body)
+                body[7:11] = bytes(code_map)
+                p = LengthPrefixedPacket(number=p.number, packet_type=0xB1, body=bytes(body))
+            packets.append(p)
+        return dataclasses.replace(ALPHA, length_prefixed_packets=packets)
+
+    plain, swapped = with_code_map((0, 1, 2, 3)), with_code_map((0, 1, 3, 2))
+    red_yellow = Image.new("RGB", (184, 360), (255, 0, 0))
+    red_yellow.paste((255, 255, 0), (0, 180, 184, 360))
+
+    full_plain, _ = prepare_multipass(red_yellow, plain, FULL, dither_mode=DitherMode.NONE)
+    full_swapped, _ = prepare_multipass(red_yellow, swapped, FULL, dither_mode=DitherMode.NONE)
+    assert full_plain != full_swapped  # single pass: the device's code_map is applied
+
+    c16_plain, _ = prepare_multipass(red_yellow, plain, COLOUR16, dither_mode=DitherMode.NONE)
+    c16_swapped, _ = prepare_multipass(red_yellow, swapped, COLOUR16, dither_mode=DitherMode.NONE)
+    assert c16_plain == c16_swapped  # multi-pass codes are panel codes: code_map never applies

@@ -29,6 +29,7 @@ from .cli_common import (
     _spinner,
     _stdout,
 )
+from .cli_drive import cmd_upload_mode
 from .cli_info import _build_info_tree, _info_to_json, _InfoContext
 from .cli_migrate import add_backup_config_parser, add_migrate_parser
 from .device import OpenDisplayDevice
@@ -430,10 +431,25 @@ def _add_upload_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         "the upload attempts a partial transfer; on success the file is rewritten. If it "
         "does not exist, a fresh state is created (forcing a full upload first time).",
     )
+    p.add_argument(
+        "--mode",
+        metavar="NAME",
+        default=None,
+        help="Upload in a drive mode the device's config declares, e.g. colour16 (firmware 3.0; see `info`)",
+    )
     p.set_defaults(func=_cmd_upload)
 
 
 def _cmd_upload(args: argparse.Namespace) -> None:
+    if args.mode is not None:
+        cmd_upload_mode(
+            args,
+            _REFRESH_CHOICES[args.refresh_mode],
+            _DITHER_CHOICES[args.dither_mode],
+            _FIT_CHOICES[args.fit],
+            _ROTATE_CHOICES[args.rotate],
+        )
+        return
     key = _parse_hex_key(args.key)
     tone = _parse_compression_value("--tone", args.tone)
     gamut = _parse_compression_value("--gamut", args.gamut)
