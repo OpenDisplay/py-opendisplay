@@ -146,6 +146,22 @@ class IntegrityCheckError(ProtocolError):
     pass
 
 
+class Sec2RequiredError(AuthenticationError):
+    """A firmware 3.0 device refused the 2.x handshake: it speaks SEC2 (auth status 0x05).
+
+    Connect with ``opendisplay.connect(..., key_store=...)`` or a ``DeviceKey`` instead.
+    """
+
+    def __init__(
+        self,
+        message: str = (
+            "This display runs firmware 3.0 and needs a SEC2 session; the 2.x handshake is refused. "
+            "Use opendisplay.connect() with its device key or a key store."
+        ),
+    ) -> None:
+        super().__init__(message)
+
+
 class NeedsMigrationError(ProtocolError):
     """The device refused an upload because it has no usable drive data for its display.
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import hmac
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -226,6 +226,8 @@ class SecureChannel:
         self.session: Session | None = None
         self._reauth_key = reauth_key
         self._session_timeout = session_timeout
+        # Set by whoever opens a SEC2 session: runs a fresh handshake with the same key.
+        self.renew: Callable[[], Awaitable[None]] | None = None
 
     async def authenticate(self, key: bytes) -> None:
         """Establish a 2.x session with ``key``; later frames are encrypted and decrypted.
@@ -242,6 +244,7 @@ class SecureChannel:
         a session the firmware has already torn down.
         """
         self.session = None
+        self.renew = None
 
     def _seal(self, frame: bytes) -> bytes:
         """Wrap ``frame`` under the active session, or return it unchanged without one.
@@ -275,8 +278,20 @@ class SecureChannel:
         await self.transport.write_command(self._seal(frame), response=response, drain_stale=False)
 
     async def _reauthenticate_if_needed(self) -> None:
-        """Re-authenticate proactively at 90% of session_timeout_seconds."""
-        if self._reauth_key is None or self.session is None:
+        """Re-authenticate proactively at 90% of the session's lifetime.
+
+        A SEC2 session renews through ``renew`` (a new HELLO with the same key) at 90 % of the
+        ``timeout_s`` the device reported for it; a 2.x session re-runs the 2.x handshake.
+        """
+        if self.session is None:
+            return
+        if self.renew is not None:
+            lifetime = getattr(self.session, "timeout_s", 0)
+            if lifetime and time.monotonic() - self.session.established_at >= lifetime * 0.9:
+                _LOGGER.info("SEC2 session approaching its %ds lifetime, renewing", lifetime)
+                await self.renew()
+            return
+        if self._reauth_key is None:
             return
         timeout = self._session_timeout()
         if timeout == 0:

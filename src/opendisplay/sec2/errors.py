@@ -81,6 +81,19 @@ class Sec2SessionLostError(Sec2Error):
     """
 
 
+class Sec2KeyRequiredError(Sec2Error):
+    """A claimed device: no key opened a session. Every key was kept (§ 8.8 rule 4)."""
+
+    def __init__(self, tried: int) -> None:
+        self.tried = tried
+        super().__init__(
+            f"The display is claimed and none of the {tried} keys tried opened a session; every key was kept. "
+            "Pass its device key, or factory-reset it (five quick power cycles) if the key is lost."
+            if tried
+            else "The display is claimed and no key for it is known. Pass its device key or a key store that has it."
+        )
+
+
 class Sec2StorageError(Sec2Error):
     """A key could not be stored durably; the caller must not let the device take it (§ 8.8)."""
 

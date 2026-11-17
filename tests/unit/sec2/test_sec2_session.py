@@ -315,3 +315,31 @@ def test_a_legacy_session_key_is_not_in_the_repr() -> None:
     session = LegacySession(session_key=bytes(range(16)), session_id=bytes(range(8)))
 
     assert bytes(range(16)).hex() not in repr(session) and "session_key" not in repr(session)
+
+
+async def test_a_sec2_session_renews_through_its_hook_at_90_percent_of_its_lifetime() -> None:
+    import time
+
+    class _Transport:
+        max_frame = 244
+        written: list[bytes] = []
+
+        async def write_command(self, data: bytes, response: bool = True, drain_stale: bool = True) -> None:
+            self.written.append(data)
+
+    channel = SecureChannel(_Transport(), reauth_key=bytes(16))  # type: ignore[arg-type]
+    session = _session()
+    session.timeout_s, session.established_at = 100, time.monotonic() - 91
+    channel.session = session
+    renewed: list[bool] = []
+
+    async def renew() -> None:
+        renewed.append(True)
+
+    channel.renew = renew
+    await channel.write(b"\x00\x40")
+    assert renewed == [True]  # not the 2.x handshake, although a 2.x reauth key is set
+
+    session.established_at = time.monotonic()
+    await channel.write(b"\x00\x40")
+    assert renewed == [True]  # young session: no renewal

@@ -37,6 +37,8 @@ ALPHA = parse_config_response(
 # A 3.0 BG22 identity: target 0x03, no display records, flags 0x01, max_config 3120, 128 steps.
 IDENT_BG22 = bytes.fromhex("004604030001300c800000")
 ACK_DATA, ACK_END, REFRESHED = b"\x00\x71", b"\x00\x72", b"\x00\x73"
+# SEC_STATUS of an unclaimed 3.0 device (connect() reads it before any handshake, piece 4).
+SEC_UNCLAIMED = bytes.fromhex("005402000000000000441bf6c96440100e0100")
 
 
 def _version(major: int = 3) -> bytes:
@@ -63,7 +65,7 @@ def _image() -> Image.Image:
 
 
 async def _connected(fake_transport, config: GlobalConfig = ALPHA):  # noqa: ANN001, ANN202
-    fake = fake_transport([_version(), _config_reply(config), IDENT_BG22])
+    fake = fake_transport([_version(), SEC_UNCLAIMED, _config_reply(config), IDENT_BG22])
     dev = opendisplay.connect(transport=fake)
     await dev.__aenter__()
     fake.written.clear()

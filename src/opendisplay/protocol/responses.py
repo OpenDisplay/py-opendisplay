@@ -19,6 +19,7 @@ from ..exceptions import (
     NfcWriteError,
     PanelBusyError,
     ProtocolError,
+    Sec2RequiredError,
 )
 from ..models.firmware import FirmwareVersion
 from ..models.ident import DeviceIdent, FirmwareTarget, IdentDisplay
@@ -30,6 +31,7 @@ _AUTH_STATUS_WRONG_KEY = 0x01
 _AUTH_STATUS_ALREADY_AUTHENTICATED = 0x02
 _AUTH_STATUS_ENCRYPTION_NOT_CONFIGURED = 0x03
 _AUTH_STATUS_RATE_LIMITED = 0x04
+_AUTH_STATUS_V2_REQUIRED = 0x05  # firmware 3.0, claimed: use SEC2 (SECURITY_V2.md § 3.1, provisional)
 
 # Default device ID used by old firmware (pre-23-byte challenge format)
 _DEFAULT_DEVICE_ID = bytes([0x00, 0x00, 0x00, 0x01])
@@ -227,6 +229,8 @@ def parse_authenticate_challenge(data: bytes) -> tuple[bytes, bytes]:
         raise AuthenticationSessionExistsError("Device has an active session; retry to get a fresh challenge")
     if status == _AUTH_STATUS_ENCRYPTION_NOT_CONFIGURED:
         raise AuthenticationRequiredError("Device does not have encryption configured")
+    if status == _AUTH_STATUS_V2_REQUIRED:
+        raise Sec2RequiredError()
     if status == _AUTH_STATUS_RATE_LIMITED:
         raise AuthenticationFailedError("Authentication rate limit exceeded — wait before retrying")
     if status != _AUTH_STATUS_OK:
@@ -287,6 +291,8 @@ def parse_authenticate_success(data: bytes) -> bytes:
     status = data[2]
     if status == _AUTH_STATUS_WRONG_KEY:
         raise AuthenticationFailedError("Authentication failed: wrong encryption key")
+    if status == _AUTH_STATUS_V2_REQUIRED:
+        raise Sec2RequiredError()
     if status == _AUTH_STATUS_RATE_LIMITED:
         raise AuthenticationFailedError("Authentication rate limit exceeded — wait before retrying")
     if status != _AUTH_STATUS_OK:
