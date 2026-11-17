@@ -187,7 +187,9 @@ class SecurityView:
             self._install(session, key, uid)
             return session
 
-        return await rotate_key(self._channel(), self._store, self._name(), uid, reauthenticate=reauthenticate)
+        new_key = await rotate_key(self._channel(), self._store, self._name(), uid, reauthenticate=reauthenticate)
+        _LOGGER.warning("The key of %s was rotated; other clients that use this display need the new key", self._name())
+        return new_key
 
     async def unclaim(self) -> None:
         """Remove the device's key: it becomes unclaimed and open (needs a SEC2 session)."""

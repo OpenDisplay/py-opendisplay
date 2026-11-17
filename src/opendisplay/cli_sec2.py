@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Any, Final
 
 from .cli_common import _add_device_options, _console, _device_kwargs, _error, _handle_ble_error, _parse_hex_key, _run
 from .device import connect
 from .exceptions import OpenDisplayError
+from .landing import parse_landing_url
 from .sec2.errors import Sec2CodeMismatchError
 from .sec2.keystore import DEFAULT_PATH, JsonFileKeyStore
 
@@ -21,6 +23,12 @@ _NO_SCREEN_PROMPT: Final = (
     "by claim mode, which you started on the device. Continue only if the display really has no screen and "
     "nobody you distrust is nearby. Type 'yes' to continue: "
 )
+# SECURITY_V2.md § 10.7, the wording every client uses before it reveals a key.
+_EXPORT_PROMPT: Final = (
+    "Anyone who has this key can change the display, update its firmware, and read your WiFi password "
+    "and FindMy keys. Print it? [y/N] "
+)
+_DISPLAY_NAME = re.compile(r"^OD([0-9A-F]{6})$", re.IGNORECASE)
 _UNCLAIM_PROMPT: Final = (
     "Unclaiming removes the display's key: it becomes open to anyone nearby until it is claimed again. Continue? [y/N] "
 )
@@ -69,6 +77,65 @@ def add_sec2_parsers(subparsers: argparse._SubParsersAction[argparse.ArgumentPar
     _add_key_store_option(rotate)
     rotate.set_defaults(func=lambda args: _run(_rotate(_connect_kwargs(args))))
 
+    key = subparsers.add_parser("key", help="Move a firmware 3.0 device key to or from another client")
+    actions = key.add_subparsers(dest="key_action", required=True)
+    export = actions.add_parser("export", help="Print a display's confirmed key (to give to another client)")
+    export.add_argument("--device", required=True, metavar="NAME", help="Display name as in the key store (OD...)")
+    export.add_argument("--yes", action="store_true", help="Do not ask for confirmation")
+    _add_key_store_option(export)
+    export.set_defaults(func=_cmd_key_export)
+    import_parser = actions.add_parser("import", help="Store a key from another client for a display")
+    import_parser.add_argument("--device", required=True, metavar="NAME", help="Display name (OD...)")
+    import_parser.add_argument("key", metavar="KEY", help="32 hex digits, or an opendisplay.org/l/ link with a key")
+    _add_key_store_option(import_parser)
+    import_parser.set_defaults(func=_cmd_key_import)
+
+
+def _cmd_key_export(args: argparse.Namespace) -> None:
+    store = JsonFileKeyStore(Path(args.key_store))
+    key = store.confirmed(args.device)
+    if key is None:
+        if store.keys_to_try(args.device):
+            _error(f"The key for {args.device} is not confirmed yet: connect once so it opens a session.")
+        _error(f"No key for {args.device} in {store.path}.")
+    if not args.yes and _input(_EXPORT_PROMPT).strip().lower() not in ("y", "yes"):
+        _error("Not exported.")
+    print(key.hex())  # stdout, so it can be piped; never logged
+
+
+def _imported_key(name: str, text: str) -> bytes:
+    text = text.strip()
+    if "/l" not in text:
+        cleaned = text.replace(" ", "").replace(":", "")
+        try:
+            key = bytes.fromhex(cleaned)
+        except ValueError:
+            key = b""
+        if len(key) != 16:
+            _error("KEY must be 32 hex digits (16 bytes) or an opendisplay.org/l/ link with a key.")
+        return key
+    try:
+        info = parse_landing_url(text)
+    except ValueError as exc:
+        _error(f"Not a valid opendisplay.org/l/ link: {exc}")
+    if info.encryption_key is None:
+        _error("This link carries no key: the display hides it. Export the key from a client that has it.")
+    match = _DISPLAY_NAME.match(name)
+    link_name = "OD" + info.device_id.hex().upper()
+    if match is not None and match.group(1).upper() != info.device_id.hex().upper():
+        _error(f"This link is for {link_name}, not {name}.")
+    return info.encryption_key
+
+
+def _cmd_key_import(args: argparse.Namespace) -> None:
+    key = _imported_key(args.device, args.key)
+    store = JsonFileKeyStore(Path(args.key_store))
+    store.add_candidate(args.device, key, "import")
+    _console.print(
+        f"Key stored for {args.device} in [bold]{store.path}[/bold]; it becomes the confirmed key the first time "
+        "it opens a session."
+    )
+
 
 async def _claim(kwargs: dict[str, Any]) -> None:
     try:
@@ -107,4 +174,7 @@ async def _rotate(kwargs: dict[str, Any]) -> None:
             await dev.security.rotate_key()
     except OpenDisplayError as exc:
         _handle_ble_error(exc)
-    _console.print(f"Key rotated; the new key is in [bold]{kwargs['key_store'].path}[/bold].")
+    _console.print(
+        f"Key rotated; the new key is in [bold]{kwargs['key_store'].path}[/bold]. Other clients that use this "
+        "display need it: run [bold]opendisplay key export[/bold] and import it there."
+    )
