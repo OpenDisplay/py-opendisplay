@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from epaper_dithering import DitherMode
 
+from ..credentials import DeviceKey
 from ..encoding import compress_image_data
 from ..encoding.compression import FIRMWARE_ZLIB_WINDOW_BITS
 from ..exceptions import IdentNotSupportedError, InvalidResponseError, NoStoredConfigError, OpenDisplayTimeoutError
@@ -22,15 +23,18 @@ from ..models.enums import FitMode, RefreshMode, Rotation
 from ..models.profile import DeviceProfile, build_profile
 from ..panels import MigrationPlan, PanelDatabase, plan_migration
 from ..protocol.config_parser import parse_config_response
+from ..sec2.keystore import KeyStore
 from .drive_write import drive_write
 from .facade import OpenDisplayDevice
 from .imaging import prepare_multipass
+from .security import SecurityView
 
 if TYPE_CHECKING:
     from bleak.backends.device import BLEDevice
     from PIL import Image
 
     from ..models.config import GlobalConfig
+    from ..models.firmware import FirmwareVersion
     from ..models.ident import DeviceIdent
     from ..models.panel_drive import DisplayMode
     from ..transport.base import Transport
@@ -259,8 +263,9 @@ class Device:
             has none) or the previous capabilities; ``config.cached`` and ``profile`` are current.
     """
 
-    def __init__(self, legacy: OpenDisplayDevice) -> None:
+    def __init__(self, legacy: OpenDisplayDevice, security: SecurityView | None = None) -> None:
         self.legacy = legacy
+        self.security = security if security is not None else SecurityView(legacy)
         self.config = ConfigView(self)
         self.display = DisplayView(self)
         self._profile: DeviceProfile | None = None
@@ -272,7 +277,7 @@ class Device:
             raise RuntimeError("Device is not connected; use it as `async with opendisplay.connect(...)`")
         return self._profile
 
-    async def refresh(self) -> DeviceProfile:
+    async def refresh(self, firmware: FirmwareVersion | None = None) -> DeviceProfile:
         """Re-read the firmware version, config and identity, and rebuild the profile.
 
         The three reads are separate commands, each holding the device's command lock, not one
@@ -280,7 +285,8 @@ class Device:
         A malformed identity reply is logged and the profile is built without the identity
         (``ident_missing=True``), as ``opendisplay info`` does; link errors propagate.
         """
-        firmware = await self.legacy.read_firmware_version()
+        if firmware is None:
+            firmware = await self.legacy.read_firmware_version()
         try:
             config: GlobalConfig | None = await self.config.read()
         except NoStoredConfigError:
@@ -301,7 +307,9 @@ class Device:
     async def __aenter__(self) -> Device:
         await self.legacy.__aenter__()
         try:
-            await self.refresh()
+            firmware = await self.legacy.read_firmware_version()
+            await self.security.establish(firmware["major"])
+            await self.refresh(firmware)
         except BaseException:
             with suppress(Exception):
                 await self.legacy.__aexit__(None, None, None)
@@ -324,6 +332,8 @@ def connect(  # pylint: disable=too-many-arguments
     psk: bytes | None = None,
     encryption_key: bytes | None = None,
     timeout: float = 10.0,
+    key_store: KeyStore | None = None,
+    rotate_legacy_key: bool = True,
 ) -> Device:
     """Describe a device to connect to. Use as ``async with opendisplay.connect(...) as dev``.
 
@@ -339,24 +349,31 @@ def connect(  # pylint: disable=too-many-arguments
         port: TCP port for a LAN connection.
         tls: Use TLS-PSK on the LAN connection.
         psk: TLS pre-shared key.
-        encryption_key: 16-byte device key for an encrypted device.
+        encryption_key: The device's key: a ``LegacyKey`` (firmware 2.x), a ``DeviceKey``
+            (firmware 3.0, SEC2), or plain bytes, tried with whichever scheme the device speaks.
         timeout: Link operation timeout in seconds.
+        key_store: Where firmware 3.0 device keys live: tried on connect (at most three), and
+            where a claim or a rotation keeps its new key. See ``opendisplay.sec2.keystore``.
+        rotate_legacy_key: Rotate a key that a 3.0 device migrated from 2.x to a
+            device-generated one after the first session (needs ``key_store``; default True).
 
     Raises:
         ValueError: If not exactly one addressing mode is given, as for ``OpenDisplayDevice``.
     """
-    return Device(
-        OpenDisplayDevice(
-            mac_address=address,
-            device_name=name,
-            ble_device=ble_device,
-            transport=transport,
-            host=host,
-            port=port,
-            tls=tls,
-            psk=psk,
-            encryption_key=encryption_key,
-            timeout=timeout,
-            auto_interrogate=False,
-        )
+    legacy = OpenDisplayDevice(
+        mac_address=address,
+        device_name=name,
+        ble_device=ble_device,
+        transport=transport,
+        host=host,
+        port=port,
+        tls=tls,
+        psk=psk,
+        # A SEC2 key never goes to the 2.x layer (its renewal and the LAN TLS-PSK are 2.x).
+        encryption_key=None if isinstance(encryption_key, DeviceKey) else encryption_key,
+        timeout=timeout,
+        auto_interrogate=False,
+        auto_authenticate=False,
     )
+    security = SecurityView(legacy, credential=encryption_key, key_store=key_store, rotate_legacy_key=rotate_legacy_key)
+    return Device(legacy, security)

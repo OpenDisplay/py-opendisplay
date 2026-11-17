@@ -104,6 +104,11 @@ class _DocumentKeyStore:
         unique = list(dict.fromkeys(hexes))
         return [bytes.fromhex(k) for k in unique[:MAX_TRY]]
 
+    def confirmed(self, name: str) -> bytes | None:
+        """The key that last opened a session with ``name``, or ``None``. Not in :class:`KeyStore`."""
+        record = self._record(name)
+        return bytes.fromhex(record["confirmed"]) if record and record.get("confirmed") else None
+
     def uid(self, name: str) -> bytes | None:
         """See :class:`KeyStore`."""
         record = self._record(name)

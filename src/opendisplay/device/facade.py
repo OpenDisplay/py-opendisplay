@@ -170,6 +170,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         max_queue_size: int = 16,
         *,
         auto_interrogate: bool = True,
+        auto_authenticate: bool = True,
     ):
         """Initialize OpenDisplay device.
 
@@ -202,6 +203,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 (default: 16). ``max_queue_size <= 1`` disables sliding-window fast
                 transfer entirely — legacy stop-and-wait only, no 0x0080 probe.
             auto_interrogate: Read the config on entry when none was given (default: True).
+            auto_authenticate: Run the 2.x handshake on entry when a key was given (default: True).
 
         Raises:
             ValueError: If not exactly one addressing mode is provided
@@ -256,6 +258,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         self._blocks_per_ack = blocks_per_ack
         self._max_queue_size = max_queue_size
         self._auto_interrogate = auto_interrogate
+        self._auto_authenticate = auto_authenticate
 
     async def __aenter__(self) -> OpenDisplayDevice:
         """Connect and optionally interrogate device."""
@@ -333,7 +336,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # connection probe).
         try:
             # Authenticate before any other commands if key provided (BLE only).
-            if self._encryption_key is not None and not is_tcp:
+            if self._encryption_key is not None and not is_tcp and self._auto_authenticate:
                 await self.authenticate(self._encryption_key)
 
             # Auto-interrogate if no config or capabilities provided

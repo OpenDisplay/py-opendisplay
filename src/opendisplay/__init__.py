@@ -8,7 +8,17 @@ from importlib.metadata import PackageNotFoundError, version
 from epaper_dithering import DitherMode
 
 from .battery import voltage_to_percent
-from .device import ConfigView, Device, DisplayView, OpenDisplayDevice, connect, prepare_image, preview_image
+from .credentials import DeviceKey, LegacyKey
+from .device import (
+    ConfigView,
+    Device,
+    DisplayView,
+    OpenDisplayDevice,
+    SecurityView,
+    connect,
+    prepare_image,
+    preview_image,
+)
 from .discovery import discover_devices, discover_devices_with_adv
 from .discovery_ip import IpDeviceInfo, discover_ip_devices
 from .exceptions import (
@@ -40,6 +50,7 @@ from .exceptions import (
     PanelBusyError,
     ProtocolError,
     RefreshTimeoutError,
+    Sec2RequiredError,
     TruncatedConfigError,
 )
 from .landing import (
@@ -175,6 +186,10 @@ __all__ = [
     "DriveModeTemperatureError",
     "DriveSequenceUnsupportedError",
     "DisplayView",
+    "DeviceKey",
+    "LegacyKey",
+    "SecurityView",
+    "Sec2RequiredError",
     "ConfigSecretNeedsClaimError",
     "ConfigKeyMismatchError",
     "NeedsMigrationError",

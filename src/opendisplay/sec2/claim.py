@@ -17,6 +17,7 @@ import hmac
 import logging
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -70,9 +71,11 @@ class ClaimFlow:  # pylint: disable=too-many-instance-attributes
         uid: bytes,
         *,
         frag_max: int = wire.FRAG_MAX_MIN,
+        on_session: Callable[[Sec2Session], None] | None = None,
         _key_pair: tuple[PrivateKey, bytes] | None = None,
         _nc: bytes | None = None,
     ) -> None:
+        self._on_session = on_session
         if len(uid) != kdf.UID_LEN:
             raise ValueError("uid must be 8 bytes")
         self._transport, self._store, self._name, self._uid = transport, store, name, uid
@@ -177,13 +180,16 @@ class ClaimFlow:  # pylint: disable=too-many-instance-attributes
         keys = kdf.session_keys(self._prk, self._tc)
         self._prk = b""
         _LOGGER.info("Claimed %s", self._name)
-        return Sec2Session(
+        session = Sec2Session(
             k_h2d=keys.k_h2d,
             k_d2h=keys.k_d2h,
             sid=keys.sid,
             timeout_s=int.from_bytes(reply[16:18], "little"),
             established_at=time.monotonic(),
         )
+        if self._on_session is not None:
+            self._on_session(session)
+        return session
 
     async def abort(self) -> None:
         """ABORT: the device discards the pending claim and its key candidate."""
