@@ -109,3 +109,20 @@ def test_a_caller_transport_without_redraw_keys_is_unchanged(fake_transport) -> 
     device._attach(fake)
 
     assert not hasattr(fake, "redraw_keys")
+
+
+async def test_a_cancelled_tcp_read_leaves_no_read_behind() -> None:
+    # A caller's asyncio.timeout() cancels the read during its first wait; the next read must work.
+    transport = TcpTransport("127.0.0.1", 2446)
+    reader = asyncio.StreamReader()
+    transport._reader = reader
+    transport.redraw_keys = ("127.0.0.1",)
+
+    first = asyncio.ensure_future(transport.read_response(timeout=1.0))
+    await asyncio.sleep(0.05)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+
+    reader.feed_data(b"\x02\x00\x00\x40")
+    assert await transport.read_response(timeout=0.5) == b"\x00\x40"

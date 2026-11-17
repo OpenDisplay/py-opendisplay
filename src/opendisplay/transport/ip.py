@@ -171,14 +171,19 @@ class TcpTransport:
         """The length prefix; past ``timeout``, keep waiting while the display is noted redrawing."""
         read = asyncio.ensure_future(reader.readexactly(_LEN_PREFIX))
         try:
-            return await asyncio.wait_for(asyncio.shield(read), timeout=timeout)
-        except asyncio.TimeoutError:
-            pending = redraw.remaining(*self.redraw_keys)
-            if not pending:
+            try:
+                return await asyncio.wait_for(asyncio.shield(read), timeout=timeout)
+            except asyncio.TimeoutError:
+                pending = redraw.remaining(*self.redraw_keys)
+                if not pending:
+                    raise
+                redraw.notify_waiting()
+                return await asyncio.wait_for(read, timeout=pending)
+        finally:
+            # Never leave the shielded read behind (a timeout, or the caller's cancellation): it
+            # would take the next frame's length prefix.
+            if not read.done():
                 read.cancel()
-                raise
-            redraw.notify_waiting()
-            return await asyncio.wait_for(read, timeout=pending)
 
     async def read_response(self, timeout: float = 5.0) -> bytes:
         """Read exactly one length-prefixed frame.
