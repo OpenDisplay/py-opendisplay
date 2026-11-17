@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 from epaper_dithering import DbsParams, DitherMode, DitherOptions, dither_image
 from PIL import Image
 
@@ -18,10 +19,12 @@ from ..encoding import (
     fit_image,
     normalize_source_image,
 )
+from ..encoding.multipass import SCHEME_BWRY16, encode_multipass, mode_palette
 from ..exceptions import ImageEncodingError
 from ..models.capabilities import DeviceCapabilities
 from ..models.config import DisplayConfig, GlobalConfig
 from ..models.enums import ColorScheme, FitMode, Rotation
+from ..models.panel_drive import COLOR_SCHEME_INHERIT, DisplayMode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -153,6 +156,27 @@ def _resolve_dbs(dbs: DbsParams | bool | None, display: DisplayConfig | None) ->
     return dbs
 
 
+def _fit_for_display(
+    image: Image.Image, capabilities: DeviceCapabilities, rotate: Rotation, fit: FitMode
+) -> Image.Image:
+    """Normalise, rotate and fit a source image to the display, as every upload does."""
+    target_size = (capabilities.width, capabilities.height)
+    base = _capabilities_rotation(capabilities.rotation)
+    effective = Rotation((base.value + rotate.value) % 360)
+    image = _rotate_source_image(normalize_source_image(image), effective)
+    if image.size != target_size:
+        _LOGGER.info(
+            "Fitting image %dx%d -> %dx%d (mode: %s)",
+            image.width,
+            image.height,
+            capabilities.width,
+            capabilities.height,
+            fit.name,
+        )
+        image = fit_image(image, target_size, fit)
+    return image
+
+
 def prepare_image(
     image: Image.Image,
     config: GlobalConfig | None = None,
@@ -219,21 +243,7 @@ def prepare_image(
     if panel_ic_type is None and config is not None and config.displays:
         panel_ic_type = config.displays[0].panel_ic_type
 
-    target_size = (capabilities.width, capabilities.height)
-    base = _capabilities_rotation(capabilities.rotation)
-    effective = Rotation((base.value + rotate.value) % 360)
-    image = _rotate_source_image(normalize_source_image(image), effective)
-
-    if image.size != target_size:
-        _LOGGER.info(
-            "Fitting image %dx%d -> %dx%d (mode: %s)",
-            image.width,
-            image.height,
-            capabilities.width,
-            capabilities.height,
-            fit.name,
-        )
-        image = fit_image(image, target_size, fit)
+    image = _fit_for_display(image, capabilities, rotate, fit)
 
     color_scheme = capabilities.color_scheme
     if color_scheme == ColorScheme.GRAYSCALE_4 and panel_ic_type is not None and panel_ic_type not in PANELS_4GRAY:
@@ -311,3 +321,75 @@ def preview_image(
         capabilities = _capabilities_from_config(config)
     effective = (_capabilities_rotation(capabilities.rotation).value + rotate.value) % 360
     return _rotate_source_image(processed.convert("RGB"), Rotation((360 - effective) % 360))
+
+
+def prepare_multipass(  # pylint: disable=too-many-arguments
+    image: Image.Image,
+    config: GlobalConfig,
+    mode: DisplayMode,
+    *,
+    use_measured_palettes: bool = True,
+    dither_mode: DitherMode = DitherMode.BURKES,
+    serpentine: bool = True,
+    exposure: float = 1.0,
+    saturation: float = 1.0,
+    fit: FitMode = FitMode.CONTAIN,
+    rotate: Rotation = Rotation.ROTATE_0,
+) -> tuple[bytes, Image.Image]:
+    """Encode an image for a named drive mode: rotate -> fit -> dither -> one frame per pass. No I/O.
+
+    A multi-pass mode is dithered against its calibration palette (0xB0) and encoded pass by pass
+    (``encoding.multipass``). A single-pass mode is its scheme's normal frame (``prepare_image``).
+
+    Returns:
+        The uncompressed frames, concatenated, and the dithered preview.
+
+    Raises:
+        ImageEncodingError: A multi-pass mode without a 0xB0 calibration packet or with a scheme
+            other than BWRY16, or a single-pass mode whose scheme is not the display's.
+    """
+    if mode.passes > 1 and mode.color_scheme != SCHEME_BWRY16:
+        raise ImageEncodingError(
+            f"Drive mode '{mode.name}' has {mode.passes} passes with scheme {mode.color_scheme}; "
+            f"only scheme {SCHEME_BWRY16} (BWRY16) multi-pass frames can be encoded"
+        )
+    display_scheme = config.displays[0].color_scheme if config.displays else None
+    if mode.passes <= 1 and mode.color_scheme not in (COLOR_SCHEME_INHERIT, display_scheme):
+        raise ImageEncodingError(
+            f"Drive mode '{mode.name}' renders scheme {mode.color_scheme}, not the display's scheme "
+            f"{display_scheme}; such a single-pass mode cannot be encoded yet"
+        )
+    if mode.passes <= 1:
+        data, _, preview = prepare_image(
+            image,
+            config=config,
+            use_measured_palettes=use_measured_palettes,
+            dither_mode=dither_mode,
+            compress=False,
+            serpentine=serpentine,
+            exposure=exposure,
+            saturation=saturation,
+            fit=fit,
+            rotate=rotate,
+        )
+        return data, preview
+    calibration = next(
+        (
+            c
+            for c in config.display_calibrations
+            if c.mode_index == mode.mode_index and c.instance_number == mode.instance_number
+        ),
+        None,
+    )
+    if calibration is None:
+        raise ImageEncodingError(
+            f"Drive mode '{mode.name}' has {mode.passes} passes but the config has no 0xB0 calibration "
+            "packet for it, so its colours are unknown"
+        )
+    image = _fit_for_display(image, _capabilities_from_config(config), rotate, fit)
+    dithered = dither_image(
+        image,
+        mode_palette(calibration),
+        DitherOptions(mode=dither_mode, serpentine=serpentine, exposure=exposure, saturation=saturation),
+    )
+    return encode_multipass(np.asarray(dithered), calibration, mode.passes), dithered
