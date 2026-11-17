@@ -55,6 +55,7 @@ from .models.enums import (
 from .models.firmware import FirmwareVersion
 from .models.ident import DeviceIdent
 from .partial import PartialState
+from .sec2.wire import SecStatus
 from .sensors import SensorReading
 
 _LOGGER = logging.getLogger(__name__)
@@ -278,6 +279,18 @@ async def _read_ident(device: OpenDisplayDevice, fw: FirmwareVersion) -> DeviceI
         return None
 
 
+async def _read_sec_status(device: OpenDisplayDevice, fw: FirmwareVersion) -> SecStatus | None:
+    """Read the security state on firmware 3.0; 2.x does not know the command and is not asked."""
+    if fw["major"] < 3:
+        return None
+    try:
+        return await device.read_sec_status()
+    except OpenDisplayError as exc:
+        # The security state is an extra: a missing or broken answer must not cost the report.
+        _LOGGER.warning("Could not read the security state: %s", exc)
+        return None
+
+
 async def _info_with_config(device_kwargs: dict[str, Any]) -> _InfoContext:
     """Gather the full report from a device that has a config."""
     with _spinner() as progress:
@@ -299,6 +312,7 @@ async def _info_with_config(device_kwargs: dict[str, Any]) -> _InfoContext:
                 board_type_name=device.get_board_type_name() if config else None,
                 sensor_readings=await _read_sensors(device, progress, task),
                 ident=await _read_ident(device, fw),
+                sec_status=await _read_sec_status(device, fw),
             )
 
 
@@ -329,6 +343,7 @@ async def _info_without_config(device_kwargs: dict[str, Any]) -> _InfoContext:
             rotation=0,
             board_type_name=None,
             ident=ident,
+            sec_status=await _read_sec_status(device, fw),
         )
 
 
