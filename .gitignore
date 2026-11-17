@@ -215,3 +215,6 @@ __marimo__/
 .idea
 # Local device inventory (contains encryption keys)
 device_inventory.csv
+
+# Local Bluetooth proxy list (contains ESPHome API keys)
+ble_proxies.csv

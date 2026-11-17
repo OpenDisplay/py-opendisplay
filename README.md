@@ -125,9 +125,8 @@ Firmware 2.x devices with encryption require `--key HEX` (32 hex characters). Fi
 live in a key store, `~/.config/opendisplay/keys.json` by default (`--key-store PATH` to change
 it). Pass `-v` / `--verbose` for debug logging.
 
-On a **claimed** firmware 3.0 display, `info`, `upload`, `reboot`, `sleep`, `export-config` and
-`write-config` do not open a session yet; they stop with `Sec2RequiredError`, and `upload --mode`
-does not read the key store yet. `claim`, `unclaim`, `rotate-key`, `backup-config` and `migrate` do.
+Every command that talks to a display reads the key store, so a **claimed** firmware 3.0 display
+works with all of them once its key is there (from `claim`, or `key import`).
 
 `export-config` keeps config packets this library does not recognise in an `unparsed_tail` field, so writing the file back restores them. If a file has lost that field (for example after editing it in another tool) and the device has such packets, `write-config` refuses to write. Pass `--keep-unknown-packets` to carry the device's packets over unchanged, or `--discard-unknown-packets` to delete them.
 

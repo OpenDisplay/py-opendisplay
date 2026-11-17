@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from .cli_common import _add_device_options, _console, _device_kwargs, _error, _handle_ble_error, _parse_hex_key, _run
-from .cli_sec2 import _add_key_store_option
 from .device import connect
 from .exceptions import OpenDisplayError
 from .models.config import GlobalConfig, SecurityConfig, WifiConfig
@@ -184,7 +183,6 @@ def add_backup_config_parser(subparsers: argparse._SubParsersAction[argparse.Arg
     )
     _add_device_options(p)
     p.add_argument("output", metavar="FILE", help="Path of the backup file to create")
-    _add_key_store_option(p)
     p.set_defaults(func=_cmd_backup_config)
 
 
@@ -232,7 +230,6 @@ def add_migrate_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         action="store_true",
         help="With --from-backup: write the backup without its key, WiFi password and FindMy settings",
     )
-    _add_key_store_option(p)
     p.set_defaults(func=_cmd_migrate, parser=p)
 
 

@@ -23,6 +23,19 @@ _TAIL = bytes([5, 0xB1, 3, 0, 0xAA, 0xBB, 0xCC])
 _OTHER_TAIL = bytes([5, 0xB1, 1, 0, 0x11])
 
 
+class _Opened:
+    """What ``cli._open_device`` returns: a connected ``Device`` whose ``legacy`` is the fake."""
+
+    def __init__(self, legacy: object) -> None:
+        self.legacy = legacy
+
+    async def __aenter__(self) -> _Opened:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
 def _config(tail: bytes = b"") -> GlobalConfig:
     return dataclasses.replace(_base_config(displays=[_display()]), unparsed_tail=tail)
 
@@ -53,7 +66,8 @@ def _write(
         async def write_config(self, config: GlobalConfig) -> None:
             written.append(config)
 
-    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)
+    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)  # import_config_json
+    monkeypatch.setattr(cli, "_open_device", lambda kwargs: _Opened(FakeDevice()))
     path = tmp_path / "config.json"
     path.write_text(json.dumps(config_to_json(_config(file_tail))))
     asyncio.run(cli._write_config({}, str(path), unknown_packets))
@@ -116,7 +130,8 @@ def test_length_prefixed_packets_are_guarded_like_the_tail(
         async def write_config(self, config: GlobalConfig) -> None:
             written.append(config)
 
-    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)
+    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)  # import_config_json
+    monkeypatch.setattr(cli, "_open_device", lambda kwargs: _Opened(FakeDevice()))
     path = tmp_path / "config.json"
     path.write_text(json.dumps(config_to_json(_config())))
 
@@ -177,7 +192,8 @@ def _write_over_a_device_with_findmy(
         async def write_config(self, config: GlobalConfig) -> None:
             written.append(config)
 
-    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)
+    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)  # import_config_json
+    monkeypatch.setattr(cli, "_open_device", lambda kwargs: _Opened(FakeDevice()))
     path = tmp_path / "config.json"
     path.write_text(json.dumps(config_to_json(_config())))
     asyncio.run(cli._write_config({}, str(path), unknown_packets))
@@ -224,7 +240,8 @@ def _write_lp_file_over_a_device_with_findmy_and_lp(
         async def write_config(self, config: GlobalConfig) -> None:
             written.append(config)
 
-    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)
+    monkeypatch.setattr(cli, "OpenDisplayDevice", FakeDevice)  # import_config_json
+    monkeypatch.setattr(cli, "_open_device", lambda kwargs: _Opened(FakeDevice()))
     path = tmp_path / "config.json"
     path.write_text(json.dumps(config_to_json(dataclasses.replace(_config(), length_prefixed_packets=file_packets))))
     asyncio.run(cli._write_config({}, str(path), unknown_packets))
