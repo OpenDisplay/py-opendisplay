@@ -1,0 +1,1889 @@
+{
+ "schema": "opendisplay-sec2-vectors/1",
+ "spec": "SECURITY_V2.md revision 5 (v3/round5 0e6dec1)",
+ "generator": "py-opendisplay scripts/gen_sec2_vectors.py (independent reference implementation)",
+ "encoding": "byte strings are lower-case hex; scalars are 64 hex digits big-endian",
+ "open_items": [
+  "\u00a7 2.1 / \u00a7 19 E2: the K0 KDF variant is NOT applied (the spec's current normative form)",
+  "\u00a7 19 H11: Nordic uid byte order not yet fixed; uid here is an arbitrary 8-byte string",
+  "V9 (boot decision) and V12 (claim-mode traces) are device-internal and not generated here; when generated they must cover PURGE (\u00a7 10.4a) and NO_RESET_PATTERN (\u00a7 7.10.1)",
+  "PURGE (OS2S flag bit 3) is not visible on the wire; V11 carries the client-visible UNCLAIM read view",
+  "H->D fragments use the same deterministic split as D->H; any H->D split is legal (\u00a7 3.3)",
+  "V11 read_image_frame carries the stored CRC unchanged (rev 3 \u00a7 10.2), so it may not match a CRC computed over the read image"
+ ],
+ "V0_primitives": {
+  "note": "CMAC: the four RFC 4493 examples (published MACs: bb1d6929e95937287fa37d129b756746, 070a16b46b4d4144f79bdd9dd04a287c, dfa66747de9ae63030ca32611497c827, 51f0bebf7e3b9d92fc49741779363cfe). CCM: 13-byte nonce, 12-byte tag, incl. zero-length plaintext; computed by pyca/cryptography (OpenSSL); no CAVP file is vendored here. ECDH: generator check and a symmetric agreement; CAVP KAS ECC CDH not vendored.",
+  "cmac_rfc4493": [
+   {
+    "key": "2b7e151628aed2a6abf7158809cf4f3c",
+    "msg": "",
+    "mac": "bb1d6929e95937287fa37d129b756746"
+   },
+   {
+    "key": "2b7e151628aed2a6abf7158809cf4f3c",
+    "msg": "6bc1bee22e409f96e93d7e117393172a",
+    "mac": "070a16b46b4d4144f79bdd9dd04a287c"
+   },
+   {
+    "key": "2b7e151628aed2a6abf7158809cf4f3c",
+    "msg": "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411",
+    "mac": "dfa66747de9ae63030ca32611497c827"
+   },
+   {
+    "key": "2b7e151628aed2a6abf7158809cf4f3c",
+    "msg": "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710",
+    "mac": "51f0bebf7e3b9d92fc49741779363cfe"
+   }
+  ],
+  "ccm_m12_l2": [
+   {
+    "key": "404142434445464748494a4b4c4d4e4f",
+    "nonce": "101112131415161718191a1b1c",
+    "aad": "",
+    "pt": "",
+    "ct_tag": "7d07cd62411a77128873689c"
+   },
+   {
+    "key": "404142434445464748494a4b4c4d4e4f",
+    "nonce": "101112131415161718191a1b1c",
+    "aad": "020040",
+    "pt": "",
+    "ct_tag": "74fd354ee0dbd23117c6ab3f"
+   },
+   {
+    "key": "404142434445464748494a4b4c4d4e4f",
+    "nonce": "101112131415161718191a1b1c",
+    "aad": "02e5",
+    "pt": "0041",
+    "ct_tag": "49f1bfec3934e07be484227d4f31"
+   },
+   {
+    "key": "404142434445464748494a4b4c4d4e4f",
+    "nonce": "101112131415161718191a1b1c",
+    "aad": "02",
+    "pt": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "ct_tag": "49b17d8d3ea4e6174a48e2b65e6d8b417ac0dd3f8ee46ce4a4a2a509661cef52461b2ff96c23aa3fb3da06fe"
+   }
+  ],
+  "p256_generator": {
+   "scalar": "01",
+   "Q": "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"
+  },
+  "p256_ecdh": {
+   "d_a": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+   "Q_a": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "d_b": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+   "Q_b": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "Z_check_ba": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40"
+  }
+ },
+ "V1_kdf": [
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/k-ext",
+   "label_len": 9,
+   "context": "030a11181f262d34",
+   "context_len": 8,
+   "cmac_input": "014f44322f6b2d65787400030a11181f262d340080",
+   "out": "0eb2eb135bb9ee1e2deb4e34ace6e541"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/k-conf",
+   "label_len": 10,
+   "context": "030a11181f262d34",
+   "context_len": 8,
+   "cmac_input": "014f44322f6b2d636f6e6600030a11181f262d340080",
+   "out": "37633409767ed291a38bf73b56ad5cdc"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/k-lan",
+   "label_len": 9,
+   "context": "030a11181f262d34",
+   "context_len": 8,
+   "cmac_input": "014f44322f6b2d6c616e00030a11181f262d340080",
+   "out": "54b852cb5d75531728545995ff8acfab"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/v1-compat",
+   "label_len": 13,
+   "context": "030a11181f262d34",
+   "context_len": 8,
+   "cmac_input": "014f44322f76312d636f6d70617400030a11181f262d340080",
+   "out": "1094f734a360801c0fa30df637979fdd"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/wrap",
+   "label_len": 8,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1",
+   "context_len": 179,
+   "cmac_input": "014f44322f7772617000030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae10080",
+   "out": "d6bfb376b8bc21daf7d8fd0b491a60c8"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/h2d",
+   "label_len": 7,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1",
+   "context_len": 179,
+   "cmac_input": "014f44322f68326400030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae10080",
+   "out": "7ba57d1fc48166a68409079d881d429c"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/h2d",
+   "label_len": 7,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+   "context_len": 178,
+   "cmac_input": "014f44322f68326400030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da0080",
+   "out": "bd684241229e50e6f496e937eb55735a"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/d2h",
+   "label_len": 7,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1",
+   "context_len": 179,
+   "cmac_input": "014f44322f64326800030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae10080",
+   "out": "cfd8cdd7acef41448def557871180c59"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/d2h",
+   "label_len": 7,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+   "context_len": 178,
+   "cmac_input": "014f44322f64326800030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da0080",
+   "out": "6293de99b3a8128b181fe4644a4d36ba"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/sid",
+   "label_len": 7,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1",
+   "context_len": 179,
+   "cmac_input": "014f44322f73696400030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae10080",
+   "out": "a70ce1a722318b12c246f0c0d397e33e"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/sid",
+   "label_len": 7,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+   "context_len": 178,
+   "cmac_input": "014f44322f73696400030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da0080",
+   "out": "cdf830ff4904317ce20ec9fd8c93dca2"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/claim-c",
+   "label_len": 11,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1",
+   "context_len": 179,
+   "cmac_input": "014f44322f636c61696d2d6300030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae10080",
+   "out": "72ae04359cb3734ec75524476233d291"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/claim-d",
+   "label_len": 11,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1",
+   "context_len": 179,
+   "cmac_input": "014f44322f636c61696d2d6400030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae10080",
+   "out": "be05377e904f588babf9aff2b3fd69d6"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/auth-c",
+   "label_len": 10,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+   "context_len": 178,
+   "cmac_input": "014f44322f617574682d6300030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da0080",
+   "out": "b24ca6d54e23e642582dad297ced258a"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/auth-d",
+   "label_len": 10,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+   "context_len": 178,
+   "cmac_input": "014f44322f617574682d6400030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da0080",
+   "out": "dfe627d59b853a2ef43e34eef62ba571"
+  },
+  {
+   "k_in": "000102030405060708090a0b0c0d0e0f",
+   "label": "OD2/rotate-c",
+   "label_len": 12,
+   "context": "030a11181f262d343b424950575e656c737a81888f969da4",
+   "context_len": 24,
+   "cmac_input": "014f44322f726f746174652d6300030a11181f262d343b424950575e656c737a81888f969da40080",
+   "out": "b01567601c64a5314f9119119384a554"
+  }
+ ],
+ "V2_key_hierarchy": [
+  {
+   "origin": "LEGACY",
+   "k_dev": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "uid": "0011223344556677",
+   "k_ext": "b5914b7559774a3af0a167d3a6a3e642",
+   "k_conf": "1059c1a90e833b1be4ab9ad3787d582e",
+   "k_lan": "7e99518ef2df390980fa5cccaf4e76a3",
+   "k_v1_derived": "d8117ac1ded9f76897238be5261273ca",
+   "k_v1_at_rest": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "note": "at rest: K_dev itself while LEGACY and never rotated, else KDF(K_dev,'OD2/v1-compat',uid)"
+  },
+  {
+   "origin": "CLAIMED",
+   "k_dev": "000102030405060708090a0b0c0d0e0f",
+   "uid": "0011223344556677",
+   "k_ext": "f75de2d6ca1db5f164019a4eff1c40d7",
+   "k_conf": "f8c04ca2c2d7f2a32443ad25cf7bfda9",
+   "k_lan": "fc01738aa7f986cc7c0f4cc1bb4afa3d",
+   "k_v1_derived": "fe93998aeb4b68690c41bcb32dcd8540",
+   "k_v1_at_rest": "fe93998aeb4b68690c41bcb32dcd8540",
+   "note": "at rest: K_dev itself while LEGACY and never rotated, else KDF(K_dev,'OD2/v1-compat',uid)"
+  }
+ ],
+ "V3_claim": [
+  {
+   "frag_max": 20,
+   "inputs": {
+    "uid": "0011223344556677",
+    "dflags": "01",
+    "claim_mode": "gesture",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "K_new": "e0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+    "session_timeout_s": 3600
+   },
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Cd": "b864251665c2f34eefa7a9baa07280d9",
+   "Tc": "4f44322f636c61696d020100112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "31204c13129956cd8fcb3151b870e789",
+   "k_wrap": "c19735132dd5dd0941a4f6b1d0bf071a",
+   "W": "980bdb114ea2ff8703b57bbe2e9ca86850af50d036a4dce87c6007e6",
+   "code_raw": "632c2b9d7478a3d8f3116bd47efcf9f7",
+   "code": "508279",
+   "code_display": "508 279",
+   "K_conf": "e67ffba1adf6f1744b7ff4ac5fcb60cb",
+   "tag_c": "e27efa376a59f063e3eaab4cc870da56",
+   "tag_d": "6fb2063c7bc5ec5afb0431d666a6763d",
+   "k_h2d": "a57f281147d0590265578dc436410451",
+   "k_d2h": "cd44dc50f0dd9aa006c109698555240f",
+   "sid": "5a6914e3e39e9a4bc7075267d88040ae",
+   "messages": {
+    "BEGIN": {
+     "h2d": [
+      "0055010002142aecc836954c14cbfce91b6f3990",
+      "005501016dce03a864ba0b4df218f451fd26864e",
+      "0055010286fb0b570774e03c7e4817d1aa234793",
+      "005501035d147f1fde463aea61b67b5c588d3f5f",
+      "00550184d647"
+     ],
+     "d2h": [
+      "00550100014fa97792510dec82ce5c69efe98e3e",
+      "00550101510aa47129e8cb7b9dc42831f4c6e59b",
+      "0055010229d9c590a1f39c19446bc8f451bd3c3b",
+      "0055010376797d44c823c2d935504e4cd4f07a0d",
+      "00550104ecb864251665c2f34eefa7a9baa07280",
+      "00550185d9"
+     ],
+     "h2d_body": "02142aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+     "d2h_body": "014fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decb864251665c2f34eefa7a9baa07280d9"
+    },
+    "NONCE": {
+     "h2d": [
+      "00550280c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+     ],
+     "d2h": [
+      "00550200d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "00550201980bdb114ea2ff8703b57bbe2e9ca868",
+      "0055028250af50d036a4dce87c6007e6"
+     ],
+     "h2d_body": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf980bdb114ea2ff8703b57bbe2e9ca86850af50d036a4dce87c6007e6"
+    },
+    "CONFIRM": {
+     "h2d": [
+      "00550380e27efa376a59f063e3eaab4cc870da56"
+     ],
+     "d2h": [
+      "005503006fb2063c7bc5ec5afb0431d666a6763d",
+      "00550381100e"
+     ],
+     "h2d_body": "e27efa376a59f063e3eaab4cc870da56",
+     "d2h_body": "6fb2063c7bc5ec5afb0431d666a6763d100e"
+    },
+    "ABORT": {
+     "h2d": [
+      "00550480"
+     ],
+     "d2h": [
+      "00550480"
+     ]
+    },
+    "EXIT": {
+     "h2d": [
+      "00550580"
+     ],
+     "d2h": [
+      "00550580"
+     ]
+    }
+   }
+  },
+  {
+   "frag_max": 21,
+   "inputs": {
+    "uid": "0011223344556677",
+    "dflags": "01",
+    "claim_mode": "gesture",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "K_new": "e0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+    "session_timeout_s": 3600
+   },
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Cd": "b864251665c2f34eefa7a9baa07280d9",
+   "Tc": "4f44322f636c61696d020100112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "31204c13129956cd8fcb3151b870e789",
+   "k_wrap": "c19735132dd5dd0941a4f6b1d0bf071a",
+   "W": "980bdb114ea2ff8703b57bbe2e9ca86850af50d036a4dce87c6007e6",
+   "code_raw": "632c2b9d7478a3d8f3116bd47efcf9f7",
+   "code": "508279",
+   "code_display": "508 279",
+   "K_conf": "e67ffba1adf6f1744b7ff4ac5fcb60cb",
+   "tag_c": "e27efa376a59f063e3eaab4cc870da56",
+   "tag_d": "6fb2063c7bc5ec5afb0431d666a6763d",
+   "k_h2d": "a57f281147d0590265578dc436410451",
+   "k_d2h": "cd44dc50f0dd9aa006c109698555240f",
+   "sid": "5a6914e3e39e9a4bc7075267d88040ae",
+   "messages": {
+    "BEGIN": {
+     "h2d": [
+      "0055010002152aecc836954c14cbfce91b6f39906d",
+      "00550101ce03a864ba0b4df218f451fd26864e86fb",
+      "005501020b570774e03c7e4817d1aa2347935d147f",
+      "005501831fde463aea61b67b5c588d3f5fd647"
+     ],
+     "d2h": [
+      "00550100014fa97792510dec82ce5c69efe98e3e51",
+      "005501010aa47129e8cb7b9dc42831f4c6e59b29d9",
+      "00550102c590a1f39c19446bc8f451bd3c3b76797d",
+      "0055010344c823c2d935504e4cd4f07a0decb86425",
+      "005501841665c2f34eefa7a9baa07280d9"
+     ],
+     "h2d_body": "02152aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+     "d2h_body": "014fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decb864251665c2f34eefa7a9baa07280d9"
+    },
+    "NONCE": {
+     "h2d": [
+      "00550280c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+     ],
+     "d2h": [
+      "00550200d0d1d2d3d4d5d6d7d8d9dadbdcdddedf98",
+      "005502010bdb114ea2ff8703b57bbe2e9ca86850af",
+      "0055028250d036a4dce87c6007e6"
+     ],
+     "h2d_body": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf980bdb114ea2ff8703b57bbe2e9ca86850af50d036a4dce87c6007e6"
+    },
+    "CONFIRM": {
+     "h2d": [
+      "00550380e27efa376a59f063e3eaab4cc870da56"
+     ],
+     "d2h": [
+      "005503006fb2063c7bc5ec5afb0431d666a6763d10",
+      "005503810e"
+     ],
+     "h2d_body": "e27efa376a59f063e3eaab4cc870da56",
+     "d2h_body": "6fb2063c7bc5ec5afb0431d666a6763d100e"
+    },
+    "ABORT": {
+     "h2d": [
+      "00550480"
+     ],
+     "d2h": [
+      "00550480"
+     ]
+    },
+    "EXIT": {
+     "h2d": [
+      "00550580"
+     ],
+     "d2h": [
+      "00550580"
+     ]
+    }
+   }
+  },
+  {
+   "frag_max": 244,
+   "inputs": {
+    "uid": "0011223344556677",
+    "dflags": "01",
+    "claim_mode": "gesture",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "K_new": "e0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+    "session_timeout_s": 3600
+   },
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Cd": "b864251665c2f34eefa7a9baa07280d9",
+   "Tc": "4f44322f636c61696d020100112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "31204c13129956cd8fcb3151b870e789",
+   "k_wrap": "c19735132dd5dd0941a4f6b1d0bf071a",
+   "W": "980bdb114ea2ff8703b57bbe2e9ca86850af50d036a4dce87c6007e6",
+   "code_raw": "632c2b9d7478a3d8f3116bd47efcf9f7",
+   "code": "508279",
+   "code_display": "508 279",
+   "K_conf": "e67ffba1adf6f1744b7ff4ac5fcb60cb",
+   "tag_c": "e27efa376a59f063e3eaab4cc870da56",
+   "tag_d": "6fb2063c7bc5ec5afb0431d666a6763d",
+   "k_h2d": "a57f281147d0590265578dc436410451",
+   "k_d2h": "cd44dc50f0dd9aa006c109698555240f",
+   "sid": "5a6914e3e39e9a4bc7075267d88040ae",
+   "messages": {
+    "BEGIN": {
+     "h2d": [
+      "0055018002f42aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647"
+     ],
+     "d2h": [
+      "00550180014fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decb864251665c2f34eefa7a9baa07280d9"
+     ],
+     "h2d_body": "02f42aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+     "d2h_body": "014fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decb864251665c2f34eefa7a9baa07280d9"
+    },
+    "NONCE": {
+     "h2d": [
+      "00550280c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+     ],
+     "d2h": [
+      "00550280d0d1d2d3d4d5d6d7d8d9dadbdcdddedf980bdb114ea2ff8703b57bbe2e9ca86850af50d036a4dce87c6007e6"
+     ],
+     "h2d_body": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf980bdb114ea2ff8703b57bbe2e9ca86850af50d036a4dce87c6007e6"
+    },
+    "CONFIRM": {
+     "h2d": [
+      "00550380e27efa376a59f063e3eaab4cc870da56"
+     ],
+     "d2h": [
+      "005503806fb2063c7bc5ec5afb0431d666a6763d100e"
+     ],
+     "h2d_body": "e27efa376a59f063e3eaab4cc870da56",
+     "d2h_body": "6fb2063c7bc5ec5afb0431d666a6763d100e"
+    },
+    "ABORT": {
+     "h2d": [
+      "00550480"
+     ],
+     "d2h": [
+      "00550480"
+     ]
+    },
+    "EXIT": {
+     "h2d": [
+      "00550580"
+     ],
+     "d2h": [
+      "00550580"
+     ]
+    }
+   }
+  },
+  {
+   "frag_max": 20,
+   "inputs": {
+    "uid": "0011223344556677",
+    "dflags": "09",
+    "claim_mode": "fresh",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "K_new": "e0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+    "session_timeout_s": 3600
+   },
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Cd": "b864251665c2f34eefa7a9baa07280d9",
+   "Tc": "4f44322f636c61696d020900112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "31204c13129956cd8fcb3151b870e789",
+   "k_wrap": "b31fcb9eff3ec46085a86b82020b6d71",
+   "W": "0f945b94fc601651b74035ab6a38c11174d9a982641549c0e2430ec9",
+   "code_raw": "632c2b9d7478a3d8f3116bd47efcf9f7",
+   "code": "508279",
+   "code_display": "508 279",
+   "K_conf": "e67ffba1adf6f1744b7ff4ac5fcb60cb",
+   "tag_c": "085c13586e07b8311a756a9ae4811953",
+   "tag_d": "e4f3616a0d7b1fdd1395f90a78fcd170",
+   "k_h2d": "00970d2989ed7faad10c2b622d069f1e",
+   "k_d2h": "3973b17f1f015f0cf6524428dbdf6ebb",
+   "sid": "72dbd1a711149f117adb068f84d80cac",
+   "messages": {
+    "BEGIN": {
+     "h2d": [
+      "0055010002142aecc836954c14cbfce91b6f3990",
+      "005501016dce03a864ba0b4df218f451fd26864e",
+      "0055010286fb0b570774e03c7e4817d1aa234793",
+      "005501035d147f1fde463aea61b67b5c588d3f5f",
+      "00550184d647"
+     ],
+     "d2h": [
+      "00550100094fa97792510dec82ce5c69efe98e3e",
+      "00550101510aa47129e8cb7b9dc42831f4c6e59b",
+      "0055010229d9c590a1f39c19446bc8f451bd3c3b",
+      "0055010376797d44c823c2d935504e4cd4f07a0d",
+      "00550104ecb864251665c2f34eefa7a9baa07280",
+      "00550185d9"
+     ],
+     "h2d_body": "02142aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+     "d2h_body": "094fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decb864251665c2f34eefa7a9baa07280d9"
+    },
+    "NONCE": {
+     "h2d": [
+      "00550280c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+     ],
+     "d2h": [
+      "00550200d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "005502010f945b94fc601651b74035ab6a38c111",
+      "0055028274d9a982641549c0e2430ec9"
+     ],
+     "h2d_body": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0f945b94fc601651b74035ab6a38c11174d9a982641549c0e2430ec9"
+    },
+    "CONFIRM": {
+     "h2d": [
+      "00550380085c13586e07b8311a756a9ae4811953"
+     ],
+     "d2h": [
+      "00550300e4f3616a0d7b1fdd1395f90a78fcd170",
+      "00550381100e"
+     ],
+     "h2d_body": "085c13586e07b8311a756a9ae4811953",
+     "d2h_body": "e4f3616a0d7b1fdd1395f90a78fcd170100e"
+    },
+    "ABORT": {
+     "h2d": [
+      "00550480"
+     ],
+     "d2h": [
+      "00550480"
+     ]
+    },
+    "EXIT": {
+     "h2d": [
+      "00550580"
+     ],
+     "d2h": [
+      "00550580"
+     ]
+    }
+   }
+  },
+  {
+   "frag_max": 21,
+   "inputs": {
+    "uid": "0011223344556677",
+    "dflags": "09",
+    "claim_mode": "fresh",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "K_new": "e0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+    "session_timeout_s": 3600
+   },
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Cd": "b864251665c2f34eefa7a9baa07280d9",
+   "Tc": "4f44322f636c61696d020900112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "31204c13129956cd8fcb3151b870e789",
+   "k_wrap": "b31fcb9eff3ec46085a86b82020b6d71",
+   "W": "0f945b94fc601651b74035ab6a38c11174d9a982641549c0e2430ec9",
+   "code_raw": "632c2b9d7478a3d8f3116bd47efcf9f7",
+   "code": "508279",
+   "code_display": "508 279",
+   "K_conf": "e67ffba1adf6f1744b7ff4ac5fcb60cb",
+   "tag_c": "085c13586e07b8311a756a9ae4811953",
+   "tag_d": "e4f3616a0d7b1fdd1395f90a78fcd170",
+   "k_h2d": "00970d2989ed7faad10c2b622d069f1e",
+   "k_d2h": "3973b17f1f015f0cf6524428dbdf6ebb",
+   "sid": "72dbd1a711149f117adb068f84d80cac",
+   "messages": {
+    "BEGIN": {
+     "h2d": [
+      "0055010002152aecc836954c14cbfce91b6f39906d",
+      "00550101ce03a864ba0b4df218f451fd26864e86fb",
+      "005501020b570774e03c7e4817d1aa2347935d147f",
+      "005501831fde463aea61b67b5c588d3f5fd647"
+     ],
+     "d2h": [
+      "00550100094fa97792510dec82ce5c69efe98e3e51",
+      "005501010aa47129e8cb7b9dc42831f4c6e59b29d9",
+      "00550102c590a1f39c19446bc8f451bd3c3b76797d",
+      "0055010344c823c2d935504e4cd4f07a0decb86425",
+      "005501841665c2f34eefa7a9baa07280d9"
+     ],
+     "h2d_body": "02152aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+     "d2h_body": "094fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decb864251665c2f34eefa7a9baa07280d9"
+    },
+    "NONCE": {
+     "h2d": [
+      "00550280c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+     ],
+     "d2h": [
+      "00550200d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0f",
+      "00550201945b94fc601651b74035ab6a38c11174d9",
+      "00550282a982641549c0e2430ec9"
+     ],
+     "h2d_body": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0f945b94fc601651b74035ab6a38c11174d9a982641549c0e2430ec9"
+    },
+    "CONFIRM": {
+     "h2d": [
+      "00550380085c13586e07b8311a756a9ae4811953"
+     ],
+     "d2h": [
+      "00550300e4f3616a0d7b1fdd1395f90a78fcd17010",
+      "005503810e"
+     ],
+     "h2d_body": "085c13586e07b8311a756a9ae4811953",
+     "d2h_body": "e4f3616a0d7b1fdd1395f90a78fcd170100e"
+    },
+    "ABORT": {
+     "h2d": [
+      "00550480"
+     ],
+     "d2h": [
+      "00550480"
+     ]
+    },
+    "EXIT": {
+     "h2d": [
+      "00550580"
+     ],
+     "d2h": [
+      "00550580"
+     ]
+    }
+   }
+  },
+  {
+   "frag_max": 244,
+   "inputs": {
+    "uid": "0011223344556677",
+    "dflags": "09",
+    "claim_mode": "fresh",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "K_new": "e0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+    "session_timeout_s": 3600
+   },
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Cd": "b864251665c2f34eefa7a9baa07280d9",
+   "Tc": "4f44322f636c61696d020900112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "31204c13129956cd8fcb3151b870e789",
+   "k_wrap": "b31fcb9eff3ec46085a86b82020b6d71",
+   "W": "0f945b94fc601651b74035ab6a38c11174d9a982641549c0e2430ec9",
+   "code_raw": "632c2b9d7478a3d8f3116bd47efcf9f7",
+   "code": "508279",
+   "code_display": "508 279",
+   "K_conf": "e67ffba1adf6f1744b7ff4ac5fcb60cb",
+   "tag_c": "085c13586e07b8311a756a9ae4811953",
+   "tag_d": "e4f3616a0d7b1fdd1395f90a78fcd170",
+   "k_h2d": "00970d2989ed7faad10c2b622d069f1e",
+   "k_d2h": "3973b17f1f015f0cf6524428dbdf6ebb",
+   "sid": "72dbd1a711149f117adb068f84d80cac",
+   "messages": {
+    "BEGIN": {
+     "h2d": [
+      "0055018002f42aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647"
+     ],
+     "d2h": [
+      "00550180094fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decb864251665c2f34eefa7a9baa07280d9"
+     ],
+     "h2d_body": "02f42aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+     "d2h_body": "094fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decb864251665c2f34eefa7a9baa07280d9"
+    },
+    "NONCE": {
+     "h2d": [
+      "00550280c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+     ],
+     "d2h": [
+      "00550280d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0f945b94fc601651b74035ab6a38c11174d9a982641549c0e2430ec9"
+     ],
+     "h2d_body": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0f945b94fc601651b74035ab6a38c11174d9a982641549c0e2430ec9"
+    },
+    "CONFIRM": {
+     "h2d": [
+      "00550380085c13586e07b8311a756a9ae4811953"
+     ],
+     "d2h": [
+      "00550380e4f3616a0d7b1fdd1395f90a78fcd170100e"
+     ],
+     "h2d_body": "085c13586e07b8311a756a9ae4811953",
+     "d2h_body": "e4f3616a0d7b1fdd1395f90a78fcd170100e"
+    },
+    "ABORT": {
+     "h2d": [
+      "00550480"
+     ],
+     "d2h": [
+      "00550480"
+     ]
+    },
+    "EXIT": {
+     "h2d": [
+      "00550580"
+     ],
+     "d2h": [
+      "00550580"
+     ]
+    }
+   }
+  }
+ ],
+ "V4_auth": [
+  {
+   "frag_max": 20,
+   "inputs": {
+    "uid": "0011223344556677",
+    "k_dev": "000102030405060708090a0b0c0d0e0f",
+    "origin": "CLAIMED",
+    "dflags": "01",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "session_timeout_s": 3600
+   },
+   "K_ext": "f75de2d6ca1db5f164019a4eff1c40d7",
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Ta": "4f44322f61757468020100112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "f54181991b481cf7b7e11ecd649460b1",
+   "tag_c": "70fbaac36ab48b21f51f442c2fe768e0",
+   "tag_d": "db7e18013260c2da94e905794d72eedc",
+   "k_h2d": "d8433cd0f9e835f09a485d3333482c07",
+   "k_d2h": "21650c86445e57aaa571514c79b9ef72",
+   "sid": "54e1963b04534a3d1725297a538d797e",
+   "messages": {
+    "HELLO": {
+     "h2d": [
+      "0056010002142aecc836954c14cbfce91b6f3990",
+      "005601016dce03a864ba0b4df218f451fd26864e",
+      "0056010286fb0b570774e03c7e4817d1aa234793",
+      "005601035d147f1fde463aea61b67b5c588d3f5f",
+      "00560104d647c0c1c2c3c4c5c6c7c8c9cacbcccd",
+      "00560185cecf"
+     ],
+     "d2h": [
+      "00560100014fa97792510dec82ce5c69efe98e3e",
+      "00560101510aa47129e8cb7b9dc42831f4c6e59b",
+      "0056010229d9c590a1f39c19446bc8f451bd3c3b",
+      "0056010376797d44c823c2d935504e4cd4f07a0d",
+      "00560104ecd0d1d2d3d4d5d6d7d8d9dadbdcddde",
+      "00560185df"
+     ],
+     "h2d_body": "02142aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "014fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decd0d1d2d3d4d5d6d7d8d9dadbdcdddedf"
+    },
+    "FINISH": {
+     "h2d": [
+      "0056028070fbaac36ab48b21f51f442c2fe768e0"
+     ],
+     "d2h": [
+      "00560200db7e18013260c2da94e905794d72eedc",
+      "00560281100e"
+     ],
+     "h2d_body": "70fbaac36ab48b21f51f442c2fe768e0",
+     "d2h_body": "db7e18013260c2da94e905794d72eedc100e"
+    }
+   }
+  },
+  {
+   "frag_max": 21,
+   "inputs": {
+    "uid": "0011223344556677",
+    "k_dev": "000102030405060708090a0b0c0d0e0f",
+    "origin": "CLAIMED",
+    "dflags": "01",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "session_timeout_s": 3600
+   },
+   "K_ext": "f75de2d6ca1db5f164019a4eff1c40d7",
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Ta": "4f44322f61757468020100112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "f54181991b481cf7b7e11ecd649460b1",
+   "tag_c": "70fbaac36ab48b21f51f442c2fe768e0",
+   "tag_d": "db7e18013260c2da94e905794d72eedc",
+   "k_h2d": "d8433cd0f9e835f09a485d3333482c07",
+   "k_d2h": "21650c86445e57aaa571514c79b9ef72",
+   "sid": "54e1963b04534a3d1725297a538d797e",
+   "messages": {
+    "HELLO": {
+     "h2d": [
+      "0056010002152aecc836954c14cbfce91b6f39906d",
+      "00560101ce03a864ba0b4df218f451fd26864e86fb",
+      "005601020b570774e03c7e4817d1aa2347935d147f",
+      "005601031fde463aea61b67b5c588d3f5fd647c0c1",
+      "00560184c2c3c4c5c6c7c8c9cacbcccdcecf"
+     ],
+     "d2h": [
+      "00560100014fa97792510dec82ce5c69efe98e3e51",
+      "005601010aa47129e8cb7b9dc42831f4c6e59b29d9",
+      "00560102c590a1f39c19446bc8f451bd3c3b76797d",
+      "0056010344c823c2d935504e4cd4f07a0decd0d1d2",
+      "00560184d3d4d5d6d7d8d9dadbdcdddedf"
+     ],
+     "h2d_body": "02152aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "014fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decd0d1d2d3d4d5d6d7d8d9dadbdcdddedf"
+    },
+    "FINISH": {
+     "h2d": [
+      "0056028070fbaac36ab48b21f51f442c2fe768e0"
+     ],
+     "d2h": [
+      "00560200db7e18013260c2da94e905794d72eedc10",
+      "005602810e"
+     ],
+     "h2d_body": "70fbaac36ab48b21f51f442c2fe768e0",
+     "d2h_body": "db7e18013260c2da94e905794d72eedc100e"
+    }
+   }
+  },
+  {
+   "frag_max": 244,
+   "inputs": {
+    "uid": "0011223344556677",
+    "k_dev": "000102030405060708090a0b0c0d0e0f",
+    "origin": "CLAIMED",
+    "dflags": "01",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "session_timeout_s": 3600
+   },
+   "K_ext": "f75de2d6ca1db5f164019a4eff1c40d7",
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Ta": "4f44322f61757468020100112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "f54181991b481cf7b7e11ecd649460b1",
+   "tag_c": "70fbaac36ab48b21f51f442c2fe768e0",
+   "tag_d": "db7e18013260c2da94e905794d72eedc",
+   "k_h2d": "d8433cd0f9e835f09a485d3333482c07",
+   "k_d2h": "21650c86445e57aaa571514c79b9ef72",
+   "sid": "54e1963b04534a3d1725297a538d797e",
+   "messages": {
+    "HELLO": {
+     "h2d": [
+      "0056018002f42aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+     ],
+     "d2h": [
+      "00560180014fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decd0d1d2d3d4d5d6d7d8d9dadbdcdddedf"
+     ],
+     "h2d_body": "02f42aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "014fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decd0d1d2d3d4d5d6d7d8d9dadbdcdddedf"
+    },
+    "FINISH": {
+     "h2d": [
+      "0056028070fbaac36ab48b21f51f442c2fe768e0"
+     ],
+     "d2h": [
+      "00560280db7e18013260c2da94e905794d72eedc100e"
+     ],
+     "h2d_body": "70fbaac36ab48b21f51f442c2fe768e0",
+     "d2h_body": "db7e18013260c2da94e905794d72eedc100e"
+    }
+   }
+  },
+  {
+   "frag_max": 20,
+   "inputs": {
+    "uid": "0011223344556677",
+    "k_dev": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+    "origin": "LEGACY",
+    "dflags": "05",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "session_timeout_s": 3600
+   },
+   "K_ext": "b5914b7559774a3af0a167d3a6a3e642",
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Ta": "4f44322f61757468020500112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "d3202c1115bac38c73731e209b854f5e",
+   "tag_c": "278400b705faf46c41a2761df00da97f",
+   "tag_d": "d1d28c399f5e382bfb21d78e486e1b26",
+   "k_h2d": "2992c6914baf734173d93765daddced7",
+   "k_d2h": "1f4fd41219e740842b1e96f40219a2a9",
+   "sid": "74b8b1222cfaf5d626cc881ae9459801",
+   "messages": {
+    "HELLO": {
+     "h2d": [
+      "0056010002142aecc836954c14cbfce91b6f3990",
+      "005601016dce03a864ba0b4df218f451fd26864e",
+      "0056010286fb0b570774e03c7e4817d1aa234793",
+      "005601035d147f1fde463aea61b67b5c588d3f5f",
+      "00560104d647c0c1c2c3c4c5c6c7c8c9cacbcccd",
+      "00560185cecf"
+     ],
+     "d2h": [
+      "00560100054fa97792510dec82ce5c69efe98e3e",
+      "00560101510aa47129e8cb7b9dc42831f4c6e59b",
+      "0056010229d9c590a1f39c19446bc8f451bd3c3b",
+      "0056010376797d44c823c2d935504e4cd4f07a0d",
+      "00560104ecd0d1d2d3d4d5d6d7d8d9dadbdcddde",
+      "00560185df"
+     ],
+     "h2d_body": "02142aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "054fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decd0d1d2d3d4d5d6d7d8d9dadbdcdddedf"
+    },
+    "FINISH": {
+     "h2d": [
+      "00560280278400b705faf46c41a2761df00da97f"
+     ],
+     "d2h": [
+      "00560200d1d28c399f5e382bfb21d78e486e1b26",
+      "00560281100e"
+     ],
+     "h2d_body": "278400b705faf46c41a2761df00da97f",
+     "d2h_body": "d1d28c399f5e382bfb21d78e486e1b26100e"
+    }
+   }
+  },
+  {
+   "frag_max": 21,
+   "inputs": {
+    "uid": "0011223344556677",
+    "k_dev": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+    "origin": "LEGACY",
+    "dflags": "05",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "session_timeout_s": 3600
+   },
+   "K_ext": "b5914b7559774a3af0a167d3a6a3e642",
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Ta": "4f44322f61757468020500112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "d3202c1115bac38c73731e209b854f5e",
+   "tag_c": "278400b705faf46c41a2761df00da97f",
+   "tag_d": "d1d28c399f5e382bfb21d78e486e1b26",
+   "k_h2d": "2992c6914baf734173d93765daddced7",
+   "k_d2h": "1f4fd41219e740842b1e96f40219a2a9",
+   "sid": "74b8b1222cfaf5d626cc881ae9459801",
+   "messages": {
+    "HELLO": {
+     "h2d": [
+      "0056010002152aecc836954c14cbfce91b6f39906d",
+      "00560101ce03a864ba0b4df218f451fd26864e86fb",
+      "005601020b570774e03c7e4817d1aa2347935d147f",
+      "005601031fde463aea61b67b5c588d3f5fd647c0c1",
+      "00560184c2c3c4c5c6c7c8c9cacbcccdcecf"
+     ],
+     "d2h": [
+      "00560100054fa97792510dec82ce5c69efe98e3e51",
+      "005601010aa47129e8cb7b9dc42831f4c6e59b29d9",
+      "00560102c590a1f39c19446bc8f451bd3c3b76797d",
+      "0056010344c823c2d935504e4cd4f07a0decd0d1d2",
+      "00560184d3d4d5d6d7d8d9dadbdcdddedf"
+     ],
+     "h2d_body": "02152aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "054fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decd0d1d2d3d4d5d6d7d8d9dadbdcdddedf"
+    },
+    "FINISH": {
+     "h2d": [
+      "00560280278400b705faf46c41a2761df00da97f"
+     ],
+     "d2h": [
+      "00560200d1d28c399f5e382bfb21d78e486e1b2610",
+      "005602810e"
+     ],
+     "h2d_body": "278400b705faf46c41a2761df00da97f",
+     "d2h_body": "d1d28c399f5e382bfb21d78e486e1b26100e"
+    }
+   }
+  },
+  {
+   "frag_max": 244,
+   "inputs": {
+    "uid": "0011223344556677",
+    "k_dev": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+    "origin": "LEGACY",
+    "dflags": "05",
+    "dc": "000d0c0b0a09080706050403020100f0e0d0c0b0a0908070605040302010f0e1",
+    "dd": "001d1c1b1a19181716151413121110f1e1d1c1b1a1918171615141312111f1e1",
+    "Nc": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+    "Nd": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "session_timeout_s": 3600
+   },
+   "K_ext": "b5914b7559774a3af0a167d3a6a3e642",
+   "Qc": "2aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647",
+   "Qd": "4fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0dec",
+   "Ta": "4f44322f61757468020500112233445566772aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6474fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+   "Z": "7ccce3fd7960e36227edc8451fd88a830cbcfe4309ad2f228f9dbe6d079c7a40",
+   "PRK": "d3202c1115bac38c73731e209b854f5e",
+   "tag_c": "278400b705faf46c41a2761df00da97f",
+   "tag_d": "d1d28c399f5e382bfb21d78e486e1b26",
+   "k_h2d": "2992c6914baf734173d93765daddced7",
+   "k_d2h": "1f4fd41219e740842b1e96f40219a2a9",
+   "sid": "74b8b1222cfaf5d626cc881ae9459801",
+   "messages": {
+    "HELLO": {
+     "h2d": [
+      "0056018002f42aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+     ],
+     "d2h": [
+      "00560180054fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decd0d1d2d3d4d5d6d7d8d9dadbdcdddedf"
+     ],
+     "h2d_body": "02f42aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd647c0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+     "d2h_body": "054fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decd0d1d2d3d4d5d6d7d8d9dadbdcdddedf"
+    },
+    "FINISH": {
+     "h2d": [
+      "00560280278400b705faf46c41a2761df00da97f"
+     ],
+     "d2h": [
+      "00560280d1d28c399f5e382bfb21d78e486e1b26100e"
+     ],
+     "h2d_body": "278400b705faf46c41a2761df00da97f",
+     "d2h_body": "d1d28c399f5e382bfb21d78e486e1b26100e"
+    }
+   }
+  }
+ ],
+ "V5_records": {
+  "oversize_refusal": {
+   "rule": "rev 4 \u00a7 3.4: a frame longer than max_frame (244) is refused [ff][cmd_lo][fe] before any gate; inside a live session the refusal of a gated opcode is SEALED (see d2h oversize_refusal_0x71), otherwise (no session, or a plaintext-set opcode) it is sent in clear",
+   "max_frame": 244,
+   "plaintext_refusal": "ff71fe",
+   "sealed_refusal_ctr1": "e501000000154aa48326516e98f2ad522586afda",
+   "client": "either form raises an oversize error at once; neither is ever a success"
+  },
+  "k_h2d": "101112131415161718191a1b1c1d1e1f",
+  "k_d2h": "202122232425262728292a2b2c2d2e2f",
+  "nonce": "dir:1 || ctr:4 LE || 0^8, dir 0x48 H->D / 0x44 D->H",
+  "aad": "H->D 02||cmd_hi||cmd_lo; D->H 02||e5",
+  "h2d": [
+   {
+    "cmd": "0040",
+    "ctr": 1,
+    "payload": "",
+    "frame": "004001000000e02194c728f99554ced0945a"
+   },
+   {
+    "cmd": "0040",
+    "ctr": 2,
+    "payload": "",
+    "frame": "004002000000ee924998ebe291084512909d"
+   },
+   {
+    "cmd": "0040",
+    "ctr": 255,
+    "payload": "",
+    "frame": "0040ff000000c49258732796abff8692dd85"
+   },
+   {
+    "cmd": "0040",
+    "ctr": 256,
+    "payload": "",
+    "frame": "00400001000085d5b950dc9f9a22fa157580"
+   },
+   {
+    "cmd": "0040",
+    "ctr": 4294967294,
+    "payload": "",
+    "frame": "0040feffffff7c6f1377b78157d753528d99"
+   },
+   {
+    "cmd": "0041",
+    "ctr": 1,
+    "payload": "010e1b2835424f5c697683909daab7c4d1deebf805121f2c394653606d7a8794a1aebbc8d5e2effc091623303d4a5764717e8b98a5b2bfccd9e6f3000d1a2734414e5b6875828f9ca9b6c3d0ddeaf704111e2b3845525f6c798693a0adbac7d4e1eefb0815222f3c495663707d8a97a4b1becbd8e5f2ff0c192633404d5a6774818e9ba8b5c2cfdce9f603101d2a3744515e6b7885929facb9c6d3e0edfa0714212e3b4855626f7c8996a3b0bdcad7e4f1fe0b1825323f4c596673808d9aa7b4c1cedbe8f5020f1c",
+    "frame": "0041010000000aca780b7a2f9808d604c0c7dc579a598fcae8d34f2cfc8f8b05857c25ecc138991c00635791f1f7f6de0157240dccf76d9943d059b2d2373b265782cf3bb209896ec994e580967cfb007a0cf4b3f6eca4fbb4fd85331c4d7ccabc68909721bee616f2290f33c4efe1290aad5742fd023a5adc129a0bf213ee54a902bc0a1bf529e6b465095de2f1166f15747a63a58f24980b69eccfa49ed5689044f81ab4b9b2ecf6d3bc559a50f485bed5a36d8cd6d11440fd256a87488a4679ad3bca9dd17a9809fcdb7c39bb1585bef7dafe2372d7c80d3a"
+   },
+   {
+    "cmd": "0041",
+    "ctr": 2,
+    "payload": "010e1b2835424f5c697683909daab7c4d1deebf805121f2c394653606d7a8794a1aebbc8d5e2effc091623303d4a5764717e8b98a5b2bfccd9e6f3000d1a2734414e5b6875828f9ca9b6c3d0ddeaf704111e2b3845525f6c798693a0adbac7d4e1eefb0815222f3c495663707d8a97a4b1becbd8e5f2ff0c192633404d5a6774818e9ba8b5c2cfdce9f603101d2a3744515e6b7885929facb9c6d3e0edfa0714212e3b4855626f7c8996a3b0bdcad7e4f1fe0b1825323f4c596673808d9aa7b4c1cedbe8f5020f1c",
+    "frame": "00410200000079f4137c1ee839811774d033e0bb3c9613239e6dc43f2fddc588b6fc5a306e8585311c01d0935bdb71b43332aeb3485a22f1128a82a8b34ad236f2062469d2690fcbcb2314728603bb7eb2cc6d0ee800be20776ebff3eb1bffbe7d1523030e1f21a0f1e415363e8b0abafe971ab3c7615c2544afe284c14d611d47503f5ce09f2e8bd68bb237e28ab7b1a2f948d97adc06c23a7c8130132c89949873676756c182d81616167acddb408ebe8f75230437e0608be2da92cfd982357a3ab6010d66312e1936e2e627e0282ff1ed158195ed86f795ce"
+   },
+   {
+    "cmd": "0041",
+    "ctr": 255,
+    "payload": "010e1b2835424f5c697683909daab7c4d1deebf805121f2c394653606d7a8794a1aebbc8d5e2effc091623303d4a5764717e8b98a5b2bfccd9e6f3000d1a2734414e5b6875828f9ca9b6c3d0ddeaf704111e2b3845525f6c798693a0adbac7d4e1eefb0815222f3c495663707d8a97a4b1becbd8e5f2ff0c192633404d5a6774818e9ba8b5c2cfdce9f603101d2a3744515e6b7885929facb9c6d3e0edfa0714212e3b4855626f7c8996a3b0bdcad7e4f1fe0b1825323f4c596673808d9aa7b4c1cedbe8f5020f1c",
+    "frame": "0041ff00000066f5810abbaf7a119e30ba2958d5331d685920f8330dcf9bd785a2fb60527ed3886e0340834f75c22aaa6acb0624bf385759be34b1bae4685fa201f12dbbeaa4f5a6f7619cfded20bdc90646ed674906fa16fdea2a7b8886820a9d7c2584acbdad42158c804de422966e2d51ae6a3db7a72cdc9089c466b13ed0fef4af481c6bd2afddf65e9f7757baaa40dfcc492f6a7331b85a6a058a9251ad5380995c3964f86f42a836082faba071f0ce0212c0bc151c4c6f0ab37bd0a9349b7bf07646ba6bea904ef05ba3e6d76edcd83cb4e828f2b5768e"
+   },
+   {
+    "cmd": "0041",
+    "ctr": 256,
+    "payload": "010e1b2835424f5c697683909daab7c4d1deebf805121f2c394653606d7a8794a1aebbc8d5e2effc091623303d4a5764717e8b98a5b2bfccd9e6f3000d1a2734414e5b6875828f9ca9b6c3d0ddeaf704111e2b3845525f6c798693a0adbac7d4e1eefb0815222f3c495663707d8a97a4b1becbd8e5f2ff0c192633404d5a6774818e9ba8b5c2cfdce9f603101d2a3744515e6b7885929facb9c6d3e0edfa0714212e3b4855626f7c8996a3b0bdcad7e4f1fe0b1825323f4c596673808d9aa7b4c1cedbe8f5020f1c",
+    "frame": "004100010000e7d4dd3773d6c50fc366768bf61e1bacc863df9039b3a1236823edea2aaafc79e83d479264eab1bdb020019510e229475a310a0dff0cb8c901f6b0ced386dc58f03022a7e2a9cfc060b41a8cd70f69dfa26061c349edc7965c9ae56e2b3d42288b86de350d014509f5a386f6b9cca0681d8bb635b8e48911b91907fa98089e1ed401f38190fae286202445dd5ed9420f1347fb87755dd44dc98ce747d33f6226bf58b0108e606488ddf16c8bb28c86a80cf773dc77a56653829f83a5f72c46f57b978f5753079993bd71e969a01ccdc9df9463ea"
+   },
+   {
+    "cmd": "0041",
+    "ctr": 4294967294,
+    "payload": "010e1b2835424f5c697683909daab7c4d1deebf805121f2c394653606d7a8794a1aebbc8d5e2effc091623303d4a5764717e8b98a5b2bfccd9e6f3000d1a2734414e5b6875828f9ca9b6c3d0ddeaf704111e2b3845525f6c798693a0adbac7d4e1eefb0815222f3c495663707d8a97a4b1becbd8e5f2ff0c192633404d5a6774818e9ba8b5c2cfdce9f603101d2a3744515e6b7885929facb9c6d3e0edfa0714212e3b4855626f7c8996a3b0bdcad7e4f1fe0b1825323f4c596673808d9aa7b4c1cedbe8f5020f1c",
+    "frame": "0041feffffff5e1b766ff54337cb22da2fb63bf7c4d13c76fd6b6b32cf36007cc47e1b646dec1ff6bd742e3f9529aef923ca06029b144e80a3d4d2b6ef0bf898e269be30d794f26fc0b04ea93009e6dd85c6d8e5607573b74fc5e7de13638d5a07c1ca91b75d742f03d2df5e53c67c5ded0a9608d276afed192a89a5b0e6241ff14edd78f1fad4b1890cc75eff26e1ba19e3d0397ed4ea10777ef6831c34eff4a539d4e9e9f4f43a40c204cfc614c360daab0d7ad0db1fafe1dcb472eb983962c3e8f0c91650271f519ce8e211d04a1cdce8256f599d0829024b"
+   }
+  ],
+  "d2h": [
+   {
+    "name": "ack_0x41",
+    "ctr": 1,
+    "plaintext": "0041",
+    "frame": "e501000000ea7a6f6eee4f7a247da8f7a9224c"
+   },
+   {
+    "name": "ack_0x41",
+    "ctr": 4294967294,
+    "plaintext": "0041",
+    "frame": "e5feffffffd778037a2cab5b18456da1cbd6a1"
+   },
+   {
+    "name": "nack_0x41_busy",
+    "ctr": 2,
+    "plaintext": "ff410100",
+    "frame": "e5020000001491b953dc5eb0b01a5997209006ad1c"
+   },
+   {
+    "name": "nack_0x41_busy",
+    "ctr": 4294967294,
+    "plaintext": "ff410100",
+    "frame": "e5feffffff2878148845c8af6333ed2d8fab8befe5"
+   },
+   {
+    "name": "notify_0x73_refresh_complete",
+    "ctr": 3,
+    "plaintext": "0073",
+    "frame": "e5030000009e6e2b27506a4eba8dabd4a0b950"
+   },
+   {
+    "name": "notify_0x73_refresh_complete",
+    "ctr": 4294967294,
+    "plaintext": "0073",
+    "frame": "e5feffffffd74a55bdde8b8955e3ffc92da656"
+   },
+   {
+    "name": "claim_mode_refusal_0x70",
+    "ctr": 4,
+    "plaintext": "ff70fd",
+    "frame": "e504000000c0a40700885c8aaa87a828a8ae6488"
+   },
+   {
+    "name": "claim_mode_refusal_0x70",
+    "ctr": 4294967294,
+    "plaintext": "ff70fd",
+    "frame": "e5feffffff2849e8cabf7f03b73818f160b3bcc0"
+   },
+   {
+    "name": "sealed_nack_replay_0x41",
+    "ctr": 5,
+    "plaintext": "ff41f2",
+    "frame": "e5050000003896e2d26ad7b8e730252b6368d3a6"
+   },
+   {
+    "name": "sealed_nack_replay_0x41",
+    "ctr": 4294967294,
+    "plaintext": "ff41f2",
+    "frame": "e5feffffff2878e7543bc4c5397ddbad1ec7b9d3"
+   },
+   {
+    "name": "oversize_refusal_0x71",
+    "ctr": 6,
+    "plaintext": "ff71fe",
+    "frame": "e50600000087aec5255fb50845130ea071093340"
+   },
+   {
+    "name": "oversize_refusal_0x71",
+    "ctr": 4294967294,
+    "plaintext": "ff71fe",
+    "frame": "e5feffffff2848ebf657b082a708e4b5f9e81aa2"
+   }
+  ],
+  "rejected_counters": [
+   {
+    "direction": "h2d",
+    "ctr": 0,
+    "frame": "004000000000000000000000000000000000",
+    "device": "replay",
+    "sealed_nack": "f2"
+   },
+   {
+    "direction": "d2h",
+    "ctr": 0,
+    "frame": "e500000000000000000000000000000000",
+    "client": "discard"
+   },
+   {
+    "direction": "h2d",
+    "ctr": 4294967295,
+    "frame": "0040ffffffff000000000000000000000000",
+    "device": "replay",
+    "sealed_nack": "f2"
+   },
+   {
+    "direction": "d2h",
+    "ctr": 4294967295,
+    "frame": "e5ffffffff000000000000000000000000",
+    "client": "discard"
+   }
+  ]
+ },
+ "V6_rotation": {
+  "k_dev_old": "000102030405060708090a0b0c0d0e0f",
+  "uid": "0011223344556677",
+  "sid": "5051525354555657585960616263646f",
+  "K_new": "e0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+  "K_conf_new": "e67ffba1adf6f1744b7ff4ac5fcb60cb",
+  "rotate_tag": "e4f2a4384073a8bb58b9a17c527e26e8",
+  "K_v1_new_at_rest": "f8fe005c6748096f5771dadf3b9281df",
+  "sealed": {
+   "k_h2d": "101112131415161718191a1b1c1d1e1f",
+   "k_d2h": "202122232425262728292a2b2c2d2e2f",
+   "ROTATE_request_ctr1": "0057010000000a90b6bd570e5cc7c00a81565b",
+   "ROTATE_reply_ctr1": "e501000000ea6c5bb5f55862d9a15fa372925a669c143ca946c6649790f4c1dffa027d29",
+   "ROTATE_CONFIRM_request_ctr2": "0057020000007a1efaf013ea0575c55aea020143f5742ace11303bf4a10515665f964f",
+   "ROTATE_CONFIRM_reply_ctr2": "e502000000eb87ba20e90b737ad6e2d429f6897c",
+   "UNCLAIM_request_ctr3": "0057030000007f99ed916d6e262da2c708840905e9"
+  }
+ },
+ "V7_negative": [
+  {
+   "case": "Qc not on the curve",
+   "side": "device",
+   "h2d": [
+    "0055010002142aecc836954c14cbfce91b6f3990",
+    "005501016dce03a864ba0b4df218f451fd26864e",
+    "0055010286fb0b570774e03c7e4817d1aa234793",
+    "005501035d147f1fde463aea61b67b5c588d3f5f",
+    "00550184d646"
+   ],
+   "expect": "BAD_POINT",
+   "d2h": [
+    "ff550109"
+   ]
+  },
+  {
+   "case": "Qc = (0, 0)",
+   "side": "device",
+   "h2d": [
+    "0055010002140000000000000000000000000000",
+    "0055010100000000000000000000000000000000",
+    "0055010200000000000000000000000000000000",
+    "0055010300000000000000000000000000000000",
+    "005501840000"
+   ],
+   "expect": "BAD_POINT",
+   "d2h": [
+    "ff550109"
+   ]
+  },
+  {
+   "case": "X >= p",
+   "side": "device",
+   "h2d": [
+    "005501000214ffffffff00000001000000000000",
+    "00550101000000000000ffffffffffffffffffff",
+    "00550102ffff0b570774e03c7e4817d1aa234793",
+    "005501035d147f1fde463aea61b67b5c588d3f5f",
+    "00550184d647"
+   ],
+   "expect": "BAD_POINT",
+   "d2h": [
+    "ff550109"
+   ]
+  },
+  {
+   "case": "Y >= p",
+   "side": "device",
+   "h2d": [
+    "0055010002142aecc836954c14cbfce91b6f3990",
+    "005501016dce03a864ba0b4df218f451fd26864e",
+    "0055010286fbffffffff00000001000000000000",
+    "00550103000000000000ffffffffffffffffffff",
+    "00550184ffff"
+   ],
+   "expect": "BAD_POINT",
+   "d2h": [
+    "ff550109"
+   ]
+  },
+  {
+   "case": "Cd mismatch",
+   "side": "client",
+   "begin_reply": "094fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decb964251665c2f34eefa7a9baa07280d9",
+   "nonce_reply": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0f945b94fc601651b74035ab6a38c11174d9a982641549c0e2430ec9",
+   "expect": "client aborts (commitment mismatch)"
+  },
+  {
+   "case": "W with one flipped bit",
+   "side": "client",
+   "begin_reply": "094fa97792510dec82ce5c69efe98e3e510aa47129e8cb7b9dc42831f4c6e59b29d9c590a1f39c19446bc8f451bd3c3b76797d44c823c2d935504e4cd4f07a0decb864251665c2f34eefa7a9baa07280d9",
+   "nonce_reply": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf0f945b94fd601651b74035ab6a38c11174d9a982641549c0e2430ec9",
+   "expect": "client aborts (unwrap fails)"
+  },
+  {
+   "case": "tag_c from a wrong Tc (last byte of Nd changed)",
+   "side": "device",
+   "h2d": [
+    "0055038079220b6117772b26e8f940c47fea041c"
+   ],
+   "expect": "AUTH_FAILED",
+   "d2h": [
+    "ff550307"
+   ]
+  },
+  {
+   "case": "wrong uid (client stored 0011223344556678)",
+   "side": "device",
+   "h2d": [
+    "00560280d0e12bade030b168e4634f59e91235c1"
+   ],
+   "expect": "AUTH_FAILED",
+   "d2h": [
+    "ff560207"
+   ]
+  },
+  {
+   "case": "H->D frame sealed with k_d2h (reflection)",
+   "side": "device",
+   "frame": "004001000000df5b2b1654de7d57edd76610",
+   "expect": "INTEGRITY (sealed NACK f3, strike 1)",
+   "verdict": "integrity"
+  },
+  {
+   "case": "replayed counter",
+   "side": "device",
+   "frame": "0040050000008fefda48719b0b757a4276c2",
+   "expect": "REPLAY (sealed NACK f2, no strike)",
+   "verdict_first": "ok",
+   "verdict": "replay"
+  },
+  {
+   "case": "counter 0x0",
+   "side": "device",
+   "frame": "004000000000000000000000000000000000",
+   "expect": "REPLAY (sealed NACK f2)",
+   "verdict": "replay"
+  },
+  {
+   "case": "counter 0xffffffff",
+   "side": "device",
+   "frame": "0040ffffffff000000000000000000000000",
+   "expect": "REPLAY (sealed NACK f2)",
+   "verdict": "replay"
+  },
+  {
+   "case": "AAD byte 0x01 instead of 0x02",
+   "side": "device",
+   "frame": "0040010000009ed4bce31c253998868b2379",
+   "expect": "INTEGRITY",
+   "verdict": "integrity"
+  },
+  {
+   "case": "truncated tag (one byte short)",
+   "side": "device",
+   "frame": "0041010000000bc463234f6dd75441426f47b75dfce01ba446",
+   "expect": "INTEGRITY",
+   "verdict": "integrity"
+  },
+  {
+   "case": "gated frame shorter than 18 bytes on a live session",
+   "side": "device",
+   "frame": "0040000000000000000000000000000000",
+   "expect": "RECORD (sealed NACK f1, no strike)",
+   "verdict": "record"
+  },
+  {
+   "case": "D->H frame sealed with k_h2d",
+   "side": "client",
+   "frame": "e501000000fb7957638a666a322dfae50f311c",
+   "expect": "client discards",
+   "client": "discard"
+  },
+  {
+   "case": "D->H repeated counter",
+   "side": "client",
+   "frame": "e507000000f2611a1c51c2cba9c8b69d9991ac",
+   "expect": "client discards",
+   "client": "discard"
+  },
+  {
+   "case": "fragment index gap",
+   "side": "device",
+   "h2d": [
+    "0055010002142aecc836954c14cbfce91b6f3990",
+    "0055010286fb0b570774e03c7e4817d1aa234793"
+   ],
+   "expect": "MALFORMED",
+   "d2h": [
+    "ff550101"
+   ]
+  },
+  {
+   "case": "empty non-LAST fragment",
+   "side": "device",
+   "h2d": [
+    "00550100"
+   ],
+   "expect": "MALFORMED",
+   "d2h": [
+    "ff550101"
+   ]
+  },
+  {
+   "case": "a body one byte long (17 x 1 B for NONCE)",
+   "side": "device",
+   "h2d": [
+    "0055020000",
+    "0055020100",
+    "0055020200",
+    "0055020300",
+    "0055020400",
+    "0055020500",
+    "0055020600",
+    "0055020700",
+    "0055020800",
+    "0055020900",
+    "0055020a00",
+    "0055020b00",
+    "0055020c00",
+    "0055020d00",
+    "0055020e00",
+    "0055020f00",
+    "0055029000"
+   ],
+   "expect": "MALFORMED",
+   "d2h": [
+    "ff550201"
+   ]
+  },
+  {
+   "case": "a body one byte short (LAST)",
+   "side": "device",
+   "h2d": [
+    "0055018002142aecc836954c14cbfce91b6f39906dce03a864ba0b4df218f451fd26864e86fb0b570774e03c7e4817d1aa2347935d147f1fde463aea61b67b5c588d3f5fd6"
+   ],
+   "expect": "MALFORMED",
+   "d2h": [
+    "ff550101"
+   ]
+  },
+  {
+   "case": "index 127 without LAST",
+   "side": "device",
+   "note": "unreachable with a fixed body <= 82 B and >= 1 B per non-LAST fragment: the overflow check fires first (\u00a7 3.3)",
+   "expect": "MALFORMED"
+  },
+  {
+   "case": "no-ack frame (0x0081) with a bad tag",
+   "side": "device",
+   "frame": "008101000000bbd99ff6bd5f0f480c3c65668b65",
+   "expect": "silence, strike + 1",
+   "d2h": [],
+   "strikes": 1
+  }
+ ],
+ "V8_code": [
+  {
+   "case": "000 000",
+   "code_raw": "00000000000000000000000000000000",
+   "u32": 0,
+   "code": "000000",
+   "display": "000 000"
+  },
+  {
+   "case": "999 999",
+   "code_raw": "000000000000000000000000000f423f",
+   "u32": 999999,
+   "code": "999999",
+   "display": "999 999"
+  },
+  {
+   "case": "bias boundary: first value of the short last bucket",
+   "code_raw": "000000000000000000000000fff13d80",
+   "u32": 4294000000,
+   "code": "000000",
+   "display": "000 000"
+  },
+  {
+   "case": "bias boundary: u32 max",
+   "code_raw": "000000000000000000000000ffffffff",
+   "u32": 4294967295,
+   "code": "967295",
+   "display": "967 295"
+  },
+  {
+   "case": "just below the boundary",
+   "code_raw": "000000000000000000000000fff13d7f",
+   "u32": 4293999999,
+   "code": "999999",
+   "display": "999 999"
+  }
+ ],
+ "V10_secrets": [
+  {
+   "case": "empty WiFi password with an SSID",
+   "device": "unclaimed",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d79576946690000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000034ea",
+   "verdict": "accept",
+   "nack_single": null
+  },
+  {
+   "case": "one non-zero password byte at offset 31",
+   "device": "unclaimed",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d7957694669000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e74",
+   "verdict": "0x10",
+   "nack_single": "ff411000"
+  },
+  {
+   "case": "two 0x26 packets, only the second with a password",
+   "device": "unclaimed",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d79576946690000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d795769466900000000000000000000000000000000000000000000000000007077000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000abbe",
+   "verdict": "0x10",
+   "nack_single": "ff411000"
+  },
+  {
+   "case": "0x2D with only advertisement_key[19] set",
+   "device": "unclaimed",
+   "blob": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d0100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000420000000000000000000000000000000000000000000000000000000000000000049a",
+   "verdict": "0x10",
+   "nack_single": "ff411000"
+  },
+  {
+   "case": "0x27 enabled with a zero key (unclaimed)",
+   "device": "unclaimed",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000270100000000000000000000000000000000000000ff000000000000000000000000000000000000000000000000000000000000000000000000000000000000006fb5",
+   "verdict": "0x10",
+   "nack_single": "ff411000"
+  },
+  {
+   "case": "0x27 key == K_dev on a claimed device",
+   "device": "claimed",
+   "blob": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701000102030405060708090a0b0c0d0e0f000000ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000cd56",
+   "verdict": "accept",
+   "nack_single": null,
+   "k_dev": "000102030405060708090a0b0c0d0e0f"
+  },
+  {
+   "case": "0x27 with another key on a claimed device",
+   "device": "claimed",
+   "blob": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701a0a1a2a3a4a5a6a7a8a9aaabacadaeaf000000ff000000000000000000000000000000000000000000000000000000000000000000000000000000000000001c5a",
+   "verdict": "0x11",
+   "nack_single": "ff411100",
+   "k_dev": "000102030405060708090a0b0c0d0e0f"
+  },
+  {
+   "case": "0x27 zero key on a claimed device",
+   "device": "claimed",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000270000000000000000000000000000000000000000ff000000000000000000000000000000000000000000000000000000000000000000000000000000000000003d6b",
+   "verdict": "accept",
+   "nack_single": null,
+   "k_dev": "000102030405060708090a0b0c0d0e0f"
+  },
+  {
+   "case": "WiFi password on a claimed device",
+   "device": "claimed",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d795769466900000000000000000000000000000000000000000000000000007077000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000acf7",
+   "verdict": "accept",
+   "nack_single": null,
+   "k_dev": "000102030405060708090a0b0c0d0e0f"
+  },
+  {
+   "case": "truncated last packet",
+   "device": "unclaimed",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d795769466900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009af3",
+   "verdict": "0x00",
+   "nack_single": "ff410000"
+  },
+  {
+   "case": "dangling byte between the last packet and the CRC",
+   "device": "unclaimed",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d795769466900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006468",
+   "verdict": "0x00",
+   "nack_single": "ff410000"
+  },
+  {
+   "case": "dangling byte on a claimed device",
+   "device": "claimed",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d795769466900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006468",
+   "verdict": "0x00",
+   "nack_single": "ff410000",
+   "k_dev": "000102030405060708090a0b0c0d0e0f"
+  },
+  {
+   "case": "unknown legacy id 0x7E abandons the walk",
+   "device": "unclaimed",
+   "blob": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007e00000000000000006e13",
+   "verdict": "0x00",
+   "nack_single": "ff410000"
+  },
+  {
+   "case": "LEGACY_SECRETS device, identical secrets",
+   "device": "unclaimed+LEGACY_SECRETS",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d795769466900000000000000000000000000000000000000000000000000007365637265740000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000638f",
+   "verdict": "accept",
+   "nack_single": null,
+   "stored_secret_packets": [
+    "00264d795769466900000000000000000000000000000000000000000000000000007365637265740000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+   ]
+  },
+  {
+   "case": "LEGACY_SECRETS device, changed secrets",
+   "device": "unclaimed+LEGACY_SECRETS",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d795769466900000000000000000000000000000000000000000000000000007365637265540000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000266b",
+   "verdict": "0x10",
+   "nack_single": "ff411000",
+   "stored_secret_packets": [
+    "00264d795769466900000000000000000000000000000000000000000000000000007365637265740000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+   ]
+  },
+  {
+   "case": "LEGACY_SECRETS device, secrets removed",
+   "device": "unclaimed+LEGACY_SECRETS",
+   "blob": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d79576946690000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000034ea",
+   "verdict": "accept",
+   "nack_single": null,
+   "stored_secret_packets": [
+    "00264d795769466900000000000000000000000000000000000000000000000000007365637265740000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+   ]
+  },
+  {
+   "case": "chunked write whose secret is in the last chunk",
+   "device": "unclaimed",
+   "blob": "0000010020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000021000000000000000000000000000000000000000000000023000000000000000000000000000000000000000000000000000000000000002400000000000000000000000000000000000000000000000000000000000000264d79576946690000000000000000000000000000000000000000000000000000696e2d6c6173742d6368756e6b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f02e",
+   "frames": [
+    "00412f010000010020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000021000000000000000000000000000000000000000000000023000000000000000000000000000000000000000000000000000000000000002400000000000000000000000000000000000000000000000000000000000000264d79576946690000000000000000000000000000000000000000000000000000696e2d6c6173742d6368756e6b0000000000000000000000000000",
+    "00420000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f02e"
+   ],
+   "verdict": "0x10",
+   "expect": "ACK [00][41] and ACK [00][42] for every chunk but the last; the last gets [ff][42][10][00]",
+   "nack_last_chunk": "ff421000"
+  }
+ ],
+ "V11_config_at_rest": [
+  {
+   "case": "claimed: write without 0x27 (inserted before the first type > 0x27)",
+   "k_dev": "000102030405060708090a0b0c0d0e0f",
+   "uid": "0011223344556677",
+   "stored_before": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854058020411020000000000000000000000000000000000000000000000000000000000000000000000000000000000006848",
+   "written": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000280000000000000000000000000000000000000000000000000000000000000000d0a7",
+   "stored_after": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd8540580204110200000000000000000000000000000000000000000000000000000000000000000000000000000000000000280000000000000000000000000000000000000000000000000000000000000000689f",
+   "read_image_frame": "00400000b100000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701000102030405060708090a0b0c0d0e0f580204110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000280000000000000000000000000000000000000000000000000000000000000000689f"
+  },
+  {
+   "case": "claimed: write without 0x27 and no type > 0x27 (appended)",
+   "k_dev": "000102030405060708090a0b0c0d0e0f",
+   "uid": "0011223344556677",
+   "stored_before": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854058020411020000000000000000000000000000000000000000000000000000000000000000000000000000000000006848",
+   "written": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000587a",
+   "stored_after": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854058020411020000000000000000000000000000000000000000000000000000000000000000000000000000000000006848",
+   "read_image_frame": "004000008f00000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701000102030405060708090a0b0c0d0e0f58020411000000000000000000000000000000000000000000000000000000000000000000000000000000000000006848"
+  },
+  {
+   "case": "claimed: write with 0x27 key 0 and the reset pin disabled (sticky)",
+   "k_dev": "000102030405060708090a0b0c0d0e0f",
+   "uid": "0011223344556677",
+   "stored_before": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854058020411020000000000000000000000000000000000000000000000000000000000000000000000000000000000006848",
+   "written": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000270000000000000000000000000000000000780000050000000000000000000000000000000000000000000000000000000000000000000000000000000000000088f3",
+   "stored_after": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854078000411020000000000000000000000000000000000000000000000000000000000000000000000000000000000008bc2",
+   "read_image_frame": "004000007700000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701000102030405060708090a0b0c0d0e0f78000411000000000000000000000000000000000000000000000000000000000000000000000000000000000000008bc2"
+  },
+  {
+   "case": "claimed: write with 0x27 == K_dev, timeout 900",
+   "k_dev": "000102030405060708090a0b0c0d0e0f",
+   "uid": "0011223344556677",
+   "stored_before": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854058020411020000000000000000000000000000000000000000000000000000000000000000000000000000000000006848",
+   "written": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701000102030405060708090a0b0c0d0e0f84030c12000000000000000000000000000000000000000000000000000000000000000000000000000000000000009bd4",
+   "stored_after": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854084030c12020000000000000000000000000000000000000000000000000000000000000000000000000000000000005289",
+   "read_image_frame": "004000007700000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701000102030405060708090a0b0c0d0e0f84030c12000000000000000000000000000000000000000000000000000000000000000000000000000000000000005289"
+  },
+  {
+   "case": "claimed: CONFIG_CLEAR keeps only the stored 0x27 at rest",
+   "stored_before": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854058020411020000000000000000000000000000000000000000000000000000000000000000000000000000000000006848",
+   "stored_after": "000001002701fe93998aeb4b68690c41bcb32dcd8540580204110200000000000000000000000000000000000000000000000000000000000000000000000000000000000057e6"
+  },
+  {
+   "case": "unclaimed: read image",
+   "stored": "0000010020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000027000000000000000000000000000000000000000407000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d4d",
+   "read_image_frame": "0040000077000000010020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000027000000000000000000000000000000000000000407000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d4d"
+  },
+  {
+   "case": "unclaimed: a written 0x27 reserved[0] (SEC2 marker) is stored as 0",
+   "written": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002700000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000733f",
+   "reply": "0041",
+   "stored_after": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000270000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000067ea"
+  },
+  {
+   "case": "unclaimed: a written 0x27 SHOW_KEY_ON_SCREEN (flags bit 1) is stored as 0",
+   "written": "0000010020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000027000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000052",
+   "reply": "0041",
+   "stored_after": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000270000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000067ea"
+  },
+  {
+   "case": "claimed: a written SHOW_KEY_ON_SCREEN (flags bit 1) is stored as written",
+   "k_dev": "000102030405060708090a0b0c0d0e0f",
+   "uid": "0011223344556677",
+   "stored_before": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854058020411020000000000000000000000000000000000000000000000000000000000000000000000000000000000006848",
+   "written": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000270000000000000000000000000000000000580202ff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000043fc",
+   "stored_after": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854058020611020000000000000000000000000000000000000000000000000000000000000000000000000000000000006704",
+   "read_image_frame": "004000007700000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701000102030405060708090a0b0c0d0e0f58020611000000000000000000000000000000000000000000000000000000000000000000000000000000000000006704"
+  },
+  {
+   "case": "claimed: write 0x27 NO_RESET_PATTERN (bit 6), stored reset pin enabled (sticky)",
+   "k_dev": "000102030405060708090a0b0c0d0e0f",
+   "uid": "0011223344556677",
+   "stored_before": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854058020411020000000000000000000000000000000000000000000000000000000000000000000000000000000000006848",
+   "written": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000270000000000000000000000000000000000580240ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000122a",
+   "stored_after": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd8540580244110200000000000000000000000000000000000000000000000000000000000000000000000000000000000036d2",
+   "read_image_frame": "004000007700000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701000102030405060708090a0b0c0d0e0f580244110000000000000000000000000000000000000000000000000000000000000000000000000000000000000036d2",
+   "client_no_recovery_warning": false
+  },
+  {
+   "case": "claimed: write 0x27 NO_RESET_PATTERN with its own reset pin",
+   "k_dev": "000102030405060708090a0b0c0d0e0f",
+   "uid": "0011223344556677",
+   "stored_before": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd854058020411020000000000000000000000000000000000000000000000000000000000000000000000000000000000006848",
+   "written": "0000010020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000027000000000000000000000000000000000058024409000000000000000000000000000000000000000000000000000000000000000000000000000000000000006993",
+   "stored_after": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd8540580244090200000000000000000000000000000000000000000000000000000000000000000000000000000000000050f3",
+   "read_image_frame": "004000007700000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701000102030405060708090a0b0c0d0e0f580244090000000000000000000000000000000000000000000000000000000000000000000000000000000000000050f3",
+   "client_no_recovery_warning": false
+  },
+  {
+   "case": "client verdict: claimed, NO_RESET_PATTERN set, no reset pin written or stored",
+   "written_0x27": "0000000000000000000000000000000000000040ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "stored_0x27": "01fe93998aeb4b68690c41bcb32dcd8540000000ff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "client_no_recovery_warning": true,
+   "expect": "warn and require an explicit confirmation before writing (\u00a7 7.10.1)"
+  },
+  {
+   "case": "UNCLAIM: the read view after the scrub (PURGE itself is not visible on the wire)",
+   "stored_before": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d7957694669000000000000000000000000000000000000000000000000000068756e7465723200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd85405802041102000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000042000000000000000000000000000000000000000000000000000000000000000094c4",
+   "stored_after": "00000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d795769466900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002700000000000000000000000000000000005802041100000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a35",
+   "read_image_frame": "004000009b0100000100200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000264d795769466900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002700000000000000000000000000000000005802041100000000000000000000000000000000000000000000000000000000000000000000000000000000000000002d01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a35"
+  },
+  {
+   "case": "claimed: the read view carries the STORED CRC (none is computed over the view)",
+   "stored": "000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701fe93998aeb4b68690c41bcb32dcd85405802041102000000000000000000000000000000000000000000000000000000000000000000000000000000000000a55a",
+   "read_image_frame": "004000008f00000001002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000002701000102030405060708090a0b0c0d0e0f5802041100000000000000000000000000000000000000000000000000000000000000000000000000000000000000a55a"
+  }
+ ],
+ "V13_setup_url": [
+  {
+   "params": {
+    "k": "1",
+    "i": "1A2B3C",
+    "t": 3,
+    "v": [
+     3,
+     0,
+     0
+    ],
+    "b": 16,
+    "d": 10,
+    "p": 2
+   },
+   "url": "https://opendisplay.org/l/?f=1&k=1&i=1A2B3C&t=3&v=3.0.0&b=16&d=10&p=2",
+   "bytes": 69,
+   "qr_version": 6,
+   "qr_ecc": "M"
+  },
+  {
+   "params": {
+    "k": "2",
+    "i": "00ABCD",
+    "t": 1,
+    "v": [
+     3,
+     0,
+     0
+    ],
+    "b": null,
+    "d": 0,
+    "p": 0
+   },
+   "url": "https://opendisplay.org/l/?f=1&k=2&i=00ABCD&t=1&v=3.0.0",
+   "bytes": 55,
+   "qr_version": 6,
+   "qr_ecc": "M"
+  },
+  {
+   "params": {
+    "k": "2",
+    "i": "FFFFFF",
+    "t": 99,
+    "v": [
+     255,
+     255,
+     255
+    ],
+    "b": 9999,
+    "d": 9999,
+    "p": 9999
+   },
+   "url": "https://opendisplay.org/l/?f=1&k=2&i=FFFFFF&t=99&v=255.255.255&b=9999&d=9999&p=9999",
+   "bytes": 83,
+   "qr_version": 6,
+   "qr_ecc": "M"
+  },
+  {
+   "params": {
+    "k": "1",
+    "i": "000001",
+    "t": 5,
+    "v": [
+     3,
+     1,
+     12
+    ],
+    "b": 10000,
+    "d": 0,
+    "p": 7
+   },
+   "url": "https://opendisplay.org/l/?f=1&k=1&i=000001&t=5&v=3.1.12&p=7",
+   "bytes": 60,
+   "qr_version": 6,
+   "qr_ecc": "M"
+  }
+ ]
+}
