@@ -7,6 +7,7 @@ import dataclasses
 import json
 import os
 import stat
+import types
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +97,7 @@ class _FakeDevice:
         self.write_error: Exception | None = None
         self.stored_after_write: GlobalConfig | None = None
         self.unclaimed = True
+        self.security = types.SimpleNamespace(sec2_session_open=False)
 
     async def __aenter__(self) -> _FakeDevice:
         return self
@@ -273,20 +275,21 @@ def test_secret_refusal_from_the_device_is_reported(
 # ── migrate --from-backup ────────────────────────────────────────────────────
 
 
-def test_backup_with_secrets_is_refused_before_connecting(
+def test_backup_with_secrets_is_refused_before_any_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     backup = _backup(tmp_path, _plain(panel=GLASS_PANEL, security_config=_security(), wifi_config=_wifi()))
-    calls = _patch(monkeypatch, _device(None))
+    device = _device(None)
+    _patch(monkeypatch, device)
 
     with pytest.raises(SystemExit) as exit_info:
         _migrate("--from-backup", str(backup))
 
     err = " ".join(capsys.readouterr().err.split())  # Rich wraps long lines
     assert exit_info.value.code == 1
-    assert calls == []
+    assert device.written == []  # refused after a read-only connect, before any write
     assert "encryption key" in err and "WiFi password" in err
-    assert "claim it first, then enter WiFi / FindMy settings again" in err
+    assert "claim it first, then enter WiFi / FindMy settings again" in err and "opendisplay claim" in err
     assert KEY.hex() not in err and "hunter2" not in err
 
 
@@ -596,3 +599,24 @@ def test_a_difference_outside_the_security_packet_still_fails(monkeypatch: pytes
         _migrate()
 
     assert exit_info.value.code == 1
+
+
+def test_a_claimed_device_in_a_session_takes_the_backups_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # SECURITY_V2.md § 10.5: claim first, then write the secrets inside the session. The backup
+    # goes out without its 0x27; a claimed device inserts its own key at rest.
+    findmy = bytes([0, 0x2D]) + bytes(range(1, 129))
+    backup = _backup(
+        tmp_path,
+        _plain(panel=GLASS_PANEL, security_config=_security(), wifi_config=_wifi(), findmy_config_raw=findmy),
+    )
+    device = _device(None)
+    device.security.sec2_session_open = True
+    _patch(monkeypatch, device)
+
+    _migrate("--from-backup", str(backup))
+
+    written = device.written[0]
+    assert written.security_config is None
+    assert written.wifi_config == _wifi() and written.findmy_config_raw == findmy

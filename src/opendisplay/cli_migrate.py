@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .cli_common import _add_device_options, _console, _device_kwargs, _error, _handle_ble_error, _parse_hex_key, _run
+from .cli_sec2 import _add_key_store_option
 from .device import connect
 from .exceptions import OpenDisplayError
 from .models.config import GlobalConfig, SecurityConfig, WifiConfig
@@ -18,6 +19,7 @@ from .models.panel_drive import LengthPrefixedPacket
 from .panels import MigrationPlan, PanelDatabase, PanelEntry, apply_migration, plan_migration
 from .protocol import config_parser as packet_ids
 from .protocol.config_serializer import serialize_config
+from .sec2.keystore import JsonFileKeyStore
 
 _SHOW_KEY_ON_SCREEN = 0x02  # SecurityConfig.flags bit 1
 # 0x2D FindMyConfig key fields (od_cfg_policy.c S2D_*): eik[32] at 8, net_a_adv_key[28] at 40,
@@ -27,7 +29,8 @@ _FINDMY_MIN_BODY = 96
 _FINDMY_PACKET = 2 + packet_ids.FINDMY_CONFIG_SIZE  # [number][0x2D][body]
 _SECRETS_REFUSAL = (
     "The backup carries secrets: {found}. An unclaimed firmware 3.0 device does not store secrets; "
-    "claim it first, then enter WiFi / FindMy settings again. "
+    "claim it first, then enter WiFi / FindMy settings again (run `opendisplay claim`, then migrate again "
+    "with the same key store to write them inside the session). "
     "Pass --strip-secrets to write the backup without them."
 )
 _UNTESTED_PROMPT = (
@@ -181,6 +184,7 @@ def add_backup_config_parser(subparsers: argparse._SubParsersAction[argparse.Arg
     )
     _add_device_options(p)
     p.add_argument("output", metavar="FILE", help="Path of the backup file to create")
+    _add_key_store_option(p)
     p.set_defaults(func=_cmd_backup_config)
 
 
@@ -189,6 +193,7 @@ def _cmd_backup_config(args: argparse.Namespace) -> None:
     if path.exists():
         _error(f"{path} exists; a backup never overwrites a file. Choose another name.")
     kwargs = _device_kwargs(args.device, _parse_hex_key(args.key), args.timeout, args.host, args.port, args.tls)
+    kwargs["key_store"] = JsonFileKeyStore(Path(args.key_store))
     _run(_backup_config(kwargs, path))
 
 
@@ -227,30 +232,43 @@ def add_migrate_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         action="store_true",
         help="With --from-backup: write the backup without its key, WiFi password and FindMy settings",
     )
+    _add_key_store_option(p)
     p.set_defaults(func=_cmd_migrate, parser=p)
 
 
 def _cmd_migrate(args: argparse.Namespace) -> None:
     if args.strip_secrets and not args.from_backup:
         args.parser.error("--strip-secrets applies only with --from-backup")
-    backup = _load_backup(args.from_backup, args.strip_secrets) if args.from_backup else None
+    backup = _load_backup(args.from_backup) if args.from_backup else None
     kwargs = _device_kwargs(args.device, _parse_hex_key(args.key), args.timeout, args.host, args.port, args.tls)
+    kwargs["key_store"] = JsonFileKeyStore(Path(args.key_store))
     _run(_migrate(kwargs, args, backup))
 
 
-def _load_backup(path: str, strip: bool) -> GlobalConfig:
+def _load_backup(path: str) -> GlobalConfig:
     try:
-        config = config_from_json(json.loads(Path(path).read_text(encoding="utf-8")))
+        return config_from_json(json.loads(Path(path).read_text(encoding="utf-8")))
     except FileNotFoundError:
         _error(f"Backup file not found: {path}")
     except (OSError, ValueError, KeyError) as exc:
         _error(f"Cannot read backup file: {exc}")
+
+
+def _prepare_backup(dev: Any, config: GlobalConfig, strip: bool) -> GlobalConfig:
+    """The backup as it may be written to this device; refuses before any write.
+
+    A claimed device with an open SEC2 session takes the secrets (SECURITY_V2.md § 10.5): the
+    backup goes out sealed without its 0x27, and the device inserts its own key at rest. An
+    unclaimed device does not store secrets: refused unless ``--strip-secrets``.
+    """
     secrets = find_secrets(config)
+    if secrets and dev.security.sec2_session_open:
+        _console.print(f"Writing the backup's {', '.join(secrets)} inside the session; the display keeps its own key.")
+        return dataclasses.replace(config, security_config=None)
     if secrets and not strip:
         _error(_SECRETS_REFUSAL.format(found=", ".join(secrets)))
     if secrets:
         _console.print(f"Writing the backup without its {', '.join(secrets)}.")
-        # TODO(piece 4): claim the device first, then write the secrets inside the SEC2 session.
         config = strip_secrets(config)
     stored_form = unclaimed_form(config)
     if stored_form != config:
@@ -273,6 +291,8 @@ async def _migrate_connected(dev: Any, args: argparse.Namespace, backup: GlobalC
         f"configured: {'yes' if profile.configured else 'no'}, needs migration: "
         f"{'yes' if profile.needs_migration else 'no'}"
     )
+    if backup is not None:
+        backup = _prepare_backup(dev, backup, args.strip_secrets)
     start = backup if backup is not None else dev.config.cached
     if backup is not None:
         _console.print("The device's existing packets are replaced by the backup's.")
