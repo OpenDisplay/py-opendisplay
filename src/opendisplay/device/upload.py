@@ -45,10 +45,8 @@ from ..partial import (
 )
 from ..protocol import (
     DEFAULT_MAX_FRAME,
-    ENCRYPTED_CHUNK_SIZE,
     MAX_COMPRESSED_SIZE,
     MAX_PTO,
-    MAX_START_PAYLOAD,
     PIPE_FLAG_PARTIAL,
     PIPE_MAX_RETX_FRACTION,
     PIPE_RETX_ACK_SPACING,
@@ -548,7 +546,7 @@ class Uploader:
 
         # Start partial upload (0x76), stream remaining 0x71 chunks, and finish
         # with partial refresh.
-        max_start = ENCRYPTED_CHUNK_SIZE if self._channel.session is not None else MAX_START_PAYLOAD
+        max_start = self._channel.start_payload_limit()
         start_pkt, remaining = build_direct_write_partial_start(
             old_etag=state.etag,
             new_etag=new_etag,
@@ -646,7 +644,7 @@ class Uploader:
         if use_compression:
             if uncompressed_size is None or compressed_data is None:
                 raise ValueError("uncompressed_size and compressed_data are required when use_compression=True")
-            max_start = ENCRYPTED_CHUNK_SIZE if self._channel.session is not None else MAX_START_PAYLOAD
+            max_start = self._channel.start_payload_limit()
             start_cmd, remaining_compressed = build_direct_write_start_compressed(
                 uncompressed_size, compressed_data, max_start_payload=max_start
             )

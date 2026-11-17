@@ -11,7 +11,7 @@ import hmac
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from ..crypto import (
@@ -34,6 +34,7 @@ from ..protocol import (
     CHUNK_SIZE,
     DEFAULT_MAX_FRAME,
     ENCRYPTED_CHUNK_SIZE,
+    MAX_START_PAYLOAD,
     PIPE_FRAME_OVERHEAD,
     build_authenticate_step1,
     build_authenticate_step2,
@@ -44,6 +45,7 @@ from ..protocol.responses import (
     parse_authenticate_success,
     unpack_command_code,
 )
+from ..sec2.errors import Sec2RecordError
 from ..transport import Transport
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,6 +55,9 @@ MAX_STRAY_AUTH_FRAMES = 4
 
 # Timeout for each handshake reply (seconds).
 TIMEOUT_AUTH = 5.0
+
+# Frames a session may discard while one answer is awaited.
+_MAX_DISCARDED_FRAMES = 8
 
 
 class Session(Protocol):
@@ -76,13 +81,16 @@ class Session(Protocol):
     def pipe_data_size(self, frame_eff: int) -> int:
         """Chunk data capacity of a PIPE_WRITE frame of ``frame_eff`` bytes."""
 
+    def allows_plaintext(self, raw: bytes) -> bool:
+        """Whether an unsealed frame may be accepted while this session is live."""
+
 
 @dataclass
 class LegacySession:
     """A firmware 2.x session: AES-CCM frames under a key derived by challenge-response."""
 
-    session_key: bytes
-    session_id: bytes
+    session_key: bytes = field(repr=False)
+    session_id: bytes = field(repr=False)
     nonce_counter: int = 0
     established_at: float = 0.0
     direct_chunk_size: int = ENCRYPTED_CHUNK_SIZE
@@ -191,6 +199,10 @@ class LegacySession:
         """Encrypted: frame_eff - CCM envelope (31) - seq (1) = 212 @ 244."""
         return frame_eff - 31 - 1
 
+    def allows_plaintext(self, raw: bytes) -> bool:  # pylint: disable=unused-argument
+        """2.x firmware answers some commands in plaintext during a session (see ``is_sealed``)."""
+        return True
+
 
 class SecureChannel:
     """Writes and reads command frames on one connection, through the session if there is one.
@@ -285,9 +297,9 @@ class SecureChannel:
             AuthenticationRequiredError: If device returns 0xFE (encryption required, no active session)
             IntegrityCheckError: If device returns 0xFF (decrypt/integrity check failed, command not executed)
         """
-        raw = await self.transport.read_response(timeout=timeout)
-        if self.session is not None and self.session.is_sealed(raw):
-            return self.session.open(raw)
+        raw, opened = await self._read_session_frame(timeout)
+        if opened:
+            return raw
         # Firmware returns [cmd_high, cmd_low, 0xFE] (3 bytes) when a command
         # requires authentication but no session is active.
         if len(raw) == 3 and raw[2] == 0xFE:
@@ -306,6 +318,39 @@ class SecureChannel:
                 "decryption/integrity check failed (command not executed) — likely a dropped or corrupted packet"
             )
         return raw
+
+    async def _read_session_frame(self, timeout: float) -> tuple[bytes, bool]:
+        """The next frame the session accepts, and whether it was opened (unsealed) by the session.
+
+        Without a session every frame is accepted as it is.
+
+        Inside a SEC2 session an unsealed frame outside the plaintext set, and a sealed frame
+        with a stale counter or a bad tag, are discarded (SECURITY_V2.md § 9.5); the third bad
+        tag raises ``Sec2SessionLostError`` from the session.
+        """
+        for _ in range(_MAX_DISCARDED_FRAMES + 1):
+            raw = await self.transport.read_response(timeout=timeout)
+            session = self.session
+            if session is None:
+                return raw, False
+            if session.is_sealed(raw):
+                try:
+                    return session.open(raw), True
+                except Sec2RecordError as err:
+                    _LOGGER.warning("Discarding a sealed frame: %s", err)
+                    continue
+            if session.allows_plaintext(raw):
+                return raw, False
+            _LOGGER.warning("Discarding an unsealed %d-byte frame the session does not allow", len(raw))
+        raise ProtocolError(f"More than {_MAX_DISCARDED_FRAMES} frames were discarded while waiting for an answer")
+
+    def start_payload_limit(self) -> int:
+        """The largest plaintext START command (opcode included) the current session can carry.
+
+        Inside a session it is the session's encrypted chunk budget, which depends on the scheme
+        (2.x and SEC2 both 154 today); without one, ``MAX_START_PAYLOAD``.
+        """
+        return self.session.direct_chunk_size if self.session is not None else MAX_START_PAYLOAD
 
     def direct_chunk_size(self) -> int:
         """Data bytes per 0x71 DIRECT_WRITE chunk for the current session and transport.
