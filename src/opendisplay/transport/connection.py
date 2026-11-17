@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from bleak import BleakClient, BleakScanner
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
+from .. import redraw
 from ..exceptions import BLEConnectionError, BLETimeoutError
 from ..protocol import SERVICE_UUID
 from ..protocol.responses import describe_command_code
@@ -70,6 +71,8 @@ class BLEConnection:
 
         self._client: BleakClient | None = None
         self._notification_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        #: Identities of this display in ``opendisplay.redraw``; a read waits out a noted redraw.
+        self.redraw_keys: tuple[str, ...] = (mac_address,) if mac_address else ()
         self._notification_characteristic: BleakGATTCharacteristic | None = None
         # Whether the command characteristic advertises Write Without Response.
         # Set during notification setup; used to safely enable/disable WNR writes.
@@ -501,7 +504,7 @@ class BLEConnection:
         try:
             return await asyncio.wait_for(
                 self._notification_queue.get(),
-                timeout=timeout,
+                timeout=redraw.wait_timeout(self.redraw_keys, timeout),
             )
         except asyncio.TimeoutError as e:
             # asyncio.wait_for can cancel queue.get() *after* an item was handed

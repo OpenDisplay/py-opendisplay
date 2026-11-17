@@ -375,9 +375,17 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             raise RuntimeError("Device not connected")
         return self._connection
 
+    def _redraw_keys(self) -> tuple[str, ...]:
+        """Every identity of this display, for ``opendisplay.redraw`` notes."""
+        own = getattr(self._connection, "mac_address", None)
+        keys = (self._device_name, self.mac_address, self._host, own)
+        return tuple(dict.fromkeys(k for k in keys if k))
+
     def _attach(self, transport: Transport) -> None:
         """Adopt ``transport`` as this device's link and build the channel and uploader on top of it."""
         self._connection = transport
+        if hasattr(transport, "redraw_keys"):  # the library's own transports; a caller's is left alone
+            transport.redraw_keys = self._redraw_keys()
         self._attached_channel = SecureChannel(
             transport,
             reauth_key=self._encryption_key,

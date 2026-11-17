@@ -19,6 +19,7 @@ import logging
 import ssl
 from contextlib import suppress
 
+from .. import redraw
 from ..exceptions import OpenDisplayConnectionError, OpenDisplayTimeoutError
 from ..protocol import OD_LAN_MAX_PAYLOAD
 
@@ -65,6 +66,8 @@ class TcpTransport:
         self.timeout = timeout
         self.tls = tls
         self._psk = psk
+        #: Identities of this display in ``opendisplay.redraw``; a read waits out a noted redraw.
+        self.redraw_keys: tuple[str, ...] = (host,)
         # LAN has no advertised name; kept for Transport structural conformance.
         self.device_name: str | None = None
 
@@ -181,7 +184,9 @@ class TcpTransport:
             raise OpenDisplayConnectionError("Not connected")
         reader = self._reader
         try:
-            header = await asyncio.wait_for(reader.readexactly(_LEN_PREFIX), timeout=timeout)
+            header = await asyncio.wait_for(
+                reader.readexactly(_LEN_PREFIX), timeout=redraw.wait_timeout(self.redraw_keys, timeout)
+            )
         except asyncio.TimeoutError as err:
             raise OpenDisplayTimeoutError(f"No response within {timeout}s") from err
         except (asyncio.IncompleteReadError, OSError, ssl.SSLError) as err:
