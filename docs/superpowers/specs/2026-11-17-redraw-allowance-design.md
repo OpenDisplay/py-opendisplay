@@ -112,15 +112,17 @@ The note is set when the library has sent a command after which the firmware red
 verifies each row against the firmware sources (ESP32 and BG22 can differ: the BG22 checklist says
 "no refresh while a link is open", so its redraw starts at disconnect):
 
-| Library action | Why the display goes silent |
-|---|---|
-| config write (`write_config`, `ConfigView.write`, migrate) | redraws the boot screen; on ESP32 while connected (seen on the E1002), on BG22 after the disconnect |
-| `reboot()` | reboot → boot screen before Bluetooth |
-| deep sleep / power-off commands | silent until wake; check whether a redraw follows |
-| the end of a claim (CONFIRM success, ABORT/EXIT, attempts exhausted) | claim mode ends → reboot into normal mode → boot screen (§ 7.3, § 13 step 10, U5) |
-| `rotate_key()` while SHOW_KEY_ON_SCREEN is set | the device redraws the boot screen with the new key (§ 10.7) |
-| unclaim | check: the scrub may redraw or reboot |
-| a config write that changes SHOW_KEY_ON_SCREEN | redraws the boot screen (§ 10.7) |
+Checked against Firmware_Unified `upstream/main` f6d3a83 (2026-11-17):
+
+| Library action | Redraws? | When | Seen at | Sets a note |
+|---|---|---|---|---|
+| config write | **sometimes**: only when the boot screen is still owed (a config that first brings drive packets, i.e. a migration) or SHOW_KEY_ON_SCREEN changes; **no reboot** on 3.0 | ESP32: from the loop once the link is idle, so **while connected**. BG22: the ACK goes first; the redraw runs only with no link open and advertising paused, so **after the disconnect** | ESP32 `communication.cpp` `reloadConfigAfterSave`, `od_display_esp.cpp` `displayRequestBootAfterConfigWrite` / `displayServiceDeferredBoot`; BG22 `opendisplay_display.cpp` ~988; `od_cfg_policy.c:395` | **yes**: the library cannot tell whether the boot screen is owed, and the wait ends as soon as the device answers |
+| `reboot()` | yes: boot screen before Bluetooth | after the reboot | `od_cmd_app.cpp:43–45`, `main.cpp` ~283 | **yes** |
+| deep sleep / power-off | no redraw; the device is away until it wakes | — | — | **no**: a note would only make the next connect wait 60 s for a sleeping device |
+| end of a claim (CONFIRM then disconnect, EXIT, attempts exhausted) | yes: reboot into normal mode, boot screen | after the reboot | `od_cmd_app.cpp:43` (`od_claim_mode_before_reboot`), SECURITY_V2 § 7.3 / § 13 step 10 / U5 | **yes** |
+| `rotate_key()` with SHOW_KEY_ON_SCREEN set | yes, config-driven panels only | from the loop after the reply | `od_sec2.c:1301` → `od_sec2_app_key_screen_changed` | **yes**, when the cached config has the bit |
+| unclaim | no: the state becomes UNCLAIMED, no redraw, no reboot | — | `od_sec2.c` ~1305 | **no** |
+| upload | the final reply comes after the refresh (`TIMEOUT_REFRESH` 90 s) | — | `device/upload.py` | **no** |
 
 Uploads already wait for their own refresh (`TIMEOUT_REFRESH`, 90 s, on the END/refresh reply).
 They set a note only if the builder finds a path where the reply comes before the refresh ends.
