@@ -45,7 +45,7 @@ Gotchas:
   - `imaging.py` — `prepare_image` / `preview_image`: rotate → fit → dither → encode, no I/O.
 - **`crypto.py`** — AES-128 challenge-response authentication; after auth, all command traffic is transparently encrypted in `device/channel.py`.
 - **`partial.py`** — `PartialState` for differential (flicker-free) 0x76 updates; caller-owned, persistable via `to_bytes()`.
-- **`ota.py`** — dispatch to optional `nrf-ota` (Nordic Legacy DFU, DFU device appears at MAC+1) or `silabs-ble-ota` (AppLoader, same MAC) extras. Those are the 2.x paths; firmware 3.x updates go through `firmware/` (`update()`: SMP via the `smp` extra for ESP32/nRF52840/nRF54, the AppLoader for BG22), which works from macOS. The 2.x nRF DFU cannot run on macOS (CoreBluetooth GATT cache).
+- **`ota.py`** — dispatch to optional `nrf-ota` (Nordic Legacy DFU, DFU device appears at MAC+1) or `silabs-ble-ota` (AppLoader, same MAC) extras. Those are the 2.x paths; firmware 3.x updates go through `firmware/` (`update()`: SMP through the library's own client in `firmware/smp.py` for ESP32/nRF52840/nRF54, the AppLoader for BG22), which works from macOS. The 2.x nRF DFU cannot run on macOS (CoreBluetooth GATT cache).
 - **`cli.py`** — argparse CLI (`opendisplay` entry point; subcommands are the `add_parser` calls), `rich` optional.
 
 ### Upload flow (the core path)

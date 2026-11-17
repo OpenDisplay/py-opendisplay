@@ -1,270 +1,377 @@
-"""The SMP wrapper: upload, mark the image for a test boot, reset, confirm (through smpclient)."""
+"""The library's own SMP client, against a fake GATT link that runs a scripted SMP server."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
-from collections.abc import AsyncIterator
+from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from smpclient.requests.image_management import ImageStatesRead, ImageStatesWrite
-from smpclient.requests.os_management import ResetWrite
 
-from opendisplay.firmware import smp
+from opendisplay.firmware import _cbor, smp
 
 IMAGE = bytes(range(256)) * 40  # 10 KiB
+DEVICE = SimpleNamespace(name="OD4064C9", address="AA:BB:CC:DD:EE:FF")
+WRITE_SIZE = 244
 
 
-@pytest.fixture(autouse=True)
-def _replies_are_successes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The fake's replies are not smpclient response objects: treat them as successes."""
-    monkeypatch.setattr(smp, "_is_error", lambda reply: False)
-
-
-class _FakeClient:
-    """Stands in for smpclient.SMPClient: records requests, scripts upload offsets and replies."""
-
-    def __init__(self, *, offsets: list[int] | None = None, upload_error: Exception | None = None) -> None:
-        self.requests: list[Any] = []
-        self.uploaded: list[bytes] = []
-        self._offsets = offsets if offsets is not None else [4096, 8192, len(IMAGE)]
-        self._upload_error = upload_error
-        self.replies: dict[type, Any] = {}
-
-    async def upload(self, image: bytes, **_: Any) -> AsyncIterator[int]:
-        self.uploaded.append(image)
-        for offset in self._offsets:
-            if self._upload_error is not None and offset > 4096:
-                raise self._upload_error
-            yield offset
-
-    async def request(self, request: Any, timeout_s: float | None = None) -> Any:
-        self.requests.append(request)
-        return self.replies.get(type(request), _Ok())
-
-
-class _Ok:
-    pass
-
-
-async def test_upload_reports_progress_up_to_the_image_size() -> None:
-    client = _FakeClient()
-    progress: list[tuple[int, int]] = []
-
-    await smp.upload(client, IMAGE, on_progress=lambda done, total: progress.append((done, total)))  # type: ignore[arg-type]
-
-    assert client.uploaded == [IMAGE]
-    assert progress == [(4096, len(IMAGE)), (8192, len(IMAGE)), (len(IMAGE), len(IMAGE))]
-
-
-async def test_an_interrupted_upload_raises_a_typed_error() -> None:
-    client = _FakeClient(upload_error=TimeoutError("link lost"))
-
-    with pytest.raises(smp.SmpTransferError, match="4096 of 10240"):
-        await smp.upload(client, IMAGE)  # type: ignore[arg-type]
-
-
-def _slots(*hashes: bytes) -> Any:
-    from types import SimpleNamespace
-
-    return SimpleNamespace(
-        images=[SimpleNamespace(slot=n, hash=h, active=n == 0, confirmed=n == 0) for n, h in enumerate(hashes)]
+def _frame(op: int, group: int, sequence: int, command: int, body: dict[str, Any]) -> bytes:
+    payload = _cbor.encode(body)
+    return (
+        bytes([op, 0])
+        + len(payload).to_bytes(2, "big")
+        + group.to_bytes(2, "big")
+        + bytes([sequence, command])
+        + payload
     )
 
 
-async def test_test_and_reset_marks_the_uploaded_slot_by_the_hash_the_device_reports() -> None:
-    # The device names an image by its own hash (ESP32: esp_partition_get_sha256 of the slot;
-    # MCUboot: the image hash), not the file's SHA-256 (od_smp.cpp handle_state_write).
-    client = _FakeClient()
-    device_hash = b"\xab" * 32
-    client.replies[ImageStatesRead] = _slots(b"\x01" * 32, device_hash)
+class _Server:
+    """A scripted SMP server: answers what od_smp.cpp answers, with knobs for what goes wrong."""
 
-    assert await smp.test_and_reset(client) == device_hash  # type: ignore[arg-type]
+    def __init__(self) -> None:
+        self.requests: list[tuple[bytes, dict[str, Any]]] = []
+        self.buf_size: int | None = 2048
+        self.images: list[dict[str, Any]] = [{"slot": 0, "version": "3.0.2", "hash": b"\x01" * 32, "active": True}]
+        self.received = bytearray()
+        self.off = 0
+        self.silent_on: Callable[[int, int, dict[str, Any]], bool] = lambda group, command, body: False
+        self.refuse_upload_with: int | None = None
+        self.split: int | None = None
+        self.stale_first = False
+        self.stuck = False
 
-    read, write, reset = client.requests
-    assert isinstance(read, ImageStatesRead)
-    assert isinstance(write, ImageStatesWrite)
-    assert write.hash == device_hash and write.hash != hashlib.sha256(IMAGE).digest()
-    assert write.confirm is False  # a test boot, not permanent
-    assert isinstance(reset, ResetWrite)
+    def handle(self, frame: bytes) -> list[bytes]:
+        header, body = frame[:8], _cbor.decode(frame[8:]) if len(frame) > 8 else {}
+        self.requests.append((header, body))
+        op, group, sequence, command = header[0] & 7, int.from_bytes(header[4:6], "big"), header[6], header[7]
+        if self.silent_on(group, command, body):
+            return []
+        reply: dict[str, Any]
+        if (group, command) == (0, 6):
+            reply = {"rc": 8} if self.buf_size is None else {"buf_size": self.buf_size, "buf_count": 1}
+        elif (group, command) == (1, 0):
+            reply = {"images": self.images}
+        elif (group, command) == (0, 5):
+            reply = {}
+        elif (group, command) == (1, 1):
+            reply = self._upload(body)
+        else:
+            reply = {"rc": 8}
+        frames = [_frame(op + 1, group, (sequence - 1) & 0xFF, command, {"off": 999})] if self.stale_first else []
+        frames.append(_frame(op + 1, group, sequence, command, reply))
+        data = b"".join(frames)
+        size = self.split or len(data)
+        return [data[i : i + size] for i in range(0, len(data), size)]
 
-
-async def test_test_and_reset_without_an_uploaded_slot_refuses() -> None:
-    client = _FakeClient()
-    client.replies[ImageStatesRead] = _slots(b"\x01" * 32)
-
-    with pytest.raises(smp.SmpError, match="slot 1"):
-        await smp.test_and_reset(client)  # type: ignore[arg-type]
-
-    assert not any(isinstance(r, ResetWrite) for r in client.requests)
-
-
-async def test_confirm_makes_the_running_image_permanent() -> None:
-    client = _FakeClient()
-
-    await smp.confirm(client)  # type: ignore[arg-type]
-
-    (write,) = client.requests
-    assert isinstance(write, ImageStatesWrite) and write.confirm is True and write.hash is None
-
-
-async def test_a_refused_request_raises_a_typed_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    client = _FakeClient()
-    monkeypatch.setattr(smp, "_is_error", lambda reply: True)
-
-    with pytest.raises(smp.SmpError, match="ImageStatesWrite"):
-        await smp.confirm(client)  # type: ignore[arg-type]
-
-
-async def test_image_states_lists_the_slots(monkeypatch: pytest.MonkeyPatch) -> None:
-    client = _FakeClient()
-
-    class _States:
-        images = ["slot0", "slot1"]
-
-    client.replies[ImageStatesRead] = _States()
-
-    assert await smp.image_states(client) == ["slot0", "slot1"]  # type: ignore[arg-type]
+    def _upload(self, body: dict[str, Any]) -> dict[str, Any]:
+        if self.refuse_upload_with is not None:
+            return {"rc": self.refuse_upload_with}
+        if body["off"] == 0 and not self.stuck:
+            self.received.clear()
+            self.off = 0
+        if body["off"] == self.off and not self.stuck:
+            self.received.extend(body["data"])
+            self.off += len(body["data"])
+        return {"off": self.off}
 
 
-async def test_the_transport_connects_to_the_given_device_and_never_scans(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Home Assistant and ESPHome proxies hand over a BLEDevice; smpclient's own transport scans.
-    from types import SimpleNamespace
+class _Link:
+    """Stands in for a BleakClientWithServiceCache: GATT writes in, notifications out."""
 
+    def __init__(self, server: _Server, *, has_smp: bool = True, backend: Any = None) -> None:
+        self.server = server
+        self.has_smp = has_smp
+        self.characteristic = SimpleNamespace(max_write_without_response_size=WRITE_SIZE)
+        self.services = SimpleNamespace(get_characteristic=lambda uuid: self.characteristic if self.has_smp else None)
+        self._backend = backend if backend is not None else object()
+        self.mtu_size = 23
+        self.writes: list[bytes] = []
+        self.events: list[str] = []
+        self._rx = bytearray()
+        self._notify: Any = None
+
+    async def start_notify(self, characteristic: Any, callback: Any) -> None:
+        self.events.append("notify")
+        self._notify = callback
+
+    async def clear_cache(self) -> bool:
+        self.events.append("clear_cache")
+        return True
+
+    async def disconnect(self) -> None:
+        self.events.append("disconnect")
+
+    async def write_gatt_char(self, characteristic: Any, data: bytes, response: bool) -> None:
+        assert response is False  # the SMP characteristic offers write-without-response only
+        assert len(data) <= WRITE_SIZE
+        self.writes.append(bytes(data))
+        self._rx.extend(data)
+        while len(self._rx) >= 8 and len(self._rx) >= 8 + int.from_bytes(self._rx[2:4], "big"):
+            want = 8 + int.from_bytes(self._rx[2:4], "big")
+            frame, self._rx = bytes(self._rx[:want]), self._rx[want:]
+            for chunk in self.server.handle(frame):
+                asyncio.get_running_loop().call_soon(self._notify, characteristic, bytearray(chunk))
+
+
+class _Links(list[_Link]):
+    """The links opened, and the ones the next connects will get."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.queued: list[_Link] = []
+
+
+@pytest.fixture
+def server() -> _Server:
+    return _Server()
+
+
+@pytest.fixture
+def links(monkeypatch: pytest.MonkeyPatch, server: _Server) -> _Links:
     import bleak_retry_connector
-    from bleak import BleakScanner
 
-    device = SimpleNamespace(name="OD4064C9", address="AA:BB:CC:DD:EE:FF")
-    connected: list[Any] = []
-    notified: list[str] = []
-
-    class _Backend:  # not BlueZ: the characteristic's size is used as is
-        pass
-
-    async def start_notify(uuid: Any, callback: Any) -> None:
-        notified.append(str(uuid))
-
-    client = SimpleNamespace(
-        services=SimpleNamespace(get_characteristic=lambda uuid: SimpleNamespace(max_write_without_response_size=244)),
-        start_notify=start_notify,
-        _backend=_Backend(),
-    )
+    made = _Links()
 
     async def establish_connection(cls: Any, ble_device: Any, name: str, **kwargs: Any) -> Any:
-        connected.append(ble_device)
-        return client
-
-    async def no_scan(*args: Any, **kwargs: Any) -> None:
-        pytest.fail("scanned")
+        assert ble_device is DEVICE  # the caller's BLEDevice: Home Assistant and proxies need that
+        link = made.queued.pop(0) if made.queued else _Link(server)
+        made.append(link)
+        return link
 
     monkeypatch.setattr(bleak_retry_connector, "establish_connection", establish_connection)
-    monkeypatch.setattr(BleakScanner, "find_device_by_address", no_scan)
-    transport = smp._transport_class()(device)
-
-    await transport._connect("ignored", 5.0)
-
-    assert connected == [device]
-    assert transport.mtu == 244 and notified
+    return made
 
 
-async def test_a_stale_service_cache_is_cleared_once_and_the_link_reopened(monkeypatch: pytest.MonkeyPatch) -> None:
+# ── the link ─────────────────────────────────────────────────────────────────
+
+
+async def test_a_request_is_one_frame_in_mtu_sized_writes_without_response(server: _Server, links: _Links) -> None:
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        links[0].writes.clear()
+        await smp.confirm(client)
+
+    frame = b"".join(links[0].writes)
+    payload = _cbor.encode({"confirm": True})
+    # op 2 (write), flags 0, length, group 1 (image), sequence 1 (0 read the parameters), command 0
+    assert frame == bytes([2, 0]) + len(payload).to_bytes(2, "big") + b"\x00\x01" + bytes([1, 0]) + payload
+
+
+async def test_a_long_request_is_split_into_writes_of_one_mtu(server: _Server, links: _Links) -> None:
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        links[0].writes.clear()
+        await smp.upload(client, IMAGE[:1500])
+
+    first_request = links[0].writes[: (2048 + WRITE_SIZE - 1) // WRITE_SIZE]
+    assert [len(w) for w in first_request[:-1]] == [WRITE_SIZE] * (len(first_request) - 1)
+
+
+async def test_the_device_buffer_size_bounds_each_request(server: _Server, links: _Links) -> None:
+    server.buf_size = 1500
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        assert (client.write_size, client.max_request) == (WRITE_SIZE, 1500)
+
+
+async def test_a_server_without_parameters_gets_one_write_per_request(server: _Server, links: _Links) -> None:
+    server.buf_size = None
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        assert client.max_request == WRITE_SIZE
+
+
+async def test_a_reply_split_across_notifications_is_reassembled(server: _Server, links: _Links) -> None:
+    server.split = 5
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        states = await smp.image_states(client)
+
+    assert states[0].version == "3.0.2" and states[0].active
+
+
+async def test_a_late_reply_to_another_request_is_ignored(server: _Server, links: _Links) -> None:
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        server.stale_first = True
+        states = await smp.image_states(client)
+
+    assert states[0].slot == 0  # not the stale {"off": 999}
+
+
+@pytest.mark.parametrize("reply", [{"rc": 6}, {"err": {"group": 1, "rc": 6}}])  # SMP v1 and v2 error shapes
+async def test_an_error_code_is_a_refusal(server: _Server, links: _Links, reply: dict[str, Any]) -> None:
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        server.handle = lambda frame: [_frame(3, 1, frame[6], 0, reply)]  # type: ignore[method-assign]
+        with pytest.raises(smp.SmpRefusedError, match="bad state") as caught:
+            await smp.confirm(client)
+
+    assert caught.value.rc == 6
+
+
+async def test_no_reply_is_a_stall(server: _Server, links: _Links) -> None:
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        server.silent_on = lambda group, command, body: True
+        with pytest.raises(smp.SmpStallError, match="No reply"):
+            await client.request(0, 1, 0, {}, timeout=0.05)
+
+
+async def test_a_dropped_link_is_a_stall_at_once(server: _Server, links: _Links) -> None:
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        server.silent_on = lambda group, command, body: True
+        asyncio.get_running_loop().call_later(0.02, client._on_disconnect, links[0])
+        with pytest.raises(smp.SmpStallError, match="dropped"):
+            await client.request(0, 1, 0, {}, timeout=5.0)
+
+
+async def test_a_display_without_the_smp_service_is_explained(server: _Server, links: _Links) -> None:
+    links.queued.extend([_Link(server, has_smp=False), _Link(server, has_smp=False)])
+
+    with pytest.raises(smp.SmpError, match="firmware 3.x"):
+        async with smp.session(DEVICE):  # type: ignore[arg-type]
+            pass
+
+
+async def test_a_stale_service_cache_is_cleared_once_and_the_link_reopened(server: _Server, links: _Links) -> None:
     # An ESPHome proxy kept the display's 2.x service table (no SMP service) after it moved to 3.0;
     # seen on the Bedroom proxy with the E1002. One clear_cache and a new link find it.
-    from types import SimpleNamespace
+    stale = _Link(server, has_smp=False)
+    links.queued.append(stale)
 
-    import bleak_retry_connector
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        assert client.max_request == 2048
 
-    device = SimpleNamespace(name="OD4064C9", address="44:1B:F6:C9:64:41")
-    events: list[str] = []
-
-    class _Backend:
-        pass
-
-    def _client(has_smp: bool, label: str) -> Any:
-        async def clear_cache() -> bool:
-            events.append(f"clear_cache:{label}")
-            return True
-
-        async def disconnect() -> None:
-            events.append(f"disconnect:{label}")
-
-        async def start_notify(uuid: Any, callback: Any) -> None:
-            events.append(f"notify:{label}")
-
-        characteristic = SimpleNamespace(max_write_without_response_size=244) if has_smp else None
-        return SimpleNamespace(
-            services=SimpleNamespace(get_characteristic=lambda uuid: characteristic),
-            clear_cache=clear_cache,
-            disconnect=disconnect,
-            start_notify=start_notify,
-            _backend=_Backend(),
-        )
-
-    clients = [_client(False, "stale"), _client(True, "fresh")]
-
-    async def establish_connection(cls: Any, ble_device: Any, name: str, **kwargs: Any) -> Any:
-        events.append("connect")
-        return clients.pop(0)
-
-    monkeypatch.setattr(bleak_retry_connector, "establish_connection", establish_connection)
-    transport = smp._transport_class()(device)
-
-    await transport._connect("ignored", 5.0)
-
-    assert events == ["connect", "clear_cache:stale", "disconnect:stale", "connect", "notify:fresh"]
-    assert transport.mtu == 244
+    assert stale.events == ["clear_cache", "disconnect"]
+    assert links[1].events[0] == "notify"
 
 
-async def test_a_reply_that_never_comes_is_a_stall_worth_retrying() -> None:
-    client = _FakeClient(upload_error=TimeoutError("no response"))
+async def test_bluez_reads_the_negotiated_mtu(server: _Server, links: _Links) -> None:
+    class BleakClientBlueZDBus:
+        async def _acquire_mtu(self) -> None:
+            link.mtu_size = 247
 
-    with pytest.raises(smp.SmpStallError, match="4096 of 10240"):
-        await smp.upload(client, IMAGE)  # type: ignore[arg-type]
+    link = _Link(server, backend=BleakClientBlueZDBus())
+    link.characteristic.max_write_without_response_size = 20  # BlueZ, before the MTU is read
+    links.queued.append(link)
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        assert client.write_size == 244
 
 
-async def test_a_device_that_refuses_the_image_is_not_a_stall() -> None:
-    from smpclient.exceptions import SMPUploadError
+# ── upload ───────────────────────────────────────────────────────────────────
 
-    client = _FakeClient(upload_error=SMPUploadError("rc 9 (corrupt)"))
 
-    with pytest.raises(smp.SmpTransferError) as caught:
-        await smp.upload(client, IMAGE)  # type: ignore[arg-type]
+def _uploads(server: _Server) -> list[tuple[bytes, dict[str, Any]]]:
+    return [(h, b) for h, b in server.requests if h[4:6] == b"\x00\x01" and h[7] == 1]
+
+
+async def test_an_upload_fills_each_request_and_reports_progress(server: _Server, links: _Links) -> None:
+    progress: list[int] = []
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        await smp.upload(client, IMAGE, on_progress=lambda done, total: progress.append(done))
+
+    assert bytes(server.received) == IMAGE
+    uploads = _uploads(server)
+    first = uploads[0][1]
+    assert (first["off"], first["len"], first["image"], first["sha"]) == (
+        0,
+        len(IMAGE),
+        0,
+        hashlib.sha256(IMAGE).digest(),
+    )
+    assert all("len" not in b for _, b in uploads[1:])
+    sizes = [8 + int.from_bytes(h[2:4], "big") for h, _ in uploads]
+    assert max(sizes) <= 2048 and min(sizes[:-1]) >= 2048 - 16  # each request (but the last) nearly full
+    assert progress[-1] == len(IMAGE) and progress == sorted(progress)
+
+
+async def test_a_capped_session_keeps_each_request_within_its_writes(server: _Server, links: _Links) -> None:
+    async with smp.session(DEVICE, burst_writes=4) as client:  # type: ignore[arg-type]
+        await smp.upload(client, IMAGE)
+
+    sizes = [8 + int.from_bytes(h[2:4], "big") for h, _ in _uploads(server)]
+    assert max(sizes) <= 4 * WRITE_SIZE and min(sizes[:-1]) >= 4 * WRITE_SIZE - 16
+    assert bytes(server.received) == IMAGE
+
+
+async def test_a_reply_that_never_comes_is_a_stall_worth_retrying(
+    server: _Server, links: _Links, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smp, "_REQUEST_TIMEOUT_S", 0.05)
+    server.silent_on = lambda group, command, body: command == 1 and body.get("off", 0) > 0
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        with pytest.raises(smp.SmpStallError, match=r"Upload stopped at \d+ of 10240"):
+            await smp.upload(client, IMAGE)
+
+
+async def test_a_device_that_refuses_the_image_is_not_a_stall(server: _Server, links: _Links) -> None:
+    server.refuse_upload_with = 9
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        with pytest.raises(smp.SmpTransferError, match="corrupt") as caught:
+            await smp.upload(client, IMAGE)
 
     assert not isinstance(caught.value, smp.SmpStallError)
 
 
-async def test_a_session_can_cap_each_request_at_a_number_of_writes(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The Bedroom proxy dropped bursts above ~16 write-without-response packets.
-    from types import SimpleNamespace
+async def test_a_device_that_stops_advancing_is_a_stall(server: _Server, links: _Links) -> None:
+    server.stuck = True  # answers every request with the same offset
 
-    import smpclient
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        with pytest.raises(smp.SmpStallError, match="stopped advancing"):
+            await smp.upload(client, IMAGE)
 
-    sizes: list[int] = []
+    assert len(_uploads(server)) == 3
 
-    class _Transport:
-        mtu = 253
-        max_unencoded_size = 8192
 
-        def initialize(self, size: int) -> None:
-            sizes.append(size)
+# ── image states, test boot, reset ───────────────────────────────────────────
 
-    class _Client:
-        def __init__(self, transport: Any, address: str, timeout_s: float) -> None:
-            self._transport = _Transport()
 
-        async def connect(self, timeout_s: float) -> None:
-            return None
+async def test_test_and_reset_marks_the_uploaded_slot_by_the_hash_the_device_reports(
+    server: _Server, links: _Links
+) -> None:
+    # The device names an image by its own hash (ESP32: esp_partition_get_sha256 of the slot;
+    # MCUboot: the image hash), not the file's SHA-256 (od_smp.cpp handle_state_write).
+    device_hash = b"\xab" * 32
+    server.images = [{"slot": 0, "hash": b"\x01" * 32, "active": True}, {"slot": 1, "hash": device_hash}]
 
-        async def disconnect(self) -> None:
-            return None
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        assert await smp.test_and_reset(client) == device_hash
 
-    monkeypatch.setattr(smpclient, "SMPClient", _Client)
-    monkeypatch.setattr(smp, "_transport_class", lambda: lambda ble_device: None)
-    device = SimpleNamespace(name="OD4064C9", address="AA:BB:CC:DD:EE:FF")
+    write, reset = server.requests[-2:]
+    assert (write[0][0], write[0][7], write[1]) == (2, 0, {"hash": device_hash, "confirm": False})
+    assert (reset[0][4:6], reset[0][7]) == (b"\x00\x00", 5)
 
-    async with smp.session(device) as _:  # type: ignore[arg-type]
-        pass
-    async with smp.session(device, burst_writes=8) as _:  # type: ignore[arg-type]
-        pass
 
-    assert sizes == [8 * 253]  # uncapped sessions keep the device's buffer size
+async def test_a_reset_that_restarts_before_replying_is_not_an_error(
+    server: _Server, links: _Links, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smp, "_RESET_TIMEOUT_S", 0.05)
+    server.images.append({"slot": 1, "hash": b"\xab" * 32})
+    server.silent_on = lambda group, command, body: (group, command) == (0, 5)
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        assert await smp.test_and_reset(client) == b"\xab" * 32
+
+
+async def test_test_and_reset_without_an_uploaded_slot_refuses(server: _Server, links: _Links) -> None:
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        with pytest.raises(smp.SmpError, match="slot 1"):
+            await smp.test_and_reset(client)
+
+    assert not any(h[7] == 5 and h[4:6] == b"\x00\x00" for h, _ in server.requests)
+
+
+async def test_image_states_reads_every_field(server: _Server, links: _Links) -> None:
+    server.images = [
+        {"slot": 0, "version": "3.0.2", "hash": b"\x01" * 32, "active": True, "confirmed": True, "bootable": True},
+        {"slot": 1, "version": "3.0.3", "pending": True},
+    ]
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        running, other = await smp.image_states(client)
+
+    assert running == smp.ImageState(0, "3.0.2", b"\x01" * 32, True, True, False, True)
+    assert other == smp.ImageState(1, "3.0.3", None, False, False, True, False)

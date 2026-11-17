@@ -14,7 +14,6 @@ Python library for communicating with OpenDisplay BLE e-paper displays.
 
 ```bash
 pip install py-opendisplay
-pip install "py-opendisplay[smp]"   # firmware 3.x updates over SMP (ESP32, nRF52840, nRF54)
 ```
 
 ## Quick Start
@@ -499,7 +498,7 @@ async with opendisplay.connect(name="OD4064C9", key_store=store) as dev:
 ### Firmware 3.x updates
 
 `dev.firmware.update(image)` updates a device that already runs firmware 3.x, over Bluetooth. The
-method follows the device: mcumgr SMP on ESP32, nRF52840 and nRF54 (install the `smp` extra), the
+method follows the device: mcumgr SMP on ESP32, nRF52840 and nRF54 (built in, no extra needed), the
 Silicon Labs AppLoader on a BG22 (the `silabs-ota` extra). nRF52811 and Telink are not supported
 yet. The first move from 2.x to 3.0 is a different job; see "Moving to firmware 3.0".
 

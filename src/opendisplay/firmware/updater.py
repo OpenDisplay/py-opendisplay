@@ -230,7 +230,7 @@ async def _update_smp(
         )
         try:
             _, new_hash, failed = await _attempt(find, address, image, on_progress, burst_writes=STALL_BURST_WRITES)
-        except Exception as err:  # pylint: disable=broad-exception-caught  # smpclient/bleak/asyncio alike
+        except Exception as err:  # pylint: disable=broad-exception-caught  # bleak and asyncio alike
             failed = smp.SmpStallError(f"Could not open a link for a second attempt: {err}")
     if failed is not None:
         _LOGGER.debug("SMP upload to %s failed", address, exc_info=failed)
