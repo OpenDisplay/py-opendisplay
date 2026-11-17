@@ -26,6 +26,7 @@ from cryptography.exceptions import InvalidTag
 from ..exceptions import OpenDisplayTimeoutError
 from . import kdf, wire
 from .errors import (
+    ClaimAttemptsExhaustedError,
     Sec2ClaimUnconfirmedError,
     Sec2CodeMismatchError,
     Sec2DeviceError,
@@ -72,10 +73,12 @@ class ClaimFlow:  # pylint: disable=too-many-instance-attributes
         *,
         frag_max: int = wire.FRAG_MAX_MIN,
         on_session: Callable[[Sec2Session], None] | None = None,
+        on_end: Callable[[], None] | None = None,
         _key_pair: tuple[PrivateKey, bytes] | None = None,
         _nc: bytes | None = None,
     ) -> None:
         self._on_session = on_session
+        self._on_end = on_end  # claim mode ends: the device reboots into normal mode and redraws
         if len(uid) != kdf.UID_LEN:
             raise ValueError("uid must be 8 bytes")
         self._transport, self._store, self._name, self._uid = transport, store, name, uid
@@ -93,7 +96,10 @@ class ClaimFlow:  # pylint: disable=too-many-instance-attributes
         try:
             return await receive(self._transport, _CMD, sub, self._frag_max)
         except Sec2DeviceError as err:
-            raise typed_device_error(err) from err
+            typed = typed_device_error(err)
+            if isinstance(typed, ClaimAttemptsExhaustedError) and self._on_end is not None:
+                self._on_end()  # the third code is spent: claim mode ends, the device reboots
+            raise typed from err
 
     async def begin(self) -> None:
         """BEGIN: send ``Qc``, receive ``dflags``, ``Qd`` and the commitment ``Cd``.
@@ -189,6 +195,8 @@ class ClaimFlow:  # pylint: disable=too-many-instance-attributes
         )
         if self._on_session is not None:
             self._on_session(session)
+        if self._on_end is not None:
+            self._on_end()  # claim mode ends at the disconnect (SECURITY_V2 U5)
         return session
 
     async def abort(self) -> None:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Final
 
+from .. import redraw
 from ..credentials import DeviceKey, LegacyKey
 from ..sec2 import wire
 from ..sec2.claim import ClaimFlow, exit_claim_mode
@@ -28,6 +29,7 @@ from ..transport import TcpTransport
 
 if TYPE_CHECKING:
     from ..transport import Transport
+    from .api import ConfigView
     from .channel import SecureChannel
     from .facade import OpenDisplayDevice
 
@@ -53,6 +55,8 @@ class SecurityView:
         self._status: SecStatus | None = None
         self._key: bytes | None = None
         self._uid: bytes | None = None
+        #: The device's ``ConfigView`` (set by ``Device``): whether the panel shows the key.
+        self.config_view: ConfigView | None = None
 
     # ── state ────────────────────────────────────────────────────────────────
 
@@ -80,6 +84,14 @@ class SecurityView:
 
     def _name(self) -> str:
         return self._legacy.device_name or self._legacy.mac_address
+
+    def _note_redraw(self) -> None:
+        redraw.mark_redrawing(*self._legacy._redraw_keys())  # pylint: disable=protected-access
+
+    def _key_shown(self) -> bool:
+        config = self.config_view.cached if self.config_view is not None else None
+        security = getattr(config, "security_config", None)
+        return bool(security is not None and security.show_key_on_screen)
 
     def _frag_max(self) -> int:
         return max(wire.FRAG_MAX_MIN, min(wire.FRAG_MAX_MAX, self._transport().max_frame))
@@ -172,7 +184,13 @@ class SecurityView:
             self._install(session, flow.k_dev, status.uid)
 
         flow = ClaimFlow(
-            self._transport(), self._store, self._name(), status.uid, frag_max=self._frag_max(), on_session=on_session
+            self._transport(),
+            self._store,
+            self._name(),
+            status.uid,
+            frag_max=self._frag_max(),
+            on_session=on_session,
+            on_end=self._note_redraw,
         )
         return flow
 
@@ -188,6 +206,8 @@ class SecurityView:
             return session
 
         new_key = await rotate_key(self._channel(), self._store, self._name(), uid, reauthenticate=reauthenticate)
+        if self._key_shown():
+            self._note_redraw()  # the boot screen is redrawn with the new key (SECURITY_V2 § 10.7)
         _LOGGER.warning("The key of %s was rotated; other clients that use this display need the new key", self._name())
         return new_key
 
@@ -201,3 +221,4 @@ class SecurityView:
     async def use_without_key(self) -> None:
         """End claim mode and use the display without a key (it reboots into normal mode)."""
         await exit_claim_mode(self._transport(), frag_max=self._frag_max())
+        self._note_redraw()  # claim mode ends: the device reboots into normal mode

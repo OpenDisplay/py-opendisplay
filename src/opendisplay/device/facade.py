@@ -807,6 +807,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # Build and send reboot command
         cmd = build_reboot_command()
         await self._channel.write(cmd)
+        redraw.mark_redrawing(*self._redraw_keys())  # the boot screen is drawn before Bluetooth starts
 
         # Device will reset immediately - no ACK expected
         _LOGGER.info("Reboot command sent to %s - device will reset (connection will drop)", self.mac_address)
@@ -1234,6 +1235,9 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             validate_ack_response(response, CommandCode.WRITE_CONFIG_CHUNK)
 
         _LOGGER.info("Config written successfully to %s", self.mac_address)
+        # The firmware may redraw its boot screen now (a config that brings drive packets, or a
+        # SHOW_KEY_ON_SCREEN change); noting it lets the next replies and connects wait.
+        redraw.mark_redrawing(*self._redraw_keys())
 
     def export_config_json(self, file_path: str) -> None:
         """Export device config to JSON file (Open Display Config Builder format).
