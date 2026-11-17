@@ -731,7 +731,8 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         """
         await self._conn.write_command(build_read_ident_command())
         try:
-            response = await self._conn.read_response(timeout=self.TIMEOUT_IDENT)
+            with redraw.no_wait():  # older firmware answers with silence
+                response = await self._conn.read_response(timeout=self.TIMEOUT_IDENT)
         except OpenDisplayTimeoutError as err:
             raise IdentNotSupportedError(timed_out=True) from err
         if is_ident_unsupported_frame(response):

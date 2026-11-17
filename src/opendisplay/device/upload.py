@@ -12,6 +12,7 @@ from PIL import (
     Image,
 )
 
+from .. import redraw
 from ..encoding import (
     FIRMWARE_ZLIB_WINDOW_BITS,
     compress_image_data,
@@ -908,7 +909,8 @@ class Uploader:
             )
         )
         try:
-            resp = await self._channel.read(TIMEOUT_PIPE_START)
+            with redraw.no_wait():  # firmware without PIPE_WRITE answers with silence
+                resp = await self._channel.read(TIMEOUT_PIPE_START)
         except OpenDisplayTimeoutError:
             _LOGGER.debug("No 0x0080 partial response within %.1fs; firmware lacks PIPE_WRITE", TIMEOUT_PIPE_START)
             self.pipe_probed = True

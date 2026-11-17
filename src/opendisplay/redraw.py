@@ -14,8 +14,10 @@ case-insensitively. A note only ever extends; it is never cleared early, and sim
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from typing import Final, TypeVar
 
 _T = TypeVar("_T")
@@ -46,6 +48,23 @@ def _keys(keys: Sequence[str | None]) -> list[str]:
     return [k.lower() for k in keys if k]
 
 
+_no_wait: contextvars.ContextVar[bool] = contextvars.ContextVar("opendisplay_redraw_no_wait", default=False)
+
+
+@contextlib.contextmanager
+def no_wait() -> Iterator[None]:
+    """Reads in this block keep their normal timeout: a probe whose silence is its answer.
+
+    Firmware that lacks a command stays silent (READ_IDENT before 3.0, PIPE_WRITE, NFC); waiting
+    out a redraw there would turn a 2 s "not supported" into up to ``REDRAW_ALLOWANCE_S``.
+    """
+    token = _no_wait.set(True)
+    try:
+        yield
+    finally:
+        _no_wait.reset(token)
+
+
 def mark_redrawing(*keys: str | None, allowance: float = REDRAW_ALLOWANCE_S) -> None:
     """Note that the display known by ``keys`` is redrawing for up to ``allowance`` seconds."""
     deadline = _clock() + allowance
@@ -63,7 +82,12 @@ def link(*keys: str | None) -> None:
 
 
 def remaining(*keys: str | None) -> float:
-    """Seconds until the latest pending deadline among ``keys``; 0.0 when none is pending."""
+    """Seconds until the latest pending deadline among ``keys``; 0.0 when none is pending.
+
+    Always 0.0 inside ``no_wait()``.
+    """
+    if _no_wait.get():
+        return 0.0
     latest = max((_deadlines.get(k, 0.0) for k in _keys(keys)), default=0.0)
     return max(0.0, latest - _clock())
 

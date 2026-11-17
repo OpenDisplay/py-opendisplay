@@ -126,3 +126,37 @@ async def test_a_cancelled_tcp_read_leaves_no_read_behind() -> None:
 
     reader.feed_data(b"\x02\x00\x00\x40")
     assert await transport.read_response(timeout=0.5) == b"\x00\x40"
+
+
+async def test_a_probe_whose_silence_is_its_answer_is_not_stretched(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Firmware that predates READ_IDENT stays silent; under a note (the CLI always sets one) that
+    # silence must still mean "not supported" after the normal 2 s, not after the 60 s allowance.
+    from opendisplay.exceptions import IdentNotSupportedError
+
+    conn = BLEConnection(ADDRESS)
+
+    async def write_command(data: bytes, response: bool = True, drain_stale: bool = True) -> None:
+        return None
+
+    monkeypatch.setattr(conn, "write_command", write_command)
+    monkeypatch.setattr(OpenDisplayDevice, "TIMEOUT_IDENT", 0.05)
+    device = OpenDisplayDevice(transport=conn, auto_interrogate=False)
+    device._attach(conn)
+    redraw.mark_redrawing(ADDRESS, allowance=2.0)
+    start = time.monotonic()
+
+    with pytest.raises(IdentNotSupportedError):
+        await device.read_ident()
+
+    assert time.monotonic() - start < 0.5
+
+
+async def test_the_no_wait_scope_ends_with_its_block() -> None:
+    conn = _ble()
+    redraw.mark_redrawing(ADDRESS, allowance=0.3)
+    with redraw.no_wait():
+        with pytest.raises(BLETimeoutError):
+            await conn.read_response(timeout=0.05)
+    _reply_later(conn._notification_queue, b"\x00\x40", 0.15)
+
+    assert await conn.read_response(timeout=0.05) == b"\x00\x40"  # stretched again outside the block
