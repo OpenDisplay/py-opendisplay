@@ -1,5 +1,80 @@
 # Changelog
 
+## [8.2.0](https://github.com/OpenDisplay/py-opendisplay/compare/v8.1.1...v8.2.0) (2026-11-17)
+
+
+### Features
+
+* add opendisplay.connect() returning a Device with a profile and a config view ([14d642b](https://github.com/OpenDisplay/py-opendisplay/commit/14d642bc5acb41e38a22c2653d1c303f46f292f5))
+* an in-process record of displays that are redrawing ([dfe4929](https://github.com/OpenDisplay/py-opendisplay/commit/dfe492997ec33d1476e27c33aafe3c54dddafeec))
+* BWRY uploads use the code map the device's config declares ([13bfc2a](https://github.com/OpenDisplay/py-opendisplay/commit/13bfc2a986b197cb4186621beb02a17ff7038959))
+* claim a firmware 3.0 device, with keys staged before CONFIRM in the caller's key store ([9a66b41](https://github.com/OpenDisplay/py-opendisplay/commit/9a66b41bad21b1f133db456815247a52878826f7))
+* **cli:** add backup-config and migrate ([6d80cc8](https://github.com/OpenDisplay/py-opendisplay/commit/6d80cc84b79259569236297e9db34a2c3a3c4ba7))
+* **cli:** add claim, unclaim and rotate-key ([7c7ab49](https://github.com/OpenDisplay/py-opendisplay/commit/7c7ab492067b7a91cadb1fd5e897d0005bc9930b))
+* **cli:** add key export and key import; warn that a rotation leaves other clients on the old key ([2c6fc45](https://github.com/OpenDisplay/py-opendisplay/commit/2c6fc45e80e120660e15469b1acf668583680513))
+* **cli:** allow for a redraw by default, with --no-wait to fail fast ([893f5af](https://github.com/OpenDisplay/py-opendisplay/commit/893f5af6530adb4e10e2605d6559404d5af4cb0e))
+* commands that make the panel redraw note it, and the read-back waits instead of retrying ([defcd58](https://github.com/OpenDisplay/py-opendisplay/commit/defcd58324802ca0a1dc15243f1486449db4b08c))
+* connect reads a stored config without a display leniently and keeps its other packets ([ce03495](https://github.com/OpenDisplay/py-opendisplay/commit/ce03495915c4a687e61f6a545d349e63fe92c29c))
+* connect waits for a display that is redrawing ([c0eb797](https://github.com/OpenDisplay/py-opendisplay/commit/c0eb797d8a4e9d07d08189d273e0412bcd92b879))
+* connect() reads SEC_STATUS first and opens a SEC2 session; Device.security claims, rotates and unclaims ([e396810](https://github.com/OpenDisplay/py-opendisplay/commit/e3968103666c78839e9bbe82bdc0eecea1f9a12c))
+* describe a device with one profile built from firmware, config and identity ([161f4cc](https://github.com/OpenDisplay/py-opendisplay/commit/161f4cc068724bb3d6fd7cdaa04ff9fcb5334cda))
+* encode an image for a multi-pass drive mode ([43db60c](https://github.com/OpenDisplay/py-opendisplay/commit/43db60cd9f005648522c636fc7edf4e57a5ccf19))
+* migrate writes a backup's secrets inside the SEC2 session of a claimed device ([539290b](https://github.com/OpenDisplay/py-opendisplay/commit/539290ba4b2b1239a0deaac52820553baf385375))
+* plan and apply the migration of a config to firmware 3.0 drive data ([d458550](https://github.com/OpenDisplay/py-opendisplay/commit/d458550ae069f3b4e7a507ed5e88d906a256dae4))
+* raise typed errors for needs-migration, panel-busy and config-write-busy refusals ([ecee1a9](https://github.com/OpenDisplay/py-opendisplay/commit/ecee1a969f63f12973e81da495dbce6da72f9334))
+* raise typed errors when firmware 3.0 refuses a config for its secrets or key ([ea40a1f](https://github.com/OpenDisplay/py-opendisplay/commit/ea40a1f7cba050a1d228b1a84bc04ec032d24454))
+* read claim and session state from advertisements and ignore slots of unconfigured devices ([4e12ead](https://github.com/OpenDisplay/py-opendisplay/commit/4e12ead3cc80d469bab466c724fe14be08b86f80))
+* read device identity (READ_IDENT 0x0046) with the 3.0 tail ([02f4b9d](https://github.com/OpenDisplay/py-opendisplay/commit/02f4b9df80f78798adb871f583ab960790243bab))
+* retry a busy SEC2 handshake after the panel's pass, within the rate limit ([3c8c4bb](https://github.com/OpenDisplay/py-opendisplay/commit/3c8c4bb4faca63d1327524177b7ffa70064d8223))
+* rotate and unclaim a device key over the SEC2 session ([00b9b97](https://github.com/OpenDisplay/py-opendisplay/commit/00b9b97150d5dbd9068262c9005b4c2a8e044ab5))
+* SEC2 key derivation, commitment, confirmation code and transcripts ([888519b](https://github.com/OpenDisplay/py-opendisplay/commit/888519bf85f5ac8095086bb4df3d52cde9d4048a))
+* SEC2 primitives (CMAC, CCM with a 12-byte tag, P-256 ECDH with point validation) ([016f5a4](https://github.com/OpenDisplay/py-opendisplay/commit/016f5a4cab022ee4a7410017102cd5d1a11e22ef))
+* SEC2 wire layer and the security state in opendisplay info ([df03de3](https://github.com/OpenDisplay/py-opendisplay/commit/df03de37d6b0b9d3aee5f3832d7d2fd889c12dae))
+* step over the FindMy packet, expose action-table and controller packets, fix calibration signedness ([e25383b](https://github.com/OpenDisplay/py-opendisplay/commit/e25383b232ad595d573a775467438e9be8ac77de))
+* the SEC2 sealed session and its HELLO/FINISH handshake ([7ab4320](https://github.com/OpenDisplay/py-opendisplay/commit/7ab4320989723c7838fb4ee17fb38b7e2a0d580f))
+* upload in a named drive mode through CMD_DRIVE_WRITE_START ([9274d27](https://github.com/OpenDisplay/py-opendisplay/commit/9274d27d740f92e35c3760cb20ac77cc8b6aab70))
+* vendor the panel drive database and query it ([62a4e52](https://github.com/OpenDisplay/py-opendisplay/commit/62a4e522bf454be80e40470372624421c839274f))
+* wait for a reply while the display is redrawing ([3158dd4](https://github.com/OpenDisplay/py-opendisplay/commit/3158dd4e7586298d13bfbf5f2288840abf4b2a98))
+
+
+### Bug Fixes
+
+* a cancelled LAN read no longer leaves a header read behind ([dbcd866](https://github.com/OpenDisplay/py-opendisplay/commit/dbcd8665f727c8dc3e8659495cce49d97e846d4e))
+* connect survives a malformed identity reply; pin how a 2.x key fails on firmware 3.0 ([27c4301](https://github.com/OpenDisplay/py-opendisplay/commit/27c4301ecbb8a9c56911bc00e7e48aa1c0cb15d0))
+* encode drive-mode uploads off the event loop and give show() explicit options ([3deb8a8](https://github.com/OpenDisplay/py-opendisplay/commit/3deb8a80af924c6291958fc922528da73c28cda7))
+* info survives a broken identity reply; the identity error says when the device was merely silent ([1a01a53](https://github.com/OpenDisplay/py-opendisplay/commit/1a01a53ff3b0691f25b19d3c0b49e631a3f332dc))
+* keep every FindMy packet, guard each carried packet kind on write-config, calibration L* is signed ([d0f739b](https://github.com/OpenDisplay/py-opendisplay/commit/d0f739b37161f2d595827e73390dc6f2be6a0ed4))
+* migrate restores a backup that needs no migration and writes 0x27 as an unclaimed device stores it ([0fbd4b7](https://github.com/OpenDisplay/py-opendisplay/commit/0fbd4b7abb34d955801795ce1d6400d09c5f5834))
+* migrate verifies a config whose security packet the device rewrote on store ([f64174e](https://github.com/OpenDisplay/py-opendisplay/commit/f64174e79eb74d8e7d737a68edef38a48e62f00e))
+* probes whose silence means unsupported keep their normal timeout under a redraw note ([84cbb1d](https://github.com/OpenDisplay/py-opendisplay/commit/84cbb1d9d5f41c68d84958b05e0776cdff8f81d7))
+* refuse a drive mode whose scheme the encoder cannot produce ([ac0fa87](https://github.com/OpenDisplay/py-opendisplay/commit/ac0fa875a4e29bc0dcf00602753a208fbe03301a))
+* say when a key passed for an unclaimed 3.0 display is unused, and why LAN stays plaintext ([fa0febc](https://github.com/OpenDisplay/py-opendisplay/commit/fa0febca7f0c71a6e9dfe7ed07c150a7708e0568))
+* the profile models native-controller partial support and takes code_map from display 0 ([4758834](https://github.com/OpenDisplay/py-opendisplay/commit/47588344a1198fec5685cfec0d0d00d7f28c00b9))
+* the profile takes partial support on 3.0 from the partial mode and keeps each mode's scheme ([4f9cc5a](https://github.com/OpenDisplay/py-opendisplay/commit/4f9cc5a2ae56bfe2ecab1759ecfacf46651d7389))
+* trackers start over after an unconfigured advertisement instead of comparing across it ([cbf3925](https://github.com/OpenDisplay/py-opendisplay/commit/cbf39253db279bed58980d87ca0f14d4c54dde32))
+* wait for a panel that is still redrawing before reading the config back ([d5d3f0e](https://github.com/OpenDisplay/py-opendisplay/commit/d5d3f0e12e3020ba926438a0ae9c00b3a5cc11d9))
+
+
+### Documentation
+
+* a 2.x key on 3.0 is signalled by auth status 0x05, not by needs-migration ([73d19e5](https://github.com/OpenDisplay/py-opendisplay/commit/73d19e5f7e43c333c525caf77bf65426beb1d6cd))
+* add the firmware 3.0 design, plans and executor rules ([73b7b25](https://github.com/OpenDisplay/py-opendisplay/commit/73b7b25fb742d28e1bebdd66e7d0553638eaaac5))
+* approve the piece 3b design and write its task steps ([55976cd](https://github.com/OpenDisplay/py-opendisplay/commit/55976cd3496b3c62770424166b3d0186a7cb003f))
+* correct the key-adoption claim and record the piece 3a decisions ([f84cf54](https://github.com/OpenDisplay/py-opendisplay/commit/f84cf542dd76ebde195deb9c91d53299a7abccc9))
+* describe how the library and CLI wait for a redrawing display ([85ee996](https://github.com/OpenDisplay/py-opendisplay/commit/85ee996c0aea6595d27c5a76b82a55349fcd146c))
+* describe the device package in the agent notes ([5439f17](https://github.com/OpenDisplay/py-opendisplay/commit/5439f172893d951ce281cd7496541fd461452921))
+* design for waiting out a panel redraw ([1192af5](https://github.com/OpenDisplay/py-opendisplay/commit/1192af58cfd80700848b92f9cc1fab276dd63bc7))
+* document firmware 3.0 migration, drive modes and device keys in the README ([e8c0dae](https://github.com/OpenDisplay/py-opendisplay/commit/e8c0dae4b1100b1707f30a191c14317100631dad))
+* piece 2b reads the identity on connect only for firmware 3.0 and up ([aee2cd8](https://github.com/OpenDisplay/py-opendisplay/commit/aee2cd8cf95482fb377284ced93096bba55724bc))
+* plan for waiting out a panel redraw ([7bac932](https://github.com/OpenDisplay/py-opendisplay/commit/7bac932eec1538779d68b76b90662de36d5113ba))
+* record piece 2b firmware findings and progress ([e25c524](https://github.com/OpenDisplay/py-opendisplay/commit/e25c524e3b1dda94f523b9fe0845135df2eb6be6))
+* record piece 3a proven on the E1002 ([537a0f3](https://github.com/OpenDisplay/py-opendisplay/commit/537a0f35815a965a014b4cae26966d2496380224))
+* record piece 3b proven on glass and the stale 0x0085 targets line ([afbdb0f](https://github.com/OpenDisplay/py-opendisplay/commit/afbdb0fc44424324d2439b4bb2eb663428c61e1c))
+* record the piece 2b review findings for pieces 3a, 4 and 6 ([a12c306](https://github.com/OpenDisplay/py-opendisplay/commit/a12c306d24e4a7a38be1e69ef8d32d3403b91869))
+* record the piece 3b review outcome ([e23317c](https://github.com/OpenDisplay/py-opendisplay/commit/e23317c7a96f53cc4686bf26cef58147607c58a0))
+* record the piece 4 decisions and the items earlier pieces left for it ([0e5f174](https://github.com/OpenDisplay/py-opendisplay/commit/0e5f1749499debc2c42c80363a5caef75008f3fc))
+* record which commands make the firmware redraw ([293768a](https://github.com/OpenDisplay/py-opendisplay/commit/293768a0a9bb0eb7da5602b64b0c739b17d17b52))
+
 ## [8.1.1](https://github.com/OpenDisplay/py-opendisplay/compare/v8.1.0...v8.1.1) (2026-11-14)
 
 
