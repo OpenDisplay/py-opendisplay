@@ -62,6 +62,21 @@ async with opendisplay.connect("AA:BB:CC:DD:EE:FF") as dev:
 device identity. Everything not yet on the new surface is reached through `dev.legacy`, the wrapped
 `OpenDisplayDevice`. `OpenDisplayDevice` remains supported.
 
+#### Drive modes (firmware 3.0)
+
+A firmware 3.0 config can declare several drive modes for a panel, for example `colour16`, which
+drives a BWRY panel in three passes to show 16 colours. `dev.profile.drive_mode_names` lists them;
+`dev.display.show()` uploads in one:
+
+```python
+async with opendisplay.connect("AA:BB:CC:DD:EE:FF") as dev:
+    print(dev.profile.drive_mode_names)        # the modes the config declares, e.g. colour16
+    await dev.display.show(image, mode="colour16")
+```
+
+Without `mode`, `show()` is `upload_image()` with the same options. If the device runs a different
+mode than the one asked for, `DriveModeSubstitutedError` is raised and nothing is uploaded.
+
 ## CLI
 
 Run without installing (requires [uv](https://docs.astral.sh/uv/)):
@@ -89,9 +104,30 @@ opendisplay reboot --device AA:BB:CC:DD:EE:FF
 # Export / write device configuration
 opendisplay export-config --device AA:BB:CC:DD:EE:FF config.json
 opendisplay write-config --device AA:BB:CC:DD:EE:FF config.json
+
+# Upload in a drive mode the config declares (firmware 3.0; `info` lists them)
+opendisplay upload --device AA:BB:CC:DD:EE:FF photo.jpg --mode colour16
+
+# Move a device to firmware 3.0 (see "Moving to firmware 3.0" below)
+opendisplay backup-config --device OD4064C9 backup.json
+opendisplay migrate --device OD4064C9 --dry-run
+opendisplay migrate --device OD4064C9
+
+# Firmware 3.0 device keys (see "Firmware 3.0 security" below)
+opendisplay claim --device OD4064C9
+opendisplay rotate-key --device OD4064C9
+opendisplay unclaim --device OD4064C9
+opendisplay key export --device OD4064C9
+opendisplay key import --device OD4064C9 0102030405060708090a0b0c0d0e0f10
 ```
 
-Encrypted devices require `--key HEX` (32 hex characters). Pass `-v` / `--verbose` for debug logging.
+Firmware 2.x devices with encryption require `--key HEX` (32 hex characters). Firmware 3.0 keys
+live in a key store, `~/.config/opendisplay/keys.json` by default (`--key-store PATH` to change
+it). Pass `-v` / `--verbose` for debug logging.
+
+On a **claimed** firmware 3.0 display, `info`, `upload`, `reboot`, `sleep`, `export-config` and
+`write-config` do not open a session yet; they stop with `Sec2RequiredError`, and `upload --mode`
+does not read the key store yet. `claim`, `unclaim`, `rotate-key`, `backup-config` and `migrate` do.
 
 `export-config` keeps config packets this library does not recognise in an `unparsed_tail` field, so writing the file back restores them. If a file has lost that field (for example after editing it in another tool) and the device has such packets, `write-config` refuses to write. Pass `--keep-unknown-packets` to carry the device's packets over unchanged, or `--discard-unknown-packets` to delete them.
 
@@ -386,9 +422,82 @@ async with OpenDisplayDevice(mac_address="BB:CC:DD:EE:FF:00") as device:
 `import_config_json()` raises `ValueError` if required packets (`system`, `manufacturer`, `power`) or all display packets are missing.
 JSON packet id `38` (`wifi_config` / TLV `0x26`) is supported for import/export.
 
-### Encryption
+### Moving to firmware 3.0
 
-Devices with firmware encryption enabled require authentication before accepting any commands (except `read_firmware_version`). Pass the 16-byte AES-128 master key to the constructor — authentication and session setup happen automatically before the first interrogation.
+Firmware 3.0 drives the panel from data in the device's config. A device updated from 2.x needs that
+data before it can draw; `dev.profile.needs_migration` says so. The CLI does the move:
+
+```bash
+opendisplay backup-config --device OD4064C9 backup.json   # never overwrites a file
+opendisplay migrate --device OD4064C9 --dry-run           # show what would change
+opendisplay migrate --device OD4064C9                     # write it, then read it back
+```
+
+- `--panel ID` picks the panel (`panel_ic_type`) when the config does not say which one it is.
+- `--yes-untested` writes drive data not yet seen working on real glass without asking.
+- `--from-backup FILE` restores a backup instead of starting from the device's config. A backup
+  that carries secrets (the 2.x key, a WiFi password, FindMy keys) is written inside the session
+  of a claimed device; an unclaimed device does not store secrets, so it is refused there unless
+  `--strip-secrets` writes the backup without them. Claim the display first to keep them.
+
+In Python, `dev.config.plan_migration()` returns the plan and `dev.config.write(config)` writes a
+config and reads it back.
+
+### Firmware 3.0 security (claiming a display)
+
+Firmware 3.0 replaces the 2.x key with a key the display generates itself. A display without a key
+is open, as before. Claiming gives it a key that only you hold:
+
+1. Put the display in claim mode: switch it off and on, wait about 5 seconds, switch it off and on
+   again. It shows SETUP MODE. Leave it off for at least 2 seconds each time.
+2. Run `opendisplay claim --device OD4064C9`. The display draws a 6-digit code (a colour panel can
+   take a minute); type it in. **If a code was already showing before you started, stop: someone
+   else is claiming the display.**
+3. The new key is saved in the key store. Every later connect opens an encrypted session with it.
+
+A wrong code is never sent to the display, and nothing is kept. If the key is lost, factory-reset
+the display with five quick power cycles.
+
+In Python, pass a key store; `connect()` reads the display's security state before any handshake
+and picks the scheme itself (2.x, firmware 3.0 unclaimed, or firmware 3.0 claimed):
+
+```python
+import opendisplay
+from opendisplay.sec2.keystore import JsonFileKeyStore
+
+store = JsonFileKeyStore()   # ~/.config/opendisplay/keys.json, mode 0600
+
+async with opendisplay.connect(name="OD4064C9", key_store=store) as dev:
+    if dev.security.status.claim_mode:
+        flow = await dev.security.claim()
+        await flow.begin()
+        code = await flow.exchange_nonces()     # the display now draws the code
+        await flow.confirm(input("Code: "))     # checked here before anything is sent
+    await dev.display.show(image)               # sealed in the session
+```
+
+- **Keys.** `encryption_key=` takes a `DeviceKey` (firmware 3.0), a `LegacyKey` (2.x) or plain
+  bytes, tried with whichever scheme the display speaks. A key is stored as confirmed only after it
+  opens a session, and a key the display refuses is never deleted. At most three keys are tried.
+- **A key migrated from 2.x** is replaced by a display-generated one right after the first session.
+  Pass `rotate_legacy_key=False` to keep it.
+- **`dev.security`**: `status`, `claim()`, `rotate_key()`, `unclaim()`, `use_without_key()` (leave
+  claim mode and use the display open).
+- **Several clients** (Home Assistant, the web tool, another computer) share one key per display.
+  Move it with `opendisplay key export` / `opendisplay key import` (hex, or an
+  `opendisplay.org/l/` link that carries the key). Anyone with the key can change the display,
+  update its firmware, and read its WiFi password and FindMy keys. After `rotate-key`, every other
+  client needs the new key.
+- **Errors** say what to do: `NotInClaimModeError` (power-cycle twice), `Sec2KeyRequiredError` (no
+  key opened a session; import it, or factory-reset), `Sec2CodeMismatchError`, `DeviceLockedError`,
+  `RateLimitedError`, `Sec2BusyError`, and `Sec2RequiredError` when a 2.x-only API meets a claimed
+  display.
+- **LAN**: claiming, sessions and key changes run over Bluetooth only. TLS with a firmware 3.0 key
+  is not supported yet.
+
+### Encryption (firmware 2.x)
+
+Firmware 2.x devices with encryption enabled require authentication before accepting any commands (except `read_firmware_version`). For firmware 3.0, see "Firmware 3.0 security" above. Pass the 16-byte AES-128 master key to the constructor — authentication and session setup happen automatically before the first interrogation.
 
 ```python
 from opendisplay import OpenDisplayDevice
