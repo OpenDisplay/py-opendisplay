@@ -68,16 +68,26 @@ def _transport_class() -> type[Any]:
             super().__init__()
             self._ble_device = ble_device
 
-        async def _connect(self, address: str, timeout_s: float) -> None:
-            self._client = await establish_connection(  # pylint: disable=attribute-defined-outside-init
+        async def _link(self) -> Any:
+            return await establish_connection(
                 BleakClientWithServiceCache,
                 self._ble_device,
                 self._ble_device.name or self._ble_device.address,
                 disconnected_callback=self._set_disconnected_event,
                 max_attempts=3,
             )
+
+        async def _connect(self, address: str, timeout_s: float) -> None:
+            client = await self._link()  # a BleakClientWithServiceCache
+            characteristic = client.services.get_characteristic(SMP_CHARACTERISTIC_UUID)
+            if characteristic is None and await client.clear_cache():
+                # A service table cached before the device ran 3.0 has no SMP service (an
+                # ESPHome proxy keeps one per MAC). Forget it and discover again on a new link.
+                await client.disconnect()
+                client = await self._link()
+                characteristic = client.services.get_characteristic(SMP_CHARACTERISTIC_UUID)
+            self._client = client  # pylint: disable=attribute-defined-outside-init
             self._disconnected_event.clear()
-            characteristic = self._client.services.get_characteristic(SMP_CHARACTERISTIC_UUID)
             if characteristic is None:
                 raise SMPBLETransportNotSMPServer("The device has no SMP characteristic")
             self._max_write_without_response_size = characteristic.max_write_without_response_size

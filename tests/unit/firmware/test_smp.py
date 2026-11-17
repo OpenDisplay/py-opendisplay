@@ -165,3 +165,51 @@ async def test_the_transport_connects_to_the_given_device_and_never_scans(monkey
 
     assert connected == [device]
     assert transport.mtu == 244 and notified
+
+
+async def test_a_stale_service_cache_is_cleared_once_and_the_link_reopened(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An ESPHome proxy kept the display's 2.x service table (no SMP service) after it moved to 3.0;
+    # seen on the Bedroom proxy with the E1002. One clear_cache and a new link find it.
+    from types import SimpleNamespace
+
+    import bleak_retry_connector
+
+    device = SimpleNamespace(name="OD4064C9", address="44:1B:F6:C9:64:41")
+    events: list[str] = []
+
+    class _Backend:
+        pass
+
+    def _client(has_smp: bool, label: str) -> Any:
+        async def clear_cache() -> bool:
+            events.append(f"clear_cache:{label}")
+            return True
+
+        async def disconnect() -> None:
+            events.append(f"disconnect:{label}")
+
+        async def start_notify(uuid: Any, callback: Any) -> None:
+            events.append(f"notify:{label}")
+
+        characteristic = SimpleNamespace(max_write_without_response_size=244) if has_smp else None
+        return SimpleNamespace(
+            services=SimpleNamespace(get_characteristic=lambda uuid: characteristic),
+            clear_cache=clear_cache,
+            disconnect=disconnect,
+            start_notify=start_notify,
+            _backend=_Backend(),
+        )
+
+    clients = [_client(False, "stale"), _client(True, "fresh")]
+
+    async def establish_connection(cls: Any, ble_device: Any, name: str, **kwargs: Any) -> Any:
+        events.append("connect")
+        return clients.pop(0)
+
+    monkeypatch.setattr(bleak_retry_connector, "establish_connection", establish_connection)
+    transport = smp._transport_class()(device)
+
+    await transport._connect("ignored", 5.0)
+
+    assert events == ["connect", "clear_cache:stale", "disconnect:stale", "connect", "notify:fresh"]
+    assert transport.mtu == 244

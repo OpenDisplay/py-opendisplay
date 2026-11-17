@@ -212,8 +212,10 @@ async def _update_smp(
             new_hash = await smp.test_and_reset(client)
     old = str(before.version)
     if failed is not None:
+        _LOGGER.debug("SMP upload to %s failed", address, exc_info=failed)
         await _reconnect_quietly(device)
-        return UpdateResult(UpdateOutcome.NOT_UPDATED, old, old, f"{failed}. The display keeps running {old}.")
+        reason = str(failed).rstrip(".")
+        return UpdateResult(UpdateOutcome.NOT_UPDATED, old, old, f"{reason}. The display keeps running {old}.")
 
     _note_reboot(device)
     try:
