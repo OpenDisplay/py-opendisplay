@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .. import redraw
 from ..exceptions import NfcNotSupportedError, OpenDisplayTimeoutError
 from ..models.enums import NfcRecordType
 from ..protocol import (
@@ -42,7 +43,11 @@ async def write_nfc_record(
     async def _read_nfc(read_timeout: float) -> bytes:
         nonlocal first_read
         try:
-            response = await channel.read(read_timeout)
+            if first_read:  # a device without NFC answers its first read with silence
+                with redraw.no_wait():
+                    response = await channel.read(read_timeout)
+            else:
+                response = await channel.read(read_timeout)
         except OpenDisplayTimeoutError:
             if first_read:
                 raise NfcNotSupportedError() from None

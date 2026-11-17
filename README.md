@@ -586,6 +586,25 @@ py-opendisplay uses `bleak-retry-connector` for robust BLE connections with:
 - GATT service caching for faster reconnections
 - Better error categorization
 
+### Displays that are redrawing
+
+While a display redraws its panel it goes silent: no advertisements, and commands are held until
+the refresh ends. A colour (Spectra) panel takes about 30 s. This is the firmware's design, so the
+library waits for it:
+
+- After the library itself makes the panel redraw (a config write, `reboot()`, the end of a claim,
+  a key rotation while the key is shown on screen), the next replies, scans and connects to that
+  display wait up to 60 s for it, in the same process. A command is never sent twice: the firmware
+  answers it after the refresh. Waiting ends as soon as the display answers.
+- Otherwise a silent display fails as fast as before, because "redrawing" and "gone" look the same.
+  The error then ends with *"If the display is redrawing (some colour panels take about 30 s after a
+  power-up, reboot or config change), try again in 30 s."*
+- A firmware 3.0 handshake that the display answers with BUSY is retried every 10 s, which stays
+  under the display's limit on handshake attempts. RATE_LIMITED is never retried.
+- The CLI always allows for a redraw, because you have often just switched the display on. It
+  prints `Waiting for the display to finish redrawing...` once when it waits. `--no-wait` gives the
+  fast failure instead.
+
 ### Home Assistant Integration
 
 When using py-opendisplay in Home Assistant custom integrations, pass the `BLEDevice` object for optimal performance:

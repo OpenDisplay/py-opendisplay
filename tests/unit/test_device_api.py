@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import opendisplay
-from opendisplay import Device, Generation, OpenDisplayDevice
+from opendisplay import Device, Generation, OpenDisplayDevice, redraw
 from opendisplay.exceptions import (
     BLEConnectionError,
     ConfigParseError,
@@ -257,44 +258,81 @@ def _write_acks(config: GlobalConfig) -> list[bytes]:
     return [b"\x00\x41"] + [b"\x00\x42"] * (chunks - 1)
 
 
-async def test_config_write_waits_for_a_panel_that_is_still_redrawing(fake_transport, monkeypatch) -> None:
-    # Spectra and similar panels redraw for about 30 s after a config write and answer nothing
-    # meanwhile; the read-back must wait for them instead of failing on the first timeout.
-    slept: list[float] = []
+# Spectra and similar panels may redraw after a config write and answer nothing meanwhile. The
+# write notes the redraw (opendisplay.redraw); the library's own transports then wait for the
+# read-back's replies. ConfigView.write itself sends the read-back once and never retries it.
 
-    async def no_sleep(seconds: float) -> None:
-        slept.append(seconds)
+ADDRESS = "AA:BB:CC:DD:EE:FF"
 
-    monkeypatch.setattr("opendisplay.device.api.asyncio.sleep", no_sleep)
-    silent = OpenDisplayTimeoutError("redrawing")
-    fake = fake_transport(
-        [_version(3, 0), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY]
-        + _write_acks(ESP32_CONFIG)
-        + [silent, silent]
-        + [_version(3, 0), _config_reply(ESP32_CONFIG), IDENT_V3_NO_DISPLAY]
+
+def _with_address(fake: Any) -> Any:
+    fake.mac_address = ADDRESS
+    return fake
+
+
+async def test_config_write_notes_a_redraw_and_reads_back_once(fake_transport) -> None:
+    fake = _with_address(
+        fake_transport(
+            [_version(3, 0), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY]
+            + _write_acks(ESP32_CONFIG)
+            + [_version(3, 0), _config_reply(ESP32_CONFIG), IDENT_V3_NO_DISPLAY]
+        )
     )
 
     async with opendisplay.connect(transport=fake) as dev:
+        written_before = len(fake.written)
         await dev.config.write(ESP32_CONFIG)
 
         assert dev.profile.configured is True
-        assert len(slept) == 2 and sum(slept) >= 20
+        assert redraw.remaining(ADDRESS) > 0
+        read_back = [f[:2] for f in fake.written[written_before:] if f[:2] == READ_FW_VERSION]
+        assert len(read_back) == 1
 
 
-async def test_config_write_gives_up_after_the_redraw_budget(fake_transport, monkeypatch) -> None:
-    async def no_sleep(seconds: float) -> None:
-        return None
-
-    monkeypatch.setattr("opendisplay.device.api.asyncio.sleep", no_sleep)
-    fake = fake_transport(
-        [_version(3, 0), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY]
-        + _write_acks(ESP32_CONFIG)
-        + [OpenDisplayTimeoutError("silent")] * 20
+async def test_a_silent_read_back_is_not_retried_by_the_config_view(fake_transport) -> None:
+    fake = _with_address(
+        fake_transport(
+            [_version(3, 0), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY]
+            + _write_acks(ESP32_CONFIG)
+            + [OpenDisplayTimeoutError("silent")] * 5
+        )
     )
 
     async with opendisplay.connect(transport=fake) as dev:
         with pytest.raises(OpenDisplayTimeoutError):
             await dev.config.write(ESP32_CONFIG)
+
+    assert len(fake._responses) == 4  # one read-back attempt consumed one scripted silence
+
+
+async def test_a_refused_config_write_notes_nothing(fake_transport) -> None:
+    from opendisplay.exceptions import ConfigWriteBusyError
+
+    fake = _with_address(
+        fake_transport([_version(3, 0), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY, bytes.fromhex("ff410100")])
+    )
+
+    async with opendisplay.connect(transport=fake) as dev:
+        with pytest.raises(ConfigWriteBusyError):
+            await dev.config.write(ESP32_CONFIG)
+
+    assert redraw.remaining(ADDRESS) == 0
+
+
+def test_the_config_view_has_no_retry_loop_left() -> None:
+    from opendisplay.device import api
+
+    assert not hasattr(api, "_REDRAW_RETRIES") and not hasattr(api, "_REDRAW_WAIT_S")
+
+
+async def test_a_reboot_notes_a_redraw(fake_transport) -> None:
+    fake = _with_address(fake_transport([]))
+    device = OpenDisplayDevice(transport=fake, auto_interrogate=False)
+    await device.__aenter__()
+
+    await device.reboot()
+
+    assert redraw.remaining(ADDRESS) > 0
 
 
 def test_conflicting_addressing_is_rejected() -> None:  # Review Focus 5

@@ -19,6 +19,7 @@ import logging
 import ssl
 from contextlib import suppress
 
+from .. import redraw
 from ..exceptions import OpenDisplayConnectionError, OpenDisplayTimeoutError
 from ..protocol import OD_LAN_MAX_PAYLOAD
 
@@ -65,6 +66,8 @@ class TcpTransport:
         self.timeout = timeout
         self.tls = tls
         self._psk = psk
+        #: Identities of this display in ``opendisplay.redraw``; a read waits out a noted redraw.
+        self.redraw_keys: tuple[str, ...] = (host,)
         # LAN has no advertised name; kept for Transport structural conformance.
         self.device_name: str | None = None
 
@@ -164,6 +167,24 @@ class TcpTransport:
         except (OSError, ssl.SSLError) as err:
             raise OpenDisplayConnectionError(f"Write failed: {err}") from err
 
+    async def _read_header(self, reader: asyncio.StreamReader, timeout: float) -> bytes:
+        """The length prefix; past ``timeout``, keep waiting while the display is noted redrawing."""
+        read = asyncio.ensure_future(reader.readexactly(_LEN_PREFIX))
+        try:
+            try:
+                return await asyncio.wait_for(asyncio.shield(read), timeout=timeout)
+            except asyncio.TimeoutError:
+                pending = redraw.remaining(*self.redraw_keys)
+                if not pending:
+                    raise
+                redraw.notify_waiting()
+                return await asyncio.wait_for(read, timeout=pending)
+        finally:
+            # Never leave the shielded read behind (a timeout, or the caller's cancellation): it
+            # would take the next frame's length prefix.
+            if not read.done():
+                read.cancel()
+
     async def read_response(self, timeout: float = 5.0) -> bytes:
         """Read exactly one length-prefixed frame.
 
@@ -181,7 +202,7 @@ class TcpTransport:
             raise OpenDisplayConnectionError("Not connected")
         reader = self._reader
         try:
-            header = await asyncio.wait_for(reader.readexactly(_LEN_PREFIX), timeout=timeout)
+            header = await self._read_header(reader, timeout)
         except asyncio.TimeoutError as err:
             raise OpenDisplayTimeoutError(f"No response within {timeout}s") from err
         except (asyncio.IncompleteReadError, OSError, ssl.SSLError) as err:

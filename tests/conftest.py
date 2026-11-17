@@ -159,3 +159,13 @@ def real_advertisement_data():
     # Format: [protocol:7][battery:2 LE][temp:1 signed][loop:1]
     # Real captured data: Battery 3925mV, Temp 22°C, Loop 77
     return bytes([0x02, 0x36, 0x00, 0x6C, 0x00, 0xC3, 0x01, 0x55, 0x0F, 0x16, 0x4D])
+
+
+@pytest.fixture(autouse=True)
+def _forget_redraw_notes():
+    """Each test starts with no display noted as redrawing (opendisplay.redraw is process-wide)."""
+    from opendisplay import redraw
+
+    redraw._reset()
+    yield
+    redraw._reset()

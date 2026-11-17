@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from opendisplay import redraw
 from opendisplay.sec2 import errors, wire
 from opendisplay.sec2.claim import ClaimFlow, exit_claim_mode
 from opendisplay.sec2.keystore import MemoryKeyStore
@@ -165,8 +166,15 @@ async def test_an_unverified_device_proof_keeps_the_key_as_a_candidate() -> None
     ],
 )
 async def test_each_device_refusal_is_typed_and_says_what_to_do(
-    err: wire.SecErr, error: type[Exception]
+    err: wire.SecErr, error: type[Exception], monkeypatch: pytest.MonkeyPatch
 ) -> None:  # Review Focus 6
+    t = [0.0]
+
+    async def sleep(seconds: float) -> None:  # BUSY is retried after the pass: let its allowance run out
+        t[0] += redraw.REDRAW_ALLOWANCE_S
+
+    monkeypatch.setattr(redraw, "_clock", lambda: t[0])
+    monkeypatch.setattr(redraw, "_sleep", sleep)
     row = VECTORS["V3_claim"][0]
     transport = _ScriptedTransport([[bytes([0xFF, 0x55, 0x01, int(err)])]])
     flow = _flow(row, transport, MemoryKeyStore())

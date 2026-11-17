@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from epaper_dithering import DitherMode
 
+from .. import redraw
 from ..credentials import DeviceKey
 from ..encoding import compress_image_data
 from ..encoding.compression import FIRMWARE_ZLIB_WINDOW_BITS
@@ -44,8 +45,6 @@ _LOGGER = logging.getLogger(__name__)
 # Spectra and some other panels redraw for about 30 s after a config write and answer nothing
 # meanwhile; the read-back retries every 10 s, 9 times. Each attempt first waits out its own
 # command timeout (5 s), so it gives up after about 2.5 minutes at most.
-_REDRAW_WAIT_S = 10.0
-_REDRAW_RETRIES = 9
 
 _IDENT_MIN_MAJOR = 3  # earlier firmware is silent on READ_IDENT and would cost every connect its timeout
 
@@ -104,23 +103,15 @@ class ConfigView:
         """Write ``config`` to the device, then refresh the profile from the device.
 
         The device may redraw its panel after storing a config (Spectra panels take about 30 s)
-        and answers nothing meanwhile, so the read-back is retried: every 10 s, 9 times, each attempt
-        after its own 5 s timeout, about 2.5 minutes at most.
+        and answers nothing meanwhile. The write notes that redraw (``opendisplay.redraw``), so the
+        read-back's replies are waited for, up to ``REDRAW_ALLOWANCE_S``.
 
         Raises:
             OpenDisplayTimeoutError: The device stayed silent after the write. The write itself
                 was acknowledged; only the read-back is missing.
         """
         await self._device.legacy.write_config(config)
-        for attempt in range(_REDRAW_RETRIES + 1):
-            try:
-                await self._device.refresh()
-                return
-            except OpenDisplayTimeoutError:
-                if attempt == _REDRAW_RETRIES:
-                    raise
-                _LOGGER.info("Device silent after the config write (redrawing?); retrying in %.0f s", _REDRAW_WAIT_S)
-                await asyncio.sleep(_REDRAW_WAIT_S)
+        await self._device.refresh()
 
 
 _RESERVED_MODES = {
@@ -268,6 +259,7 @@ class Device:
         self.security = security if security is not None else SecurityView(legacy)
         self.config = ConfigView(self)
         self.display = DisplayView(self)
+        self.security.config_view = self.config  # whether the key is shown on the panel
         self._profile: DeviceProfile | None = None
 
     @property
@@ -304,10 +296,19 @@ class Device:
         self._profile = build_profile(firmware, config, ident, ident_missing=ident_missing)
         return self._profile
 
+    async def _first_read(self) -> FirmwareVersion:
+        """The firmware version; a silence with no redraw noted says the display may be redrawing."""
+        try:
+            return await self.legacy.read_firmware_version()
+        except OpenDisplayTimeoutError as err:
+            if redraw.remaining(*self.legacy._redraw_keys()):  # pylint: disable=protected-access
+                raise
+            raise type(err)(f"{err} {redraw.REDRAW_HINT}") from err
+
     async def __aenter__(self) -> Device:
         await self.legacy.__aenter__()
         try:
-            firmware = await self.legacy.read_firmware_version()
+            firmware = await self._first_read()
             await self.security.establish(firmware["major"])
             await self.refresh(firmware)
         except BaseException:
