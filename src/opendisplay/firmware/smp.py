@@ -127,8 +127,8 @@ async def upload(client: SMPClient, image: bytes, *, on_progress: Callable[[int,
         raise SmpTransferError(f"Upload stopped at {done} of {len(image)} bytes: {err}") from err
 
 
-async def test_and_reset(client: SMPClient) -> None:
-    """Mark the uploaded image (slot 1) for one test boot, then reset into it.
+async def test_and_reset(client: SMPClient) -> bytes:
+    """Mark the uploaded image (slot 1) for one test boot, reset into it, and return its hash.
 
     The image is named by the hash the device reports for slot 1, not the file's SHA-256: ESP32
     uses ``esp_partition_get_sha256`` of the slot, MCUboot its own image hash.
@@ -144,6 +144,7 @@ async def test_and_reset(client: SMPClient) -> None:
         raise SmpError("The device reports no uploaded image in slot 1; nothing to boot")
     await _request(client, ImageStatesWrite(hash=bytes(uploaded.hash), confirm=False))
     await _request(client, ResetWrite())
+    return bytes(uploaded.hash)
 
 
 async def confirm(client: SMPClient) -> None:

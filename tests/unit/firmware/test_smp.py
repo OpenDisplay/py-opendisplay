@@ -79,7 +79,7 @@ async def test_test_and_reset_marks_the_uploaded_slot_by_the_hash_the_device_rep
     device_hash = b"\xab" * 32
     client.replies[ImageStatesRead] = _slots(b"\x01" * 32, device_hash)
 
-    await smp.test_and_reset(client)  # type: ignore[arg-type]
+    assert await smp.test_and_reset(client) == device_hash  # type: ignore[arg-type]
 
     read, write, reset = client.requests
     assert isinstance(read, ImageStatesRead)
