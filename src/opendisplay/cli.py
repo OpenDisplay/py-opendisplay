@@ -17,6 +17,7 @@ from rich.logging import RichHandler
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskID, TaskProgressColumn, TextColumn
 from rich.table import Table
 
+from . import redraw
 from .battery import voltage_to_percent
 from .cli_common import (
     _add_device_options,
@@ -817,10 +818,34 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_WAITING_LINE = "Waiting for the display to finish redrawing..."
+
+
+def _prepare(args: argparse.Namespace) -> None:
+    """Allow for a redraw: a person running the CLI has often just touched the display.
+
+    The target is noted as possibly redrawing, so connects and replies wait up to
+    ``redraw.REDRAW_ALLOWANCE_S`` for it, and one line says so when a wait actually happens.
+    ``--no-wait`` keeps the library's fast failure.
+    """
+    if getattr(args, "no_wait", True):
+        return
+    redraw.mark_redrawing(getattr(args, "device", None), getattr(args, "host", None))
+    told: list[bool] = []
+
+    def tell() -> None:
+        if not told:
+            told.append(True)
+            _console.print(_WAITING_LINE)
+
+    redraw.waiting_hook = tell
+
+
 def main() -> None:
     """Entry point for the opendisplay CLI."""
     args = _build_parser().parse_args()
     _setup_logging(args.verbose)
+    _prepare(args)
     args.func(args)
 
 

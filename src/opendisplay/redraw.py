@@ -31,6 +31,16 @@ _clock: Callable[[], float] = time.monotonic
 _sleep = asyncio.sleep
 _deadlines: dict[str, float] = {}
 
+#: Called each time the library actually waits past a normal timeout for a redraw (the CLI prints
+#: one line from it). ``None``: nobody is told.
+waiting_hook: Callable[[], None] | None = None  # pylint: disable=invalid-name  # a hook, reassigned
+
+
+def notify_waiting() -> None:
+    """Tell ``waiting_hook`` that a wait for a redraw is happening now."""
+    if waiting_hook is not None:
+        waiting_hook()
+
 
 def _keys(keys: Sequence[str | None]) -> list[str]:
     return [k.lower() for k in keys if k]
@@ -58,11 +68,6 @@ def remaining(*keys: str | None) -> float:
     return max(0.0, latest - _clock())
 
 
-def wait_timeout(keys: Sequence[str | None], timeout: float) -> float:
-    """How long to wait for a reply: ``timeout``, stretched to a pending deadline."""
-    return max(timeout, remaining(*keys))
-
-
 async def retry_busy(op: Callable[[], Awaitable[_T]], *keys: str | None) -> _T:
     """Run a SEC2 handshake start; on BUSY, retry it every ``BUSY_RETRY_S`` until the redraw ends.
 
@@ -81,6 +86,7 @@ async def retry_busy(op: Callable[[], Awaitable[_T]], *keys: str | None) -> _T:
             if deadline is None:  # a pending note, or one allowance from this first BUSY
                 deadline = _clock() + (remaining(*keys) or REDRAW_ALLOWANCE_S)
                 mark_redrawing(*keys, allowance=deadline - _clock())
+            notify_waiting()
             await _sleep(BUSY_RETRY_S)
             if _clock() >= deadline:
                 raise

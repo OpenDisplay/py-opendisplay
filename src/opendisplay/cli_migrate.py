@@ -336,7 +336,7 @@ async def _restore(dev: Any, backup: GlobalConfig, *, dry_run: bool) -> None:
 
 async def _write_and_verify(dev: Any, config: GlobalConfig) -> None:
     """Write ``config``, read it back and compare the bytes; exit 1 on a mismatch."""
-    _console.print("Writing. Some panels (Spectra) redraw for about 30 s before the device answers again...")
+    _console.print("Writing...")
     await dev.config.write(config)
     stored = await dev.config.read()
     expected, actual = serialize_config(config), serialize_config(stored)

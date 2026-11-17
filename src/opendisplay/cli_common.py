@@ -110,6 +110,11 @@ def _add_device_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--key", default=None, metavar="HEX", help="Encryption key as 32 hex characters")
     parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Fail at once if the display does not answer, instead of allowing about 60 s for it to finish redrawing",
+    )
+    parser.add_argument(
         "--timeout",
         type=float,
         default=10.0,

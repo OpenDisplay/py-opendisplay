@@ -44,11 +44,3 @@ def test_empty_and_none_keys_are_ignored(clock: list[float]) -> None:
 
     assert redraw.remaining(None) == 0.0
     assert redraw.remaining("") == 0.0
-
-
-def test_wait_timeout_is_never_shorter_than_the_normal_timeout(clock: list[float]) -> None:
-    assert redraw.wait_timeout(["x"], 5.0) == 5.0
-    redraw.mark_redrawing("x")
-    assert redraw.wait_timeout(["x"], 5.0) == 60.0
-    clock[0] += 58
-    assert redraw.wait_timeout(["x"], 5.0) == 5.0

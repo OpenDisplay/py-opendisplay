@@ -377,11 +377,13 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
                 redraw.link(name, self.mac_address)
                 _LOGGER.info("Resolved device name '%s' to MAC address %s", name, self.mac_address)
                 return
-            if not redraw.remaining(name):
-                raise BLEConnectionError(
-                    f"Device '{name}' not found during discovery. Available devices: {list(devices.keys())}. "
-                    f"{redraw.REDRAW_HINT}"
-                )
+            if redraw.remaining(name):
+                redraw.notify_waiting()
+                continue
+            raise BLEConnectionError(
+                f"Device '{name}' not found during discovery. Available devices: {list(devices.keys())}. "
+                f"{redraw.REDRAW_HINT}"
+            )
 
     async def _connect_link(self) -> None:
         """Open the transport; retry a failed BLE connect while the display is noted redrawing."""
@@ -392,6 +394,7 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             except BLEConnectionError as err:
                 if not redraw.remaining(*self._redraw_keys()):
                     raise type(err)(f"{err} {redraw.REDRAW_HINT}") from err
+                redraw.notify_waiting()
                 await redraw._sleep(_RECONNECT_WAIT_S)  # pylint: disable=protected-access
 
     def _redraw_keys(self) -> tuple[str, ...]:

@@ -502,10 +502,14 @@ class BLEConnection:
             BLETimeoutError: If no response received within timeout
         """
         try:
-            return await asyncio.wait_for(
-                self._notification_queue.get(),
-                timeout=redraw.wait_timeout(self.redraw_keys, timeout),
-            )
+            try:
+                return await asyncio.wait_for(self._notification_queue.get(), timeout=timeout)
+            except asyncio.TimeoutError:
+                pending = redraw.remaining(*self.redraw_keys)
+                if not pending:
+                    raise
+                redraw.notify_waiting()  # the display is noted redrawing: its reply comes after the pass
+                return await asyncio.wait_for(self._notification_queue.get(), timeout=pending)
         except asyncio.TimeoutError as e:
             # asyncio.wait_for can cancel queue.get() *after* an item was handed
             # to it, silently dropping that item. Re-check synchronously before
