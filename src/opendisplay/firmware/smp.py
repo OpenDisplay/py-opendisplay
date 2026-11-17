@@ -14,7 +14,6 @@ confirms by sending one (``READ_IDENT``); :func:`confirm` is there for an explic
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Final
@@ -128,12 +127,22 @@ async def upload(client: SMPClient, image: bytes, *, on_progress: Callable[[int,
         raise SmpTransferError(f"Upload stopped at {done} of {len(image)} bytes: {err}") from err
 
 
-async def test_and_reset(client: SMPClient, image: bytes) -> None:
-    """Mark the uploaded ``image`` for one test boot, then reset into it."""
+async def test_and_reset(client: SMPClient) -> None:
+    """Mark the uploaded image (slot 1) for one test boot, then reset into it.
+
+    The image is named by the hash the device reports for slot 1, not the file's SHA-256: ESP32
+    uses ``esp_partition_get_sha256`` of the slot, MCUboot its own image hash.
+
+    Raises:
+        SmpError: The device reports no uploaded image in slot 1, or refuses.
+    """
     from smpclient.requests.image_management import ImageStatesWrite  # pylint: disable=import-outside-toplevel
     from smpclient.requests.os_management import ResetWrite  # pylint: disable=import-outside-toplevel
 
-    await _request(client, ImageStatesWrite(hash=hashlib.sha256(image).digest(), confirm=False))
+    uploaded = next((s for s in await image_states(client) if s.slot == 1 and s.hash), None)
+    if uploaded is None:
+        raise SmpError("The device reports no uploaded image in slot 1; nothing to boot")
+    await _request(client, ImageStatesWrite(hash=bytes(uploaded.hash), confirm=False))
     await _request(client, ResetWrite())
 
 

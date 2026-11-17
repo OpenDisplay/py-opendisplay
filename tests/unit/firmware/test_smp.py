@@ -64,15 +64,39 @@ async def test_an_interrupted_upload_raises_a_typed_error() -> None:
         await smp.upload(client, IMAGE)  # type: ignore[arg-type]
 
 
-async def test_test_and_reset_marks_this_image_for_one_trial_boot_then_resets() -> None:
+def _slots(*hashes: bytes) -> Any:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        images=[SimpleNamespace(slot=n, hash=h, active=n == 0, confirmed=n == 0) for n, h in enumerate(hashes)]
+    )
+
+
+async def test_test_and_reset_marks_the_uploaded_slot_by_the_hash_the_device_reports() -> None:
+    # The device names an image by its own hash (ESP32: esp_partition_get_sha256 of the slot;
+    # MCUboot: the image hash), not the file's SHA-256 (od_smp.cpp handle_state_write).
     client = _FakeClient()
+    device_hash = b"\xab" * 32
+    client.replies[ImageStatesRead] = _slots(b"\x01" * 32, device_hash)
 
-    await smp.test_and_reset(client, IMAGE)  # type: ignore[arg-type]
+    await smp.test_and_reset(client)  # type: ignore[arg-type]
 
-    write, reset = client.requests
+    read, write, reset = client.requests
+    assert isinstance(read, ImageStatesRead)
     assert isinstance(write, ImageStatesWrite)
-    assert write.hash == hashlib.sha256(IMAGE).digest() and write.confirm is False  # a test boot, not permanent
+    assert write.hash == device_hash and write.hash != hashlib.sha256(IMAGE).digest()
+    assert write.confirm is False  # a test boot, not permanent
     assert isinstance(reset, ResetWrite)
+
+
+async def test_test_and_reset_without_an_uploaded_slot_refuses() -> None:
+    client = _FakeClient()
+    client.replies[ImageStatesRead] = _slots(b"\x01" * 32)
+
+    with pytest.raises(smp.SmpError, match="slot 1"):
+        await smp.test_and_reset(client)  # type: ignore[arg-type]
+
+    assert not any(isinstance(r, ResetWrite) for r in client.requests)
 
 
 async def test_confirm_makes_the_running_image_permanent() -> None:
