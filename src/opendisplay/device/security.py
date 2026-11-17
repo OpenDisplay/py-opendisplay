@@ -85,6 +85,13 @@ class SecurityView:
     def _name(self) -> str:
         return self._legacy.device_name or self._legacy.mac_address
 
+    async def _authenticate(self, key: bytes, uid: bytes) -> Sec2Session:
+        """HELLO/FINISH, retried after a display pass that answers BUSY."""
+        keys = self._legacy._redraw_keys()  # pylint: disable=protected-access
+        return await redraw.retry_busy(
+            lambda: authenticate(self._transport(), key, uid, frag_max=self._frag_max()), *keys
+        )
+
     def _note_redraw(self) -> None:
         redraw.mark_redrawing(*self._legacy._redraw_keys())  # pylint: disable=protected-access
 
@@ -145,7 +152,7 @@ class SecurityView:
         keys = self._keys_to_try()
         for key in keys:
             try:
-                session = await authenticate(self._transport(), key, uid, frag_max=self._frag_max())
+                session = await self._authenticate(key, uid)
             except Sec2AuthFailedError:
                 continue
             self._install(session, key, uid)
@@ -160,7 +167,7 @@ class SecurityView:
         self._key, self._uid = key, uid
 
         async def renew() -> None:
-            channel.session = await authenticate(self._transport(), key, uid, frag_max=self._frag_max())
+            channel.session = await self._authenticate(key, uid)
 
         channel.renew = renew
 
@@ -191,6 +198,7 @@ class SecurityView:
             frag_max=self._frag_max(),
             on_session=on_session,
             on_end=self._note_redraw,
+            redraw_keys=self._legacy._redraw_keys(),  # pylint: disable=protected-access
         )
         return flow
 
@@ -201,7 +209,7 @@ class SecurityView:
         uid = self._uid
 
         async def reauthenticate(key: bytes) -> Sec2Session:
-            session = await authenticate(self._transport(), key, uid, frag_max=self._frag_max())
+            session = await self._authenticate(key, uid)
             self._install(session, key, uid)
             return session
 

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Final
 
 from cryptography.exceptions import InvalidTag
 
+from .. import redraw
 from ..exceptions import OpenDisplayTimeoutError
 from . import kdf, wire
 from .errors import (
@@ -74,11 +75,13 @@ class ClaimFlow:  # pylint: disable=too-many-instance-attributes
         frag_max: int = wire.FRAG_MAX_MIN,
         on_session: Callable[[Sec2Session], None] | None = None,
         on_end: Callable[[], None] | None = None,
+        redraw_keys: tuple[str, ...] = (),
         _key_pair: tuple[PrivateKey, bytes] | None = None,
         _nc: bytes | None = None,
     ) -> None:
         self._on_session = on_session
         self._on_end = on_end  # claim mode ends: the device reboots into normal mode and redraws
+        self._redraw_keys = redraw_keys  # BEGIN during a display pass is retried (BUSY)
         if len(uid) != kdf.UID_LEN:
             raise ValueError("uid must be 8 bytes")
         self._transport, self._store, self._name, self._uid = transport, store, name, uid
@@ -110,7 +113,8 @@ class ClaimFlow:  # pylint: disable=too-many-instance-attributes
         """
         self._transport.drain_notifications()
         self._private, self._qc = self._key_pair if self._key_pair is not None else generate_key_pair()
-        reply = await self._exchange(wire.ClaimSub.BEGIN, bytes([wire.VERSION, self._frag_max]) + self._qc)
+        begin = bytes([wire.VERSION, self._frag_max]) + self._qc
+        reply = await redraw.retry_busy(lambda: self._exchange(wire.ClaimSub.BEGIN, begin), *self._redraw_keys)
         self._dflags, self._qd, self._cd = reply[0], reply[1:65], reply[65:81]
         if not is_valid_point(self._qd):
             await self.abort()

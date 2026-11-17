@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Sequence
-from typing import Final
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Final, TypeVar
+
+_T = TypeVar("_T")
 
 REDRAW_ALLOWANCE_S: Final = 60.0  # firmware: a refresh takes up to 60 s
 BUSY_RETRY_S: Final = 10.0  # ≤ 6 BUSY a minute against the device limiter's 10 (SECURITY_V2 § 8.7)
@@ -59,6 +61,29 @@ def remaining(*keys: str | None) -> float:
 def wait_timeout(keys: Sequence[str | None], timeout: float) -> float:
     """How long to wait for a reply: ``timeout``, stretched to a pending deadline."""
     return max(timeout, remaining(*keys))
+
+
+async def retry_busy(op: Callable[[], Awaitable[_T]], *keys: str | None) -> _T:
+    """Run a SEC2 handshake start; on BUSY, retry it every ``BUSY_RETRY_S`` until the redraw ends.
+
+    BUSY means a display pass holds the device, and each one counts in the device's handshake rate
+    limiter (SECURITY_V2 § 8.7), so retries are spaced, not immediate. Without a pending note the
+    allowance starts at the first BUSY. Every other error, ``RateLimitedError`` included, is raised
+    at once.
+    """
+    from .sec2.errors import Sec2BusyError  # pylint: disable=import-outside-toplevel  # no cycle at import
+
+    deadline: float | None = None
+    while True:
+        try:
+            return await op()
+        except Sec2BusyError:
+            if deadline is None:  # a pending note, or one allowance from this first BUSY
+                deadline = _clock() + (remaining(*keys) or REDRAW_ALLOWANCE_S)
+                mark_redrawing(*keys, allowance=deadline - _clock())
+            await _sleep(BUSY_RETRY_S)
+            if _clock() >= deadline:
+                raise
 
 
 def _reset() -> None:

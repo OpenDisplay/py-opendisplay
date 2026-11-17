@@ -48,6 +48,10 @@ class RefDevice:  # pylint: disable=too-many-instance-attributes
         self._rotation: bytes | None = None
         self.shown_code: str | None = None
         self._connected = False
+        #: Refuse this many HELLO / BEGIN with ``refusal`` first (a display pass holds the device).
+        self.busy_replies = 0
+        self.refusal = wire.SecErr.BUSY
+        self.handshake_starts = 0
 
     # ── Transport ────────────────────────────────────────────────────────────
 
@@ -161,6 +165,12 @@ class RefDevice:  # pylint: disable=too-many-instance-attributes
             return
         body, self._parts = b"".join(self._parts), []
         cmd_lo, sub = data[1], data[2]
+        if sub == 1:  # HELLO / BEGIN
+            self.handshake_starts += 1
+            if self.busy_replies:
+                self.busy_replies -= 1
+                self._error(cmd_lo, sub, self.refusal)
+                return
         if cmd_lo == wire.CMD_SEC_AUTH & 0xFF:
             self._auth(sub, body)
         else:
