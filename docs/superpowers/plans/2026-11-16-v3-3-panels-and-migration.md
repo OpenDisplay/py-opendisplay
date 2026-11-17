@@ -247,23 +247,130 @@ Expected: a plan that adds the drive packets for panel 35 and reports whether th
 
 ## Part 3b: using the drive data
 
-Start 3b only after 3a is merged and proven on hardware. Before writing code, read `docs/CONFIG_DRIVEN_DISPLAY.md` sections "Mode conventions", "Image markers and plane order" and "code_map", and the `CMD_DRIVE_WRITE_START` block in `opendisplay_protocol.h`, and write a one-page design note for the user: the code below is an outline, and two points need facts that only that reading and hardware can give.
+**Design:** `../specs/2026-11-16-v3-3b-drive-modes-design.md` (approved 2026-11-16). Read it first;
+it holds the facts, the wire format, the timeouts and the five decisions. Decision 4 of this plan
+(0x0085 targets) is settled by it: availability follows the config's modes, and the Silabs target
+documents `0x0085`. Ledger: `.superpowers/sdd/2026-11-16-v3-3-panels-and-migration/progress.md`.
 
-### Task 4: Apply `code_map` on the host
+### Task 4: `code_map` on the host
 
-On a 3.0 device with 4-colour scheme (BWRY, scheme 3) the palette-index-to-panel-code table comes from the config's `0xB1` `code_map`, not from the library's built-in table (`get_bwry_codes` in `display_palettes.py`). Port `wireMapFromCodeMap` (reject a map that is not a permutation of 0..3). `prepare_image` takes the map through `DeviceCapabilities` (add an optional field) so the encoding stays pure. Never apply it to calibration (`0xB0`) codes.
+**Branch:** `feat/bwry-code-map`
 
-Tests: a profile with `code_map == (0, 1, 3, 2)` encodes a red pixel and a yellow pixel to swapped codes compared with the identity map; an invalid map raises; a 2.x device is untouched (`tests/unit/test_wire_bytes_golden.py` must stay green).
+**Files:** `models/capabilities.py`, `device/imaging.py` (`prepare_image`), `device/facade.py`
+(`_extract_capabilities_from_config` path in `imaging._capabilities_from_config`), tests in
+`tests/unit/test_bwry_code_map.py`.
 
-**Open point to settle by reading and on glass:** whether the built-in table and `code_map` agree for the panels the library already special-cases (0x001D). PR #198 recorded `code_map (0, 1, 3, 2)` on panel 0x001C, where the built-in table uses the identity.
+**Interfaces:**
 
-### Task 5: Named drive modes through `0x0085`
+```python
+@dataclass
+class DeviceCapabilities:
+    ...
+    bwry_codes: tuple[int, int, int, int] | None = None   # from display 0's 0xB1 code_map; None = built-in table
+```
 
-`Device.display.show(image, mode="colour16")`: look the mode up by name in the config, encode one frame per pass, send `[0x00][0x85][mode][refresh][flags][rsv:2]` (+ `uncompressed_size:4` when compressed), stream all passes back to back over `0x71`, finish with `0x72`. Read the ACK `[mode][passes][temp_c]`: the device may substitute another mode, so use the mode and pass count from the ACK. New errors from the `OD_ERR_DRIVE_*` namespace (section 4e), including `0x08` panel busy and `0x07` sequence unsupported.
+- `_capabilities_from_config` sets `bwry_codes` from the first 0xB1 whose `instance_number` is
+  display 0's, on any firmware version; `None` without one.
+- BWRY encoding uses `capabilities.bwry_codes` when set, else `get_bwry_codes(panel_ic_type)`.
+- A map that is not a permutation of 0..3 raises `ImageEncodingError` (port of od-v3.js
+  `wireMapFromCodeMap`). Never applied to 0xB0 codes.
 
-**What is not specified here and must be designed first:** how an image becomes N pass frames for a multi-pass mode (which 2-bit code each pass carries comes from the mode's calibration packet, `0xB0`, via `CalibrationEntry.code_for_pass`), and the per-chunk timeout for a mode whose pass boundary is a refresh of up to 35 seconds. The unmerged branch `origin/feat/od-epd-driver` has an `encoding/multipass.py` worth reading for intent; do not copy it unreviewed.
+**Tests (each must fail without the change):** `(0, 1, 3, 2)` exchanges the red and yellow codes
+of a 2x1 red/yellow image against the identity; an invalid map (`(0, 1, 1, 3)`) raises; a config
+without 0xB1 gives `bwry_codes is None` and the built-in table (0x001D still swapped);
+`tests/unit/test_wire_bytes_golden.py` stays green.
 
-Modes `fast` and `partial` need no new command: they are reached through the existing refresh byte and the existing partial path, and mode 0 through every existing upload.
+**Hardware (after merge of 5b, with the user):** the red/yellow image on `OD58D951` in the
+default mode still draws correctly (decision 4).
+
+### Task 5a: encoding a multi-pass frame
+
+**Branch:** `feat/multipass-encoding`
+
+**Files:** `src/opendisplay/encoding/multipass.py` (no I/O), `tests/unit/test_multipass.py`.
+
+**Interfaces:**
+
+```python
+def mode_palette(calibration: DisplayCalibration) -> Palette
+    # epaper-dithering Palette from the 0xB0 entries' CIELAB, in entry order; white = highest L*
+def encode_multipass(indices: np.ndarray, calibration: DisplayCalibration, passes: int) -> bytes
+    # per pass p: index -> entries[index].code_for_pass(p), 2 bpp, first pixel in the high bits,
+    # rows padded to a byte; the pass frames concatenated
+def prepare_multipass(image, mode: DisplayMode, calibration: DisplayCalibration | None, *, width, height,
+                      rotation, fit, dither_mode, ...) -> bytes
+    # rotate -> fit -> dither against mode_palette -> encode_multipass
+```
+
+- A mode with `passes > 1` and no 0xB0 for its `mode_index` raises `ImageEncodingError`.
+- A single-pass named mode is encoded as its scheme's normal frame (the existing path).
+
+**Tests:** exact bytes for a 5x2 index image (row padding exercised) with a hand-made 3-pass,
+4-entry calibration; a pass whose codes are all 0 gives an all-zero frame; the frame count and
+length equal `passes x rows x ceil(width / 4)`; a missing calibration raises; `mode_palette` keeps
+the entry order and picks white by L*.
+
+### Task 5b: the `0x0085` transfer, `Device.display`, the CLI
+
+**Branch:** `feat/drive-write`
+
+**Files:** `protocol/commands.py` (builder), `protocol/responses.py` (START answer and refusal
+parser), `exceptions.py`, `device/drive_write.py` (the transfer; `upload.py` only if it fits the
+pylint limits), `device/api.py` (`DisplayView`), `cli.py` (`--mode`), `cli_info.py` (mode list),
+tests in `tests/unit/test_drive_write.py`, `test_device_api.py`, `test_cli_info_report.py`.
+
+**Interfaces:**
+
+```python
+CommandCode.DRIVE_WRITE_START = 0x0085
+def build_drive_write_start(mode: int, refresh: int, *, uncompressed_size: int | None = None,
+                            first_chunk: bytes = b"") -> bytes
+    # [00][85][mode][refresh][flags=0][00 00] (+ uncompressed_size:4 LE + first compressed bytes)
+def parse_drive_write_start(data: bytes) -> tuple[int, int, int]   # (mode, passes, temp_c) or raises
+
+class DriveModeSubstitutedError(ProtocolError): requested, actual, temp_c
+class DriveModeTemperatureError(ProtocolError): mode, temp_c  (0x06)
+class DriveSequenceUnsupportedError(ProtocolError)            (0x07)
+# 0x08 -> PanelBusyError, 0x02 -> NeedsMigrationError, other codes -> InvalidResponseError naming the code
+
+class DisplayView:
+    def drive_mode(self, name: str) -> DisplayMode          # display 0's, case-insensitive; no I/O
+    def nominal_colours(self, mode: DisplayMode) -> bool
+    async def show(self, image, *, mode=None, refresh_mode=RefreshMode.FULL, dither_mode, serpentine,
+                   exposure, saturation, fit, rotate, compress=True, use_measured_palettes=True,
+                   progress_callback=None) -> int | None     # the reported temperature; None without mode
+Device.display: DisplayView
+```
+
+- `show()` without `mode=` delegates to today's `legacy.upload_image` unchanged.
+- `"fast"` and `"partial"` are rejected before any I/O with a message naming the right
+  argument; an unknown name raises `ValueError` listing the device's modes (case-insensitive).
+- Timeouts: data chunks 90 s; START with inline data `10 s + max(90 s, (passes - 1) x 45 s)`;
+  END `max(90 s, passes x 45 s)`. `PIPELINED` is never set. Data goes over `0x71`.
+- A START answer naming another mode sends nothing further and raises
+  `DriveModeSubstitutedError`.
+- CLI: `opendisplay upload --mode NAME`, printing one line that the colours are nominal when the
+  mode's calibration is not measured. `opendisplay info`: a drive-mode section (decision 5).
+
+- Encoding and compression run in `asyncio.to_thread`; `drive_write` does no CPU work (review I1).
+- A START answer whose pass count differs from the config's raises `InvalidResponseError`: the
+  frames are already encoded for the config's count (review; replaces "use the answer's count").
+
+**Tests (scripted connection):** exact START bytes compressed and uncompressed; a pass count other
+than the config's raises; substitution sends nothing after START and raises; each refusal code maps
+to its error; reserved and unknown names fail before any frame is written; `show()` without
+`mode=` writes exactly what `upload_image` writes; the info section and its JSON, and its absence
+without 0xAE. Regenerate the public API snapshot (additions only) and list the additions in the PR.
+
+**Hardware (with the user, each upload approved):**
+1. E1002 `OD4064C9`: a single-pass upload through `0x0085` (mode 0 and `fast`).
+2. `OD58D951`: a 16-swatch `colour16` image, and the red/yellow image in the default mode
+   (decision 4).
+3. Measure the START answer time and each pass boundary on `OD58D951` and record them: the
+   timeout rule is the website's, not yet ours on glass. Captures go to `scratch/`, the result to
+   the spec's "Status and findings".
+
+After 3b is seen on glass: the end-of-piece review, as for 3a.
 
 ## Not in this piece
 
