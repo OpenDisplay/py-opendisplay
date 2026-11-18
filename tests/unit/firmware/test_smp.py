@@ -39,6 +39,7 @@ class _Server:
         self.off = 0
         self.silent_on: Callable[[int, int, dict[str, Any]], bool] = lambda group, command, body: False
         self.refuse_upload_with: int | None = None
+        self.refuse_state_write_with: int | None = None
         self.split: int | None = None
         self.stale_first = False
         self.stuck = False
@@ -52,6 +53,8 @@ class _Server:
         reply: dict[str, Any]
         if (group, command) == (0, 6):
             reply = {"rc": 8} if self.buf_size is None else {"buf_size": self.buf_size, "buf_count": 1}
+        elif (group, command) == (1, 0) and op == 2 and self.refuse_state_write_with is not None:
+            reply = {"rc": self.refuse_state_write_with}
         elif (group, command) == (1, 0):
             reply = {"images": self.images}
         elif (group, command) == (0, 5):
@@ -364,18 +367,40 @@ async def test_test_and_reset_without_an_uploaded_slot_refuses(server: _Server, 
     assert not any(h[7] == 5 and h[4:6] == b"\x00\x00" for h, _ in server.requests)
 
 
-async def test_an_upload_of_the_running_image_is_reported_and_not_reset(server: _Server, links: _Links) -> None:
+async def test_the_running_image_refused_for_a_test_boot_is_reported_and_not_reset(
+    server: _Server, links: _Links
+) -> None:
     # MCUboot hashes the image alone, so a re-sent running image has the running hash, and Zephyr
     # refuses to mark the running image for a test boot (rc 1; seen on the EN05 2026-11-18).
     server.images = [{"slot": 0, "hash": b"\x01" * 32, "active": True}, {"slot": 1, "hash": b"\x01" * 32}]
+    server.refuse_state_write_with = 1
 
     async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
         with pytest.raises(smp.SmpAlreadyRunningError, match="already runs this image"):
             await smp.test_and_reset(client)
 
-    assert not any(
-        h[0] & 7 == 2 and h[4:6] in (b"\x00\x00", b"\x00\x01") and h[7] in (0, 5) for h, _ in server.requests
-    )
+    assert not any(h[7] == 5 and h[4:6] == b"\x00\x00" for h, _ in server.requests)  # no reset
+
+
+async def test_the_running_image_accepted_for_a_test_boot_is_reset_into(server: _Server, links: _Links) -> None:
+    # ESP32 takes the same image again (a reinstall): 3.0.2 -> 3.0.2 on the E1002 ended UPDATED.
+    server.images = [{"slot": 0, "hash": b"\x01" * 32, "active": True}, {"slot": 1, "hash": b"\x01" * 32}]
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        assert await smp.test_and_reset(client) == b"\x01" * 32
+
+    assert any(h[7] == 5 and h[4:6] == b"\x00\x00" for h, _ in server.requests)
+
+
+async def test_another_refusal_of_the_mark_stays_a_refusal(server: _Server, links: _Links) -> None:
+    server.images.append({"slot": 1, "hash": b"\xab" * 32})
+    server.refuse_state_write_with = 1
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        with pytest.raises(smp.SmpRefusedError) as info:
+            await smp.test_and_reset(client)
+
+    assert not isinstance(info.value, smp.SmpAlreadyRunningError)
 
 
 async def test_image_states_reads_every_field(server: _Server, links: _Links) -> None:

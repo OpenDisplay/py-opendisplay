@@ -329,17 +329,21 @@ async def test_and_reset(client: SmpClient) -> bytes:
     never comes is not an error: the device may restart before it sends one.
 
     Raises:
-        SmpAlreadyRunningError: Slot 1 holds the running image (MCUboot hashes the image alone,
-            so sending the running image again gives the running hash; Zephyr refuses the mark).
+        SmpAlreadyRunningError: Slot 1 holds the running image and the device refuses to mark it
+            (MCUboot hashes the image alone, so the running image sent again has the running hash,
+            and Zephyr refuses; an ESP32 takes it as a reinstall).
         SmpError: The device reports no uploaded image in slot 1, or refuses.
     """
     states = await image_states(client)
     uploaded = next((s for s in states if s.slot == 1 and s.hash), None)
     if uploaded is None or uploaded.hash is None:
         raise SmpError("The device reports no uploaded image in slot 1; nothing to boot")
-    if any(s.active and s.hash == uploaded.hash for s in states):
-        raise SmpAlreadyRunningError("The display already runs this image; there is nothing to boot into")
-    await client.request(_OP_WRITE, _GROUP_IMAGE, _IMG_STATE, {"hash": uploaded.hash, "confirm": False})
+    try:
+        await client.request(_OP_WRITE, _GROUP_IMAGE, _IMG_STATE, {"hash": uploaded.hash, "confirm": False})
+    except SmpRefusedError as err:
+        if any(s.active and s.hash == uploaded.hash for s in states):  # ESP32 takes it: a reinstall
+            raise SmpAlreadyRunningError("The display already runs this image; there is nothing to boot into") from err
+        raise
     try:
         await client.request(_OP_WRITE, _GROUP_OS, _OS_RESET, {}, timeout=_RESET_TIMEOUT_S)
     except SmpStallError as err:
