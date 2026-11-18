@@ -364,6 +364,20 @@ async def test_test_and_reset_without_an_uploaded_slot_refuses(server: _Server, 
     assert not any(h[7] == 5 and h[4:6] == b"\x00\x00" for h, _ in server.requests)
 
 
+async def test_an_upload_of_the_running_image_is_reported_and_not_reset(server: _Server, links: _Links) -> None:
+    # MCUboot hashes the image alone, so a re-sent running image has the running hash, and Zephyr
+    # refuses to mark the running image for a test boot (rc 1; seen on the EN05 2026-11-18).
+    server.images = [{"slot": 0, "hash": b"\x01" * 32, "active": True}, {"slot": 1, "hash": b"\x01" * 32}]
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        with pytest.raises(smp.SmpAlreadyRunningError, match="already runs this image"):
+            await smp.test_and_reset(client)
+
+    assert not any(
+        h[0] & 7 == 2 and h[4:6] in (b"\x00\x00", b"\x00\x01") and h[7] in (0, 5) for h, _ in server.requests
+    )
+
+
 async def test_image_states_reads_every_field(server: _Server, links: _Links) -> None:
     server.images = [
         {"slot": 0, "version": "3.0.2", "hash": b"\x01" * 32, "active": True, "confirmed": True, "bootable": True},

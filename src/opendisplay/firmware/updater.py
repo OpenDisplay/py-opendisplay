@@ -194,6 +194,15 @@ async def _reconnect_quietly(device: Device) -> None:
         _LOGGER.warning("Could not reconnect to %s after a failed update: %s", device.legacy.mac_address, err)
 
 
+def _slot_version(slot: Any, device: Device) -> str:
+    """The slot's version, or READ_IDENT's where the image header says 0.0.0.
+
+    The 3.0.2 nRF release was signed 0.0.0+0 (Firmware_Unified build.sh stamps the version since).
+    """
+    version = str(slot.version)
+    return _version(device.profile.firmware) if version in ("", "0.0.0") else version
+
+
 def _running(states: list[Any]) -> Any:
     return next((s for s in states if s.active), states[0])
 
@@ -230,7 +239,7 @@ async def _update_smp(
         before, new_hash, failed = await _attempt(find, address, image, on_progress, burst_writes=None)
     except (smp.SmpError, OpenDisplayError) as err:  # no link, or no SMP service on it
         failed = err if isinstance(err, smp.SmpError) else smp.SmpError(str(err))
-    old = str(before.version) if before is not None else _version(device.profile.firmware)
+    old = _slot_version(before, device) if before is not None else _version(device.profile.firmware)
     if isinstance(failed, smp.SmpStallError):
         # An ESP32 aborts the upload when its link drops, so this starts over, on a new link, in
         # bursts short enough for an ESPHome proxy's queue (reliable up to 16 there, failing at 20+).
@@ -266,7 +275,7 @@ async def _update_smp(
         running = _running(await smp.image_states(client))
     await _connect(device)
 
-    after = str(running.version)
+    after = _slot_version(running, device)
     if bytes(running.hash) == new_hash:
         return UpdateResult(UpdateOutcome.UPDATED, old, after, f"The display runs {after}.")
     return UpdateResult(

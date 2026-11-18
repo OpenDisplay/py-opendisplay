@@ -89,6 +89,10 @@ class SmpStallError(SmpTransferError):
     """
 
 
+class SmpAlreadyRunningError(SmpError):
+    """The uploaded image is the one running: MCUboot cannot mark it for a test boot."""
+
+
 @dataclass(frozen=True)
 class ImageState:
     """One image slot as the device reports it."""
@@ -325,11 +329,16 @@ async def test_and_reset(client: SmpClient) -> bytes:
     never comes is not an error: the device may restart before it sends one.
 
     Raises:
+        SmpAlreadyRunningError: Slot 1 holds the running image (MCUboot hashes the image alone,
+            so sending the running image again gives the running hash; Zephyr refuses the mark).
         SmpError: The device reports no uploaded image in slot 1, or refuses.
     """
-    uploaded = next((s for s in await image_states(client) if s.slot == 1 and s.hash), None)
+    states = await image_states(client)
+    uploaded = next((s for s in states if s.slot == 1 and s.hash), None)
     if uploaded is None or uploaded.hash is None:
         raise SmpError("The device reports no uploaded image in slot 1; nothing to boot")
+    if any(s.active and s.hash == uploaded.hash for s in states):
+        raise SmpAlreadyRunningError("The display already runs this image; there is nothing to boot into")
     await client.request(_OP_WRITE, _GROUP_IMAGE, _IMG_STATE, {"hash": uploaded.hash, "confirm": False})
     try:
         await client.request(_OP_WRITE, _GROUP_OS, _OS_RESET, {}, timeout=_RESET_TIMEOUT_S)

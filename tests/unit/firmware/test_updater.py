@@ -217,6 +217,33 @@ async def test_a_failure_marking_the_image_is_not_updated_and_the_device_is_reco
     assert device.calls[-1] == "connect" and device.connected
 
 
+async def test_an_nrf_image_stamped_0_0_0_reports_the_version_read_ident_gives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The 3.0.2 nRF release was signed 0.0.0+0 (fixed upstream in build.sh since); READ_IDENT is right.
+    device = _Device(target=FirmwareTarget.NRF52840, version="3.0.2", versions_after=["3.0.3"])
+    before = [_slot(0, "0.0.0", OLD, active=True, confirmed=True)]
+    after = [_slot(0, "0.0.0", NEW, active=True, confirmed=True)]
+    _Smp(monkeypatch, device, [before, after])
+
+    result = await update(device, MCUBOOT_IMAGE, find_device=_find_app)  # type: ignore[arg-type]
+
+    assert result.outcome is UpdateOutcome.UPDATED
+    assert (result.version_before, result.version_after) == ("3.0.2", "3.0.3")
+
+
+async def test_the_running_image_sent_again_is_not_updated_and_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    device = _Device(target=FirmwareTarget.NRF52840, version="3.0.2")
+    fake = _Smp(monkeypatch, device, [[_slot(0, "3.0.2", OLD, active=True, confirmed=True)]])
+    fake.reset_errors = [smp.SmpAlreadyRunningError("The display already runs this image")]
+
+    result = await update(device, MCUBOOT_IMAGE, find_device=_find_app)  # type: ignore[arg-type]
+
+    assert result.outcome is UpdateOutcome.NOT_UPDATED
+    assert result.detail.startswith("The display already runs this image")
+    assert device.calls.count("upload") == 1 and device.connected
+
+
 async def test_a_display_without_an_smp_link_is_not_updated_and_the_device_is_reconnected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
