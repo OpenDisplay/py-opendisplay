@@ -35,6 +35,7 @@ from .cli_drive import cmd_upload_mode
 from .cli_info import _build_info_tree, _info_to_json, _InfoContext
 from .cli_migrate import add_backup_config_parser, add_migrate_parser
 from .cli_sec2 import add_sec2_parsers
+from .cli_setup import add_setup_parsers
 from .device import OpenDisplayDevice
 from .discovery import discover_devices_with_adv
 from .exceptions import (
@@ -823,6 +824,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add_backup_config_parser(subparsers)
     add_migrate_parser(subparsers)
     add_sec2_parsers(subparsers)
+    add_setup_parsers(subparsers)
     return parser
 
 

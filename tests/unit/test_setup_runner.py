@@ -87,7 +87,7 @@ class _Flow:
         return SimpleNamespace(has_panel=self.world.config is not None)
 
     async def confirm(self, typed: str) -> None:
-        if typed != self.world.code:
+        if "".join(typed.split()) != self.world.code:  # as kdf.normalize_typed_code ignores spaces
             await self.abort()  # as ClaimFlow.confirm does
             raise Sec2CodeMismatchError()
         self.world.calls.append("claim_confirm")
