@@ -523,7 +523,8 @@ async with opendisplay.connect(name="OD4064C9") as dev:
 - **Refused before anything is sent** (`UpdateRefusedError`): firmware 2.x, claim mode (claim the
   display or call `dev.security.use_without_key()` first), and an image for another target or chip.
 - **Security**: an unclaimed display takes an update as it is. A claimed one is unlocked with a
-  sealed ENTER_DFU on its session first; `dev.firmware.enable_ota()` does only that step.
+  sealed ENTER_DFU on its session first, and again after the reboot, to read the image slots
+  (the reboot locks SMP again); `dev.firmware.enable_ota()` does only that step.
 - **Confirmation**: after the reboot, `update()` reconnects and sends one command, which makes the
   new image permanent on ESP32 and nRF. Until then, a reset returns the device to its old image.
 - **Time**: an ESP32-S3 image (1.2 MB) takes about 47 s from a Mac, and the reboot and redraw

@@ -94,10 +94,14 @@ class _Smp:
         self.calls = device.calls
         self.states = states
         self.upload_errors: list[Exception] = []
+        self.reset_errors: list[Exception] = []
+        self.session_errors: list[Exception] = []
 
         @asynccontextmanager
         async def session(ble_device: Any, *, burst_writes: int | None = None) -> AsyncIterator[str]:
             self.calls.append(f"smp_session:{ble_device.name}" + (f":burst{burst_writes}" if burst_writes else ""))
+            if self.session_errors:
+                raise self.session_errors.pop(0)
             yield "client"
 
         async def image_states(client: Any) -> list[Any]:
@@ -112,6 +116,8 @@ class _Smp:
 
         async def test_and_reset(client: Any) -> bytes:
             self.calls.append("test_and_reset")
+            if self.reset_errors:
+                raise self.reset_errors.pop(0)
             return NEW
 
         monkeypatch.setattr(smp, "session", session)
@@ -179,6 +185,52 @@ async def test_a_claimed_device_is_unlocked_with_a_sealed_enter_dfu_first(monkey
     await update(device, ESP32_S3_IMAGE, find_device=_find_app)  # type: ignore[arg-type]
 
     assert device.calls[:2] == ["enter_dfu", "disconnect"]  # sent on the open (sealed) session
+
+
+async def test_a_claimed_device_is_unlocked_again_after_the_reboot_to_read_its_slots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The reboot ends the unlock: a claimed ESP32 then answers SMP with rc 11 (denied), a claimed
+    # nRF hides the SMP service (od_smp.cpp s_unlocked, od_smp_lock.h).
+    device = _Device(state=SecState.CLAIMED)
+    _Smp(monkeypatch, device, [_before(), [_slot(0, "3.0.2", NEW, active=True, confirmed=True)]])
+
+    result = await update(device, ESP32_S3_IMAGE, find_device=_find_app)  # type: ignore[arg-type]
+
+    assert result.outcome is UpdateOutcome.UPDATED
+    after_reboot = device.calls[device.calls.index("read_ident") :]
+    assert after_reboot[:3] == ["read_ident", "enter_dfu", "disconnect"]  # confirm, then unlock
+
+
+async def test_a_failure_marking_the_image_is_not_updated_and_the_device_is_reconnected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = _Device()
+    fake = _Smp(monkeypatch, device, [_before()])
+    fake.reset_errors = [smp.SmpRefusedError("group 1 command 0", 6)]
+
+    result = await update(device, ESP32_S3_IMAGE, find_device=_find_app)  # type: ignore[arg-type]
+
+    assert result.outcome is UpdateOutcome.NOT_UPDATED
+    assert "rc 6" in result.detail and "3.0.1" in result.detail
+    assert device.calls.count("upload") == 1  # a refusal is not a stall: no second upload
+    assert device.calls[-1] == "connect" and device.connected
+
+
+async def test_a_display_without_an_smp_link_is_not_updated_and_the_device_is_reconnected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = _Device()
+    fake = _Smp(monkeypatch, device, [])
+    fake.session_errors = [smp.SmpError("The display has no SMP service; updates over Bluetooth need firmware 3.x")]
+
+    result = await update(device, ESP32_S3_IMAGE, find_device=_find_app)  # type: ignore[arg-type]
+
+    assert result.outcome is UpdateOutcome.NOT_UPDATED
+    assert (result.version_before, result.version_after) == ("3.0.1", "3.0.1")
+    assert "no SMP service" in result.detail
+    assert "upload" not in device.calls
+    assert device.calls[-1] == "connect" and device.connected
 
 
 async def test_an_interrupted_transfer_is_not_updated_and_the_device_is_reconnected(
