@@ -21,6 +21,7 @@ class CommandCode(IntEnum):
     # Firmware commands
     READ_FW_VERSION = 0x0043  # Read firmware version
     READ_MSD = 0x0044  # Read the 16-byte manufacturer-specific data record
+    CONFIG_CLEAR = 0x0045  # Erase the stored config (claimed: keeps the 0x27 reset-pin fields)
     READ_IDENT = 0x0046  # Read device identity (plaintext; 3.0 adds a tail)
     REBOOT = 0x000F  # Reboot device
 
@@ -155,6 +156,15 @@ def build_read_msd_command() -> bytes:
         Command bytes: 0x0044 (2 bytes, big-endian)
     """
     return CommandCode.READ_MSD.to_bytes(2, byteorder="big")
+
+
+def build_config_clear_command() -> bytes:
+    """Build the CONFIG_CLEAR command (0x0045), which erases the stored config.
+
+    Returns:
+        Command bytes: 0x0045 (2 bytes, big-endian)
+    """
+    return CommandCode.CONFIG_CLEAR.to_bytes(2, byteorder="big")
 
 
 def build_reboot_command() -> bytes:
