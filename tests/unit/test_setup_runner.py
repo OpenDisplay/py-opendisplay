@@ -530,3 +530,22 @@ async def test_a_2x_nrf54_is_installed_over_smp(monkeypatch: pytest.MonkeyPatch)
 
     assert done == ["session:AA:BB:CC:DD:EE:FF", f"upload:{len(image)}", "test_and_reset"]
     assert "enter_dfu" not in world.calls  # 1.1.x serves SMP in its app
+
+
+async def test_the_manifest_may_be_fetched_only_when_a_2x_device_needs_it() -> None:
+    asked: list[str] = []
+
+    async def manifest() -> ReleaseManifest:
+        asked.append("manifest")
+        return MANIFEST
+
+    open_device = _World(config=_keyed())  # 3.0, open, configured: nothing to install
+    run = SetupRun.start(want_key=False, backup_sink=lambda b: None, manifest=manifest)
+    assert await run.run_until_input(_factory(open_device)) is None
+    assert asked == []
+
+    legacy = _World(major=2, config=_keyed())
+    run = SetupRun.start(want_key=False, backup_sink=lambda b: None, manifest=manifest)
+    assert isinstance(await run.run_until_input(_factory(legacy)), rq.NeedBoardChoice)
+    assert isinstance(await run.run_until_input(_factory(legacy)), rq.NeedBoardChoice)
+    assert asked == ["manifest"]  # once

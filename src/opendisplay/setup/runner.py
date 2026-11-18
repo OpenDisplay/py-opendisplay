@@ -80,6 +80,7 @@ _PATTERNS: Final[dict[int, tuple[tuple[str, tuple[int, int, int]], ...]]] = {
 }
 
 DeviceFactory = Callable[[], AbstractAsyncContextManager[Any]]
+ManifestSource = ReleaseManifest | Callable[[], Awaitable[ReleaseManifest]]
 FetchImage = Callable[[str], Awaitable[bytes]]
 FindDevice = Callable[[str], Awaitable[Any]]
 
@@ -108,14 +109,15 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
         want_key: bool | None,
         rotate_legacy_key: bool,
         backup_sink: Callable[[bytes], None],
-        manifest: ReleaseManifest | None,
+        manifest: ManifestSource | None,
         fetch_image: FetchImage | None,
         find_device: FindDevice | None,
     ) -> None:
         self.want_key = want_key
         self.rotate_legacy_key = rotate_legacy_key
         self._sink = backup_sink
-        self._manifest = manifest
+        self._manifest_source = manifest
+        self._manifest: ReleaseManifest | None = manifest if isinstance(manifest, ReleaseManifest) else None
         self._fetch = fetch_image
         self._find = find_device
         self._done: set[Step] = set()
@@ -145,7 +147,7 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
         *,
         want_key: bool | None,
         backup_sink: Callable[[bytes], None],
-        manifest: ReleaseManifest | None = None,
+        manifest: ManifestSource | None = None,
         fetch_image: FetchImage | None = None,
         find_device: FindDevice | None = None,
         rotate_legacy_key: bool = True,
@@ -157,7 +159,8 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
                 (``None``: an open device then pauses on ``NeedKeyChoice``).
             backup_sink: Receives the 2.x config backup, with its secrets, as JSON bytes. The
                 run never writes it anywhere else.
-            manifest: The release to install from a 2.x device (``ReleaseManifest.parse``).
+            manifest: The release to install from a 2.x device (``ReleaseManifest.parse``), or
+                an async callable returning it, called once and only for a 2.x device.
             fetch_image: Returns a release file's bytes by name, for an install over Bluetooth.
             find_device: Finds the display's ``BLEDevice`` by address (Home Assistant passes its
                 own); needed for an install over Bluetooth.
@@ -199,7 +202,7 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
         data: str,
         *,
         backup_sink: Callable[[bytes], None],
-        manifest: ReleaseManifest | None = None,
+        manifest: ManifestSource | None = None,
         fetch_image: FetchImage | None = None,
         find_device: FindDevice | None = None,
     ) -> SetupRun:
@@ -355,9 +358,16 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
             self._sink(json.dumps(config_to_json(config), indent=2).encode())
             self._backup = config_to_json(strip_secrets(config))
 
-    def _choose_board(self, dev: Any) -> BoardRelease | rq.NeedBoardChoice:
+    async def _release(self) -> ReleaseManifest:
         if self._manifest is None:
-            raise SetupError("Installing 3.0 needs the release manifest (SetupRun.start(manifest=...))")
+            if self._manifest_source is None or isinstance(self._manifest_source, ReleaseManifest):
+                raise SetupError("Installing 3.0 needs the release manifest (SetupRun.start(manifest=...))")
+            self._manifest = await self._manifest_source()
+        return self._manifest
+
+    async def _choose_board(self, dev: Any) -> BoardRelease | rq.NeedBoardChoice:
+        await self._release()
+        assert self._manifest is not None
         if self._board is not None:
             chosen = self._manifest.board(self._board)
             if chosen is None:
@@ -371,7 +381,7 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
         return rq.NeedBoardChoice(candidates=tuple(b.board for b in boards))
 
     async def _install(self, dev: Any, close: Callable[[], Awaitable[None]]) -> rq.Request | None:
-        board = self._choose_board(dev)
+        board = await self._choose_board(dev)
         if isinstance(board, rq.NeedBoardChoice):
             return board
         assert self._manifest is not None
