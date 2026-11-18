@@ -24,6 +24,7 @@ from opendisplay.models.enums import ColorScheme, ICType
 from opendisplay.models.ident import FirmwareTarget
 from opendisplay.sec2.errors import Sec2CodeMismatchError
 from opendisplay.sec2.wire import SecState, SecStatus
+from opendisplay.setup import Step
 from opendisplay.setup import requests as rq
 from opendisplay.setup import runner as runner_mod
 from opendisplay.setup.runner import SetupError, SetupRun
@@ -285,6 +286,45 @@ async def test_claim_mode_without_a_key_is_left_and_the_device_configured() -> N
 
     assert world.calls.count("use_without_key") == 1 and not world.claim_mode
     assert isinstance(req, rq.NeedConfig)  # no config, no backup: the caller supplies one
+
+
+async def test_a_config_the_run_wrote_is_checked_on_the_panel_also_without_a_key() -> None:
+    # The E1002 on 2026-11-18: once configured, the device no longer plans a panel check itself.
+    world = _World(claim_mode=True, fresh=True)
+    run = SetupRun.start(want_key=False, backup_sink=lambda b: None)
+
+    req = await run.run_until_input(_factory(world))
+    assert isinstance(req, rq.NeedConfig)
+    run.answer(req, _config(displays=[_display(panel_ic_type=0x0037)]))
+    req = await run.run_until_input(_factory(world))
+    assert isinstance(req, rq.NeedConfirmation) and req.reason == "untested_panel"
+    run.answer(req, True)
+
+    req = await run.run_until_input(_factory(world))
+    assert "config_write" in world.calls
+    assert isinstance(req, rq.NeedConfirmation) and req.reason == "panel_ok"
+    run.answer(req, False)  # not yet: the user stops, and goes on later
+    assert await run.run_until_input(_factory(world)) is None and run.stopped == "panel_ok"
+
+    run = _restart(run)  # the owed check survives a save
+    req = await run.run_until_input(_factory(world))
+    assert isinstance(req, rq.NeedConfirmation) and req.reason == "panel_ok"
+    run.answer(req, True)
+
+    assert await run.run_until_input(_factory(world)) is None
+    assert run.finished and world.calls.count("show:800x480") == 2
+
+
+async def test_each_step_is_announced_before_it_runs() -> None:
+    world = _World(claim_mode=True, fresh=True)
+    run = SetupRun.start(want_key=False, backup_sink=lambda b: None)
+    seen: list[tuple[Step, int]] = []
+    run.on_step = lambda step: seen.append((step, world.calls.count("use_without_key")))
+
+    await run.run_until_input(_factory(world))
+
+    assert seen[0] == (Step.USE_WITHOUT_KEY, 0)  # announced, then performed
+    assert [s for s, _ in seen] == [Step.USE_WITHOUT_KEY, Step.CONFIGURE_DISPLAY]
 
 
 async def test_a_claimed_device_with_a_2x_key_is_rotated() -> None:

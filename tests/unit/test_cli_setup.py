@@ -80,6 +80,7 @@ async def test_an_upgrade_pauses_for_the_wired_install_and_resumes_from_the_stat
 
     out = capsys.readouterr().err
     assert "opendisplay-s3-n32r8-extuart-merged.bin" in out and "opendisplay.org/firmware/install" in out
+    assert out.index("Backing up the config") < out.index("Installing firmware 3.0")
     assert "run the same command again" in out
     assert state.exists() and KEY.hex() not in state.read_text()
     assert KEY.hex() in backup.read_text()
@@ -90,7 +91,10 @@ async def test_an_upgrade_pauses_for_the_wired_install_and_resumes_from_the_stat
     await cli_setup._setup(_args(argv), open_device=_factory(world), releases=releases)
 
     assert "use_without_key" in world.calls and "config_write" in world.calls
-    assert "set up" in capsys.readouterr().err.lower()
+    out = capsys.readouterr().err
+    assert "set up" in out.lower()
+    for line in ("Leaving claim mode", "Configuring the display", "Checking the panel"):
+        assert out.count(line) == 1, line
     assert releases.asked == 1  # the second run went on from the saved state without a manifest
 
 

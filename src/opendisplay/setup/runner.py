@@ -130,6 +130,7 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
         self._live: tuple[AsyncExitStack, Any] | None = None  # the claim link and its device
         self._live_flow: Any = None
         self._stop_pending = False
+        self._verify_owed = False  # the run wrote a config; its panel check is still to come
         #: The request the run waits for, or ``None``.
         self.pending: rq.Request | None = None
         #: The confirmation the user declined, which stopped the run; cleared when it runs again.
@@ -138,6 +139,8 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
         self.finished = False
         #: The planner's text keys for the device as last seen.
         self.notes: tuple[str, ...] = ()
+        #: Called with each step just before it runs (a step that pauses runs again on resume).
+        self.on_step: Callable[[Step], None] | None = None
 
     # ── making, saving, answering ────────────────────────────────────────────
 
@@ -191,6 +194,7 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
                 "pending": rq.to_dict(self.pending) if self.pending is not None else None,
                 "stopped": self.stopped,
                 "stop_pending": self._stop_pending,
+                "verify_owed": self._verify_owed,
                 "finished": self.finished,
                 "notes": list(self.notes),
             }
@@ -231,6 +235,7 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
         run.pending = rq.from_dict(doc["pending"]) if doc["pending"] is not None else None
         run.stopped = doc["stopped"]
         run._stop_pending = doc["stop_pending"]
+        run._verify_owed = doc.get("verify_owed", False)
         run.finished = doc["finished"]
         run.notes = tuple(doc["notes"])
         return run
@@ -311,15 +316,21 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
             rotate_legacy_key=self.rotate_legacy_key,
         )
         self.notes = plan.notes
-        if not plan.steps:
+        steps = plan.steps
+        if self._verify_owed and Step.VERIFY_PANEL not in steps and Step.VERIFY_PANEL not in self._done:
+            # Once configured, the device no longer plans the check of the config this run wrote.
+            steps = (Step.VERIFY_PANEL, *(steps or (Step.DONE,)))
+        if not steps:
             if "claim_choice" in plan.notes:
                 return None, rq.NeedKeyChoice()
             self.finished = True
             return None, None
-        step = next((s for s in plan.steps if s not in self._done), Step.DONE)
+        step = next((s for s in steps if s not in self._done), Step.DONE)
         if step is Step.DONE:
             self.finished = True
             return None, None
+        if self.on_step is not None:
+            self.on_step(step)
         request = await self._perform(step, dev, close)
         if request is None and step in _REMEMBERED:
             self._done.add(step)
@@ -460,6 +471,7 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
             self._done.add(Step.CONFIGURE_DISPLAY)  # nothing to write; the device says otherwise
             return None
         await write_and_verify(dev, config)
+        self._verify_owed = True
         return None
 
     async def _verify(self, dev: Any) -> rq.Request:

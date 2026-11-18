@@ -21,6 +21,7 @@ from .device import connect
 from .exceptions import OpenDisplayError
 from .firmware.download import ReleaseDownloader
 from .models.config_json import config_from_json
+from .setup import Step
 from .setup import requests as rq
 from .setup.runner import SetupError, SetupRun
 
@@ -33,6 +34,17 @@ _GESTURE: Final = (
     "Put the display in claim mode: power-cycle it twice quickly (off, on, off, on). "
     "Press Enter when it shows that it waits to be claimed. "
 )
+_STEP_LINES: Final = {
+    Step.BACK_UP: "Backing up the config...",
+    Step.INSTALL_3_0: "Installing firmware 3.0...",
+    Step.CONFIRM_IMAGE: "Checking that firmware 3.0 runs...",
+    Step.USE_WITHOUT_KEY: "Leaving claim mode (no key)...",
+    Step.CONFIGURE_DISPLAY: "Configuring the display...",
+    Step.VERIFY_PANEL: "Checking the panel with a test pattern...",
+    Step.CLAIM: "Claiming the display...",
+    Step.ROTATE_KEY: "Replacing the 2.x key...",
+    Step.SECRETS: "Entering the secrets...",
+}
 _RESUME: Final = (
     "When the display runs 3.0, run the same command again (with --device set to its new name if it "
     "advertises under another one); it goes on from {state}."
@@ -188,6 +200,14 @@ async def _setup(args: argparse.Namespace, *, open_device: Any = None, releases:
     else:
         run = SetupRun.start(want_key=args.want_key, **common)
     factory = open_device or (lambda: connect(**_connect_kwargs(args)))
+    announced: set[Step] = set()
+
+    def announce(step: Step) -> None:
+        if step not in announced:  # a step that paused runs again once answered
+            announced.add(step)
+            _console.print(_STEP_LINES.get(step, f"{step.value}..."))
+
+    run.on_step = announce
 
     def save() -> None:
         if state is not None:
