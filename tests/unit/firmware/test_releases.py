@@ -43,6 +43,17 @@ def test_the_bg22_updates_through_its_apploader_and_keeps_the_config(manifest: R
     assert board.ble_ota_erases_config is False
 
 
+def test_the_first_move_from_2x_over_bluetooth_where_a_board_has_one(manifest: ReleaseManifest) -> None:
+    bg22, nrf54, esp32 = manifest.board("bg22"), manifest.board("xiao_nrf54l15"), manifest.board("s3-n32r8")
+
+    assert bg22 is not None and nrf54 is not None and esp32 is not None
+    assert (bg22.from_2x_files, bg22.from_2x_protocol) == (("opendisplay-bg22-ota.gbl",), "silabs-apploader")
+    assert bg22.from_2x_erases_config is False
+    assert (nrf54.from_2x_files, nrf54.from_2x_protocol) == (("opendisplay-xiao_nrf54l15-ota.bin",), "mcumgr-smp")
+    assert (esp32.from_2x_files, esp32.from_2x_protocol) == ((), None)  # USB only
+    assert esp32.usb_install_protocol is None and nrf54.usb_install_protocol == "swd"
+
+
 def test_an_unknown_board_is_none(manifest: ReleaseManifest) -> None:
     assert manifest.board("nope") is None
 
