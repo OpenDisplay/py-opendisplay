@@ -17,6 +17,10 @@ from enum import IntEnum
 IDENT_FLAG_CONFIG_DRIVEN = 0x01
 IDENT_FLAG_NEEDS_MIGRATION = 0x02
 IDENT_FLAG_BUILTIN_DRIVER = 0x04
+IDENT_FLAG_SEC_V2 = 0x08
+IDENT_FLAG_CLAIMED = 0x10
+IDENT_FLAG_CLAIM_MODE = 0x20
+IDENT_FLAG_LEGACY_SECRETS_OPEN = 0x40
 
 IDENT_ESC_WINDOW = 0x01
 IDENT_ESC_FILL = 0x02
@@ -89,6 +93,26 @@ class DeviceIdent:
     def builtin_driver(self) -> bool | None:
         """A display is driven by a built-in controller driver (packet 0xB3)."""
         return self._flag(IDENT_FLAG_BUILTIN_DRIVER)
+
+    @property
+    def sec2(self) -> bool | None:
+        """The firmware speaks SECURITY_V2 (claim, sealed sessions)."""
+        return self._flag(IDENT_FLAG_SEC_V2)
+
+    @property
+    def claimed(self) -> bool | None:
+        """The device is claimed (advisory: READ_IDENT is unauthenticated)."""
+        return self._flag(IDENT_FLAG_CLAIMED)
+
+    @property
+    def claim_mode(self) -> bool | None:
+        """The device is in claim mode."""
+        return self._flag(IDENT_FLAG_CLAIM_MODE)
+
+    @property
+    def legacy_secrets_open(self) -> bool | None:
+        """Unclaimed, but the stored config still holds 2.x secrets."""
+        return self._flag(IDENT_FLAG_LEGACY_SECRETS_OPEN)
 
     @property
     def supports_window(self) -> bool | None:
