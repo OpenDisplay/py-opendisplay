@@ -8,7 +8,7 @@ from typing import Any
 from epaper_dithering import DitherMode
 from PIL import Image, UnidentifiedImageError
 
-from .cli_common import _console, _device_kwargs, _error, _handle_ble_error, _parse_hex_key, _run
+from .cli_common import _connect_args, _console, _device_kwargs, _error, _handle_ble_error, _parse_hex_key, _run
 from .device import connect
 from .exceptions import OpenDisplayError
 from .models.enums import FitMode, RefreshMode, Rotation
@@ -51,7 +51,9 @@ def cmd_upload_mode(  # pylint: disable=too-many-arguments
     refused = refused_options(args)
     if refused:
         _error(f"--mode cannot be combined with {', '.join(refused)}")
-    kwargs = _device_kwargs(args.device, _parse_hex_key(args.key), args.timeout, args.host, args.port, args.tls)
+    kwargs = _device_kwargs(
+        args.device, _parse_hex_key(args.key), args.timeout, args.host, args.port, args.tls, args.key_store
+    )
     options = {
         "refresh_mode": refresh_mode,
         "dither_mode": dither_mode,
@@ -72,9 +74,8 @@ async def _upload_mode(device_kwargs: dict[str, Any], image_path: str, mode: str
         _error(f"Image file not found: {image_path}")
     except UnidentifiedImageError:
         _error(f"Cannot open image (unsupported format): {image_path}")
-    names = {"mac_address": "address", "device_name": "name"}
     try:
-        async with connect(**{names.get(k, k): v for k, v in device_kwargs.items()}) as dev:
+        async with connect(**_connect_args(device_kwargs)) as dev:
             try:
                 drive_mode = dev.display.drive_mode(mode)
             except ValueError as exc:
