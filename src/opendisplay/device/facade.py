@@ -69,7 +69,7 @@ from ..sensors import SensorReading, read_sensor_values
 from ..transport import BLEConnection, TcpTransport, Transport
 from .channel import MAX_STRAY_AUTH_FRAMES, SecureChannel
 from .config_read import read_config_blob
-from .imaging import _capabilities_from_config, prepare_image
+from .imaging import _capabilities_from_config, _warn_firmware_upload_limitations, prepare_image
 from .nfc import write_nfc_record
 from .upload import Uploader, UploadTarget
 
@@ -1325,10 +1325,12 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         dbs: DbsParams | bool | None = None,
     ) -> tuple[bytes, bytes | None, Image.Image]:
         """Prepare image for upload. Internal wrapper for the module-level prepare_image()."""
+        capabilities = self._ensure_capabilities()
+        _warn_firmware_upload_limitations(capabilities.color_scheme, capabilities.width, self._fw_version)
         return prepare_image(
             image,
             config=self._config,
-            capabilities=self._ensure_capabilities(),
+            capabilities=capabilities,
             use_measured_palettes=self._use_measured_palettes,
             dither_mode=dither_mode,
             compress=compress,
