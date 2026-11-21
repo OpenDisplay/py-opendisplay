@@ -494,6 +494,46 @@ async with opendisplay.connect(name="OD4064C9", key_store=store) as dev:
 - **LAN**: claiming, sessions and key changes run over Bluetooth only. TLS with a firmware 3.0 key
   is not supported yet.
 
+### Firmware 3.x updates
+
+`dev.firmware.update(image)` updates a device that already runs firmware 3.x, over Bluetooth. The
+method follows the device: mcumgr SMP on ESP32, nRF52840 and nRF54 (built in, no extra needed), the
+Silicon Labs AppLoader on a BG22 (the `silabs-ota` extra). nRF52811 and Telink are not supported
+yet. The first move from 2.x to 3.0 is a different job; see "Moving to firmware 3.0".
+
+```python
+from opendisplay.firmware import ReleaseManifest, UpdateOutcome
+
+manifest = ReleaseManifest.parse(json.loads(manifest_json))  # the release's manifest.json
+board = manifest.board("s3-n32r8-extuart")                   # ESP32: the board must be named
+image = Path(board.ble_ota_files[0]).read_bytes()            # downloaded from the same release
+
+async with opendisplay.connect(name="OD4064C9") as dev:
+    if not dev.firmware.can_roll_back:
+        ...  # a BG22 cannot undo a bad image by itself: ask the user first
+    result = await dev.firmware.update(image, on_progress=lambda done, total: print(done, total))
+    print(result.outcome, result.version_before, result.version_after, result.detail)
+```
+
+- **Outcomes**: `UPDATED`, `ROLLED_BACK` (the new image did not start and the device is back on its
+  old one), `WAITING_IN_BOOTLOADER` (a BG22 in its AppLoader, advertising as `OTA`, waiting for a
+  `.gbl`), and `NOT_UPDATED` (for example a transfer cut off part-way, which leaves the old image
+  running). `detail` says what to do next.
+- **Refused before anything is sent** (`UpdateRefusedError`): firmware 2.x, claim mode (claim the
+  display or call `dev.security.use_without_key()` first), and an image for another target or chip.
+- **Security**: an unclaimed display takes an update as it is. A claimed one is unlocked with a
+  sealed ENTER_DFU on its session first, and again after the reboot, to read the image slots
+  (the reboot locks SMP again); `dev.firmware.enable_ota()` does only that step.
+- **Confirmation**: after the reboot, `update()` reconnects and sends one command, which makes the
+  new image permanent on ESP32 and nRF. Until then, a reset returns the device to its old image.
+- **Time**: an ESP32-S3 image (1.2 MB) takes about 47 s from a Mac, and the reboot and redraw
+  that follow take up to 3 minutes. `update()` waits for both. macOS works for SMP updates.
+- **Version shown**: ESP32 3.x builds show 3.0.0 on the boot screen and in
+  `read_firmware_version()` whatever they run (Firmware_Unified#103). `update()` reads the version
+  over SMP, which is correct.
+- **Home Assistant** passes `find_device=` (a coroutine giving the `BLEDevice` for an address),
+  so the update works through an ESPHome Bluetooth proxy.
+
 ### Encryption (firmware 2.x)
 
 Firmware 2.x devices with encryption enabled require authentication before accepting any commands (except `read_firmware_version`). For firmware 3.0, see "Firmware 3.0 security" above. Pass the 16-byte AES-128 master key to the constructor — authentication and session setup happen automatically before the first interrogation.

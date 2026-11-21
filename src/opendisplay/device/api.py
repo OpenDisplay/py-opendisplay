@@ -20,6 +20,8 @@ from ..credentials import DeviceKey
 from ..encoding import compress_image_data
 from ..encoding.compression import FIRMWARE_ZLIB_WINDOW_BITS
 from ..exceptions import IdentNotSupportedError, InvalidResponseError, NoStoredConfigError, OpenDisplayTimeoutError
+from ..firmware import updater
+from ..firmware.releases import can_roll_back
 from ..models.enums import FitMode, RefreshMode, Rotation
 from ..models.profile import DeviceProfile, build_profile
 from ..panels import MigrationPlan, PanelDatabase, plan_migration
@@ -239,11 +241,45 @@ class DisplayView:
             )
 
 
+class FirmwareView:
+    """Updating the device's firmware over Bluetooth (firmware 3.x; ``opendisplay.firmware``)."""
+
+    def __init__(self, device: Device) -> None:
+        self._device = device
+
+    @property
+    def can_roll_back(self) -> bool:
+        """Whether this device returns to its old image by itself when a new one never starts.
+
+        ESP32, nRF52840 and nRF54 keep the old image in a second slot; a BG22 has none and falls
+        back into its AppLoader instead. Tell the user before an update on a device without it.
+        """
+        return can_roll_back(self._device.profile.target)
+
+    async def enable_ota(self) -> None:
+        """Unlock updates where the firmware needs it (a claimed device; a BG22 reboots into its AppLoader)."""
+        await updater.enable_ota(self._device)
+
+    async def update(
+        self,
+        image: bytes,
+        *,
+        method: str | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+        find_device: updater.FindDevice | None = None,
+    ) -> updater.UpdateResult:
+        """Update to ``image``; see :func:`opendisplay.firmware.update`."""
+        return await updater.update(
+            self._device, image, method=method, on_progress=on_progress, find_device=find_device
+        )
+
+
 class Device:
     """A connected OpenDisplay device. Use as ``async with opendisplay.connect(...) as dev``.
 
     Attributes:
         config: The stored config.
+        firmware: Firmware updates over Bluetooth (``update()``, ``can_roll_back``).
         legacy: The wrapped ``OpenDisplayDevice``, for everything not yet on the new surface.
             Its config is the one read on entry. When that config has no display, or its
             display has a colour scheme the legacy API does not know, ``legacy`` has no
@@ -259,6 +295,7 @@ class Device:
         self.security = security if security is not None else SecurityView(legacy)
         self.config = ConfigView(self)
         self.display = DisplayView(self)
+        self.firmware = FirmwareView(self)
         self.security.config_view = self.config  # whether the key is shown on the panel
         self._profile: DeviceProfile | None = None
 
