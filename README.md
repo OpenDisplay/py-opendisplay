@@ -504,7 +504,8 @@ async with opendisplay.connect(name="OD4064C9", key_store=store) as dev:
 - **Errors** say what to do: `NotInClaimModeError` (power-cycle twice), `Sec2KeyRequiredError` (no
   key opened a session; import it, or factory-reset), `Sec2CodeMismatchError`, `DeviceLockedError`,
   `RateLimitedError`, `Sec2BusyError`, and `Sec2RequiredError` when a 2.x-only API meets a claimed
-  display.
+  display. `Sec2KeyRequiredError`, `DeviceLockedError` and `Sec2RequiredError` import from
+  `opendisplay`; the others from `opendisplay.sec2.errors`.
 - **LAN**: claiming, sessions and key changes run over Bluetooth only. TLS with a firmware 3.0 key
   is not supported yet.
 
