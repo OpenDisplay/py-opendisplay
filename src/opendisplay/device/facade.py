@@ -19,6 +19,7 @@ from ..crypto import (
 )
 from ..exceptions import (
     BLEConnectionError,
+    ConfigClearError,
     IdentNotSupportedError,
     ImageEncodingError,
     OpenDisplayConnectionError,
@@ -41,6 +42,7 @@ from ..protocol import (
     OD_LAN_TCP_PORT,
     CommandCode,
     build_buzzer_activate_command,
+    build_config_clear_command,
     build_deep_sleep_command,
     build_enter_dfu_command,
     build_led_activate_command,
@@ -1242,6 +1244,31 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         # The firmware may redraw its boot screen now (a config that brings drive packets, or a
         # SHOW_KEY_ON_SCREEN change); noting it lets the next replies and connects wait.
         redraw.mark_redrawing(*self._redraw_keys())
+
+    @_serialized
+    async def send_raw(self, frame: bytes, *, reply: bool = True, timeout: float = 10.0) -> bytes | None:
+        """Send ``frame`` (``[cmd:2 BE][payload]``, encrypted with a session) and return one reply, unchecked.
+
+        A debugging aid: ``reply=False`` waits for nothing; a reboot or redraw it causes is not noted.
+        """
+        await self._channel.write(frame)
+        return await self._channel.read(timeout) if reply else None
+
+    @_serialized
+    async def clear_config(self) -> None:
+        """Erase the stored config (CONFIG_CLEAR 0x0045); a claimed device keeps its 0x27 reset-pin fields.
+
+        Raises:
+            ConfigClearError: The device answered with a NACK; nothing was erased.
+            InvalidResponseError: Any other reply.
+        """
+        await self._channel.write(build_config_clear_command())
+        response = await self._channel.read(self.TIMEOUT_ACK)
+        if len(response) >= 2 and response[0] == 0xFF and response[1] == CommandCode.CONFIG_CLEAR & 0xFF:
+            raise ConfigClearError()
+        validate_ack_response(response, CommandCode.CONFIG_CLEAR)
+        self._config = None
+        _LOGGER.info("Config cleared on %s", self.mac_address)
 
     def export_config_json(self, file_path: str) -> None:
         """Export device config to JSON file (Open Display Config Builder format).

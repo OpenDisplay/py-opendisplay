@@ -40,6 +40,21 @@ def test_parses_a_reply_without_a_tail_as_2x() -> None:
     assert (ident.flags, ident.config_driven, ident.needs_migration, ident.max_config) == (None, None, None, None)
 
 
+def test_the_security_bits_of_the_tail() -> None:
+    # Web od-v3.js parseReadIdent: bit3 SEC_V2, bit4 CLAIMED, bit5 CLAIM_MODE, bit6 LEGACY_SECRETS_OPEN.
+    virgin = parse_read_ident(V3_NO_DISPLAY)  # flags 0x29: the E1002 just flashed, in claim mode
+    assert (virgin.sec2, virgin.claimed, virgin.claim_mode, virgin.legacy_secrets_open) == (True, False, True, False)
+
+    claimed = parse_read_ident(bytes.fromhex("004604010019a00f800003"))  # 0x19
+    assert (claimed.sec2, claimed.claimed, claimed.claim_mode) == (True, True, False)
+
+    secrets = parse_read_ident(bytes.fromhex("004604010049a00f800003"))  # 0x49
+    assert secrets.legacy_secrets_open is True
+
+    old = parse_read_ident(V2_ONE_DISPLAY)
+    assert (old.sec2, old.claimed, old.claim_mode, old.legacy_secrets_open) == (None, None, None, None)
+
+
 def test_needs_migration_flag() -> None:
     assert parse_read_ident(bytes.fromhex("00460401000ba00f800003")).needs_migration is True
 

@@ -115,6 +115,18 @@ class ConfigView:
         await self._device.legacy.write_config(config)
         await self._device.refresh()
 
+    async def clear(self) -> None:
+        """Erase the device's stored config (CONFIG_CLEAR), then refresh the profile from the device.
+
+        A claimed firmware 3.0 device keeps its reset-pin settings (the 0x27 packet).
+
+        Raises:
+            ConfigClearError: The device refused; its config is unchanged.
+        """
+        await self._device.legacy.clear_config()
+        self._cached = None
+        await self._device.refresh()
+
 
 _RESERVED_MODES = {
     "fast": "'fast' is reached with refresh_mode=RefreshMode.FAST",

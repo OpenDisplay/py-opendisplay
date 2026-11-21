@@ -252,6 +252,53 @@ async def test_config_write_refreshes_the_profile(fake_transport) -> None:
         assert dev.config.cached is not None
 
 
+CONFIG_CLEAR = b"\x00\x45"
+
+
+async def test_clearing_the_config_sends_config_clear_and_refreshes_the_profile(fake_transport) -> None:
+    fake = fake_transport(
+        [_version(3, 0), SEC_UNCLAIMED, _config_reply(ESP32_CONFIG), IDENT_V3_NO_DISPLAY]
+        + [bytes.fromhex("00450000")]
+        + [_version(3, 0), NO_CONFIG, IDENT_V3_NO_DISPLAY]
+    )
+
+    async with opendisplay.connect(transport=fake) as dev:
+        assert dev.profile.configured is True
+        written_before = len(fake.written)
+
+        await dev.config.clear()
+
+        assert fake.written[written_before] == CONFIG_CLEAR
+        assert dev.config.cached is None
+        assert dev.profile.configured is False
+
+
+async def test_a_refused_config_clear_raises_and_reads_nothing_more(fake_transport) -> None:
+    from opendisplay.exceptions import ConfigClearError
+
+    fake = fake_transport(
+        [_version(3, 0), SEC_UNCLAIMED, _config_reply(ESP32_CONFIG), IDENT_V3_NO_DISPLAY, bytes.fromhex("ff450000")]
+    )
+
+    async with opendisplay.connect(transport=fake) as dev:
+        with pytest.raises(ConfigClearError):
+            await dev.config.clear()
+
+        assert _opcodes(fake.written)[-1] == CONFIG_CLEAR
+        assert dev.config.cached is not None
+
+
+async def test_a_raw_command_is_sent_verbatim_and_its_reply_returned(fake_transport) -> None:
+    fake = fake_transport([bytes.fromhex("00450000")])
+    device = OpenDisplayDevice(transport=fake, auto_interrogate=False)
+    await device.__aenter__()
+
+    assert await device.send_raw(bytes.fromhex("0045")) == bytes.fromhex("00450000")
+    assert await device.send_raw(bytes.fromhex("000f"), reply=False) is None
+
+    assert fake.written == [bytes.fromhex("0045"), bytes.fromhex("000f")]
+
+
 def _write_acks(config: GlobalConfig) -> list[bytes]:
     blob = serialize_config(config)
     chunks = 1 + max(0, (len(blob) - 200 + 199) // 200)

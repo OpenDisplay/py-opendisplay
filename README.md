@@ -58,6 +58,9 @@ async with opendisplay.connect("AA:BB:CC:DD:EE:FF") as dev:
     config = await dev.config.read()   # raises NoStoredConfigError when the device has none
 ```
 
+`await dev.config.clear()` erases the stored config (CONFIG_CLEAR 0x0045) and refreshes the
+profile. A claimed firmware 3.0 device keeps its reset-pin settings (the 0x27 packet).
+
 `dev.profile` is built from the firmware version, the stored config and, on firmware 3.0 and up, the
 device identity. Everything not yet on the new surface is reached through `dev.legacy`, the wrapped
 `OpenDisplayDevice`. `OpenDisplayDevice` remains supported.
@@ -112,6 +115,17 @@ opendisplay upload --device AA:BB:CC:DD:EE:FF photo.jpg --mode colour16
 opendisplay backup-config --device OD4064C9 backup.json
 opendisplay migrate --device OD4064C9 --dry-run
 opendisplay migrate --device OD4064C9
+
+# Set up a 3.0 display, or move a 2.x one to 3.0 (see "Setting up a display" below)
+opendisplay setup --device OD4064C9 --claim
+opendisplay upgrade --device OD5A2F4C --no-key --state-file en05.json
+
+# Send a firmware 3.x image (see "Firmware 3.x updates" below)
+opendisplay update --device OD4064C9 --file opendisplay-s3-n32r8-extuart-app.bin
+
+# Debugging: send one command frame and print the reply as hex (nothing checks it)
+opendisplay raw --device OD4064C9 --cmd 0043
+opendisplay raw --device OD4064C9 --cmd 000f --no-reply
 
 # Firmware 3.0 device keys (see "Firmware 3.0 security" below)
 opendisplay claim --device OD4064C9
@@ -533,6 +547,50 @@ async with opendisplay.connect(name="OD4064C9") as dev:
   over SMP, which is correct.
 - **Home Assistant** passes `find_device=` (a coroutine giving the `BLEDevice` for an address),
   so the update works through an ESPHome Bluetooth proxy.
+
+### Setting up a display (setup and upgrade)
+
+`opendisplay setup` takes a display from wherever it stands to set up, one step at a time:
+
+- **No config, or a config that needs migration:** configure the panel.
+- **Check the panel:** draw a test pattern and ask whether it looks right.
+- **Key:** claim it, or use it without a key.
+- **A claimed display with a 2.x key:** rotate that key.
+
+It prints a line as each step starts. When it wrote the config itself, it always checks the panel
+afterwards, with a key or without.
+
+`opendisplay upgrade` is the same flow for a 2.x display:
+
+1. **Back up** the config to `--backup` (default `opendisplay-backup-<device>.json`). The backup
+   holds the key, so it is written with mode 0600 and never over an earlier file.
+2. **Install 3.0.** A BG22 is installed over Bluetooth through its AppLoader, after you type
+   `yes`, since it has no old image to return to. A board that needs USB pauses: the command names
+   the files and the website flasher and saves its state to `--state-file`.
+3. **Go on.** Once the display runs 3.0, run the same command again. It goes on from the state
+   file, restores the config from the backup, then sets the display up.
+
+```bash
+opendisplay upgrade --device OD5A2F4C --no-key --state-file en05.json
+# ... install over USB as it says, then (the display may advertise under a new name):
+opendisplay upgrade --device ODD2292B --no-key --state-file en05.json
+```
+
+`--claim` / `--no-key` decide the key, otherwise it asks. `--board` names the board when several
+share a chip (ESP32-S3), `--config FILE` gives a config when the display has none and there is no
+backup, `--release TAG` picks a Firmware_Unified release (default: the latest; files are checked
+against its manifest and cached), and `--yes-untested` writes drive data not yet seen on a panel
+without asking.
+
+In Python the flow is `opendisplay.setup`:
+
+- `device_state()` and `plan_setup()` say where a device stands and which steps it needs.
+- `SetupRun` performs those steps. `run_until_input(open_device)` returns the next request
+  (`NeedClaimCode`, `NeedConfirmation`, `NeedWiredInstall`, ...), or `None` once the display is
+  set up or the user declined a confirmation. `answer(request, value)` answers it.
+- `on_step`, if set, is called with each step just before it runs.
+- `to_json()` / `from_json()` save and restore a run across a restart; the saved run never holds a
+  secret. A resumed run reads the device again, so it never repeats a step the device shows as done.
 
 ### Encryption (firmware 2.x)
 

@@ -39,7 +39,8 @@ class Artefact:
 
 @dataclass(frozen=True)
 class BoardRelease:  # pylint: disable=too-many-instance-attributes
-    """What one board's release offers: its Bluetooth update and its USB install."""
+    """What one board's release offers: its Bluetooth update, its USB install, and the first move
+    from 2.x over Bluetooth where the board has one (``ble-ota-from-2x``: BG22, nRF54)."""
 
     board: str
     target: str
@@ -50,6 +51,10 @@ class BoardRelease:  # pylint: disable=too-many-instance-attributes
     usb_install_files: tuple[str, ...]
     usb_install_erases_config: bool | None
     legacy_names: tuple[str, ...] = ()
+    usb_install_protocol: str | None = None  # "adafruit-serial-dfu", "swd"; None: the website flasher
+    from_2x_files: tuple[str, ...] = ()
+    from_2x_protocol: str | None = None
+    from_2x_erases_config: bool | None = None
 
 
 def _flow(flows: Mapping[str, Any], name: str) -> tuple[tuple[str, ...], str | None, bool | None]:
@@ -80,7 +85,8 @@ class ReleaseManifest:
         boards = []
         for entry in doc["boards"]:
             ota_files, ota_protocol, ota_erases = _flow(entry["flows"], "ble-ota")
-            usb_files, _, usb_erases = _flow(entry["flows"], "usb-install")
+            usb_files, usb_protocol, usb_erases = _flow(entry["flows"], "usb-install")
+            from_2x_files, from_2x_protocol, from_2x_erases = _flow(entry["flows"], "ble-ota-from-2x")
             boards.append(
                 BoardRelease(
                     board=entry["board"],
@@ -92,6 +98,10 @@ class ReleaseManifest:
                     usb_install_files=usb_files,
                     usb_install_erases_config=usb_erases,
                     legacy_names=tuple(entry.get("legacy_names") or ()),
+                    usb_install_protocol=usb_protocol,
+                    from_2x_files=from_2x_files,
+                    from_2x_protocol=from_2x_protocol,
+                    from_2x_erases_config=from_2x_erases,
                 )
             )
         artefacts = tuple(

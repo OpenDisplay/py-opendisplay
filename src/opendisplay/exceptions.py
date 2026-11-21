@@ -233,6 +233,13 @@ class ConfigWriteBusyError(ProtocolError):
         super().__init__(message)
 
 
+class ConfigClearError(ProtocolError):
+    """The device refused or failed to erase its stored config (CONFIG_CLEAR 0x0045 NACK)."""
+
+    def __init__(self, message: str = "The device did not erase its config.") -> None:
+        super().__init__(message)
+
+
 class ConfigSecretNeedsClaimError(ProtocolError):
     """An unclaimed firmware 3.0 device refused a config that carries a secret; nothing was stored.
 
