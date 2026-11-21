@@ -11,7 +11,7 @@ import argparse
 import re
 
 from .cli_common import _add_device_options, _console, _handle_ble_error, _run
-from .cli_sec2 import _add_key_store_option, _connect_kwargs
+from .cli_sec2 import _connect_kwargs
 from .device import connect
 from .exceptions import OpenDisplayError
 
@@ -34,7 +34,6 @@ def add_raw_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParse
     """Register ``raw``."""
     p = subparsers.add_parser("raw", help="Debug: send one command frame and print the reply as hex")
     _add_device_options(p)
-    _add_key_store_option(p)
     p.add_argument("--cmd", required=True, type=_command, metavar="HEX", help="The command code, e.g. 0045")
     p.add_argument("--payload", type=_payload, default=b"", metavar="HEX", help="Bytes after the command code")
     p.add_argument("--no-reply", action="store_true", help="Send and wait for nothing (e.g. a reboot)")

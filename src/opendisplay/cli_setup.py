@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from .cli_common import _add_device_options, _console, _error, _handle_ble_error, _run
-from .cli_sec2 import _add_key_store_option, _connect_kwargs, _input
+from .cli_sec2 import _connect_kwargs, _input
 from .device import connect
 from .exceptions import OpenDisplayError
 from .firmware.download import ReleaseDownloader
@@ -70,7 +70,6 @@ def add_setup_parsers(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     ):
         p = subparsers.add_parser(name, help=help_text)
         _add_device_options(p)
-        _add_key_store_option(p)
         choice = p.add_mutually_exclusive_group()
         choice.add_argument("--claim", dest="want_key", action="store_const", const=True, help="Claim the display")
         choice.add_argument(
@@ -87,7 +86,6 @@ def add_setup_parsers(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
 
     update = subparsers.add_parser("update", help="Send a firmware 3.x image to a 3.x display over Bluetooth")
     _add_device_options(update)
-    _add_key_store_option(update)
     update.add_argument("--file", required=True, metavar="IMAGE", help="The board's ble-ota file from the release")
     update.add_argument("--yes", action="store_true", help="Do not ask, also on a device that cannot roll back")
     update.set_defaults(func=lambda args: _run(_update(args)))
