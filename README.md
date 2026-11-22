@@ -472,7 +472,9 @@ A wrong code is never sent to the display, and nothing is kept. If the key is lo
 the display with five quick power cycles.
 
 In Python, pass a key store; `connect()` reads the display's security state before any handshake
-and picks the scheme itself (2.x, firmware 3.0 unclaimed, or firmware 3.0 claimed):
+and picks the scheme itself (2.x, firmware 3.0 unclaimed, or firmware 3.0 claimed). A 3.0 build
+without the security module (nRF52811) connects open, and a 2.x BG22 with encryption on gets its
+2.x handshake before the firmware version read, which it otherwise refuses:
 
 ```python
 import opendisplay

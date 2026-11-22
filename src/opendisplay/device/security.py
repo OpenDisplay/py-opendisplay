@@ -1,9 +1,13 @@
 """Device security on the new surface: ``Device.security`` and the scheme choice at connect.
 
-On entry, ``establish`` reads the firmware version and, on firmware 3.0, SEC_STATUS **before any
-handshake**, then picks the scheme (pieces 2b/3 findings):
+On entry, ``establish`` reads the firmware version and, on firmware 3.0, READ_IDENT and SEC_STATUS
+**before any handshake**, then picks the scheme (pieces 2b/3 findings):
 
-- firmware 2.x with a key: the 2.x handshake, as ``OpenDisplayDevice`` always did;
+- firmware 2.x with a key: the 2.x handshake, as ``OpenDisplayDevice`` always did. Firmware_Silabs
+  2.x with encryption on answers even the version read only inside a session, so there the
+  handshake runs first (``open_legacy_session``);
+- firmware 3.0 without the SEC2 module (READ_IDENT SEC_V2 = 0, § 13.6): no SEC_STATUS, which such
+  a build does not know; the device is open;
 - firmware 3.0, claimed: SEC2 with the given key and the store's keys, at most three (§ 8.8);
 - firmware 3.0, unclaimed: no handshake; the device is open.
 
@@ -28,6 +32,7 @@ from ..sec2.wire import SecState, SecStatus
 from ..transport import TcpTransport
 
 if TYPE_CHECKING:
+    from ..models.ident import DeviceIdent
     from ..transport import Transport
     from .api import ConfigView
     from .channel import SecureChannel
@@ -55,6 +60,7 @@ class SecurityView:
         self._status: SecStatus | None = None
         self._key: bytes | None = None
         self._uid: bytes | None = None
+        self._legacy_session_open = False
         #: The device's ``ConfigView`` (set by ``Device``): whether the panel shows the key.
         self.config_view: ConfigView | None = None
 
@@ -105,11 +111,26 @@ class SecurityView:
 
     # ── connect ──────────────────────────────────────────────────────────────
 
-    async def establish(self, firmware_major: int) -> None:
-        """Pick and open the security scheme for this connection (called on entry)."""
+    async def open_legacy_session(self) -> bool:
+        """Run the 2.x handshake with the given key; ``False`` when there is no 2.x key to use."""
+        if self._credential is None or isinstance(self._credential, DeviceKey):
+            return False
+        await self._legacy.authenticate(bytes(self._credential))
+        self._legacy_session_open = True
+        return True
+
+    async def establish(self, firmware_major: int, ident: DeviceIdent | None = None) -> None:
+        """Pick and open the security scheme for this connection (called on entry).
+
+        ``ident`` is the READ_IDENT answer on firmware 3.0, ``None`` when the device sent none.
+        """
         if firmware_major < _SEC2_MIN_MAJOR:
-            if self._credential is not None and not isinstance(self._credential, DeviceKey):
-                await self._legacy.authenticate(bytes(self._credential))
+            if not self._legacy_session_open:
+                await self.open_legacy_session()
+            return
+        if ident is not None and ident.sec2 is False:
+            if self._credential is not None:
+                _LOGGER.warning("The display has no SEC2 module and is open; the key passed to connect() is not used")
             return
         status = await self.refresh_status()
         if status.state == SecState.LOCKED:
