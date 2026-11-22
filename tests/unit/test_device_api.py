@@ -83,7 +83,7 @@ async def test_connect_to_a_2x_efr32bg22_does_not_ask_for_the_identity(fake_tran
 
 
 async def test_connect_to_a_3_0_device_reads_its_identity(fake_transport) -> None:
-    fake = fake_transport([_version(3, 0, 2), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY])
+    fake = fake_transport([_version(3, 0, 2), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, NO_CONFIG])
 
     async with opendisplay.connect(transport=fake) as dev:
         assert dev.profile.generation is Generation.V3
@@ -92,12 +92,12 @@ async def test_connect_to_a_3_0_device_reads_its_identity(fake_transport) -> Non
         assert dev.profile.target is FirmwareTarget.ESP32
         assert dev.config.cached is None
 
-    assert _opcodes(fake.written) == [READ_FW_VERSION, b"\x00\x54", READ_CONFIG, READ_IDENT]
+    assert _opcodes(fake.written) == [READ_FW_VERSION, READ_IDENT, b"\x00\x54", READ_CONFIG]
 
 
 async def test_3_0_device_that_does_not_answer_the_identity_is_still_v3(fake_transport) -> None:  # Review Focus 1
     fake = fake_transport(
-        [_version(3, 0), SEC_UNCLAIMED, _config_reply(ESP32_CONFIG), OpenDisplayTimeoutError("silent")]
+        [_version(3, 0), OpenDisplayTimeoutError("silent"), SEC_UNCLAIMED, _config_reply(ESP32_CONFIG)]
     )
 
     async with opendisplay.connect(transport=fake) as dev:
@@ -112,7 +112,7 @@ async def test_stored_config_without_displays_connects_unconfigured_and_keeps_it
     # Firmware 3.0 stores a config write as sent, so a config without 0x20 is a real state. The
     # new entry point reads it leniently so that a repair keeps the other packets.
     stored = dataclasses.replace(BG22_CONFIG, displays=[])
-    fake = fake_transport([_version(3, 0), SEC_UNCLAIMED, _config_reply(stored), IDENT_V3_NO_DISPLAY])
+    fake = fake_transport([_version(3, 0), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, _config_reply(stored)])
 
     async with opendisplay.connect(transport=fake) as dev:
         assert dev.profile.configured is False
@@ -145,7 +145,7 @@ async def test_unknown_colour_scheme_does_not_stop_the_connect(fake_transport) -
     # BWRY16 live in 0xAE packets and never in 0x20.)
     display = dataclasses.replace(ESP32_CONFIG.displays[0], color_scheme=0x7E)
     config = dataclasses.replace(ESP32_CONFIG, displays=[display])
-    fake = fake_transport([_version(3, 0), SEC_UNCLAIMED, _config_reply(config), IDENT_V3_NO_DISPLAY])
+    fake = fake_transport([_version(3, 0), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, _config_reply(config)])
 
     async with opendisplay.connect(transport=fake) as dev:
         assert dev.profile.color_scheme == 0x7E
@@ -216,7 +216,7 @@ async def test_leaving_the_context_closes_the_link(fake_transport) -> None:
 
 
 async def test_config_read_on_a_device_without_config_raises(fake_transport) -> None:
-    fake = fake_transport([_version(3, 0), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY, NO_CONFIG])
+    fake = fake_transport([_version(3, 0), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, NO_CONFIG, NO_CONFIG])
 
     async with opendisplay.connect(transport=fake) as dev:
         with pytest.raises(NoStoredConfigError):
@@ -238,7 +238,7 @@ async def test_config_write_refreshes_the_profile(fake_transport) -> None:
     chunks = 1 + max(0, (len(blob) - 200 + 199) // 200)
     acks = [b"\x00\x41"] + [b"\x00\x42"] * (chunks - 1)
     fake = fake_transport(
-        [_version(3, 0), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY]
+        [_version(3, 0), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, NO_CONFIG]
         + acks
         + [_version(3, 0), _config_reply(ESP32_CONFIG), IDENT_V3_NO_DISPLAY]
     )
@@ -257,7 +257,7 @@ CONFIG_CLEAR = b"\x00\x45"
 
 async def test_clearing_the_config_sends_config_clear_and_refreshes_the_profile(fake_transport) -> None:
     fake = fake_transport(
-        [_version(3, 0), SEC_UNCLAIMED, _config_reply(ESP32_CONFIG), IDENT_V3_NO_DISPLAY]
+        [_version(3, 0), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, _config_reply(ESP32_CONFIG)]
         + [bytes.fromhex("00450000")]
         + [_version(3, 0), NO_CONFIG, IDENT_V3_NO_DISPLAY]
     )
@@ -277,7 +277,7 @@ async def test_a_refused_config_clear_raises_and_reads_nothing_more(fake_transpo
     from opendisplay.exceptions import ConfigClearError
 
     fake = fake_transport(
-        [_version(3, 0), SEC_UNCLAIMED, _config_reply(ESP32_CONFIG), IDENT_V3_NO_DISPLAY, bytes.fromhex("ff450000")]
+        [_version(3, 0), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, _config_reply(ESP32_CONFIG), bytes.fromhex("ff450000")]
     )
 
     async with opendisplay.connect(transport=fake) as dev:
@@ -320,7 +320,7 @@ def _with_address(fake: Any) -> Any:
 async def test_config_write_notes_a_redraw_and_reads_back_once(fake_transport) -> None:
     fake = _with_address(
         fake_transport(
-            [_version(3, 0), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY]
+            [_version(3, 0), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, NO_CONFIG]
             + _write_acks(ESP32_CONFIG)
             + [_version(3, 0), _config_reply(ESP32_CONFIG), IDENT_V3_NO_DISPLAY]
         )
@@ -339,7 +339,7 @@ async def test_config_write_notes_a_redraw_and_reads_back_once(fake_transport) -
 async def test_a_silent_read_back_is_not_retried_by_the_config_view(fake_transport) -> None:
     fake = _with_address(
         fake_transport(
-            [_version(3, 0), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY]
+            [_version(3, 0), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, NO_CONFIG]
             + _write_acks(ESP32_CONFIG)
             + [OpenDisplayTimeoutError("silent")] * 5
         )
@@ -356,7 +356,7 @@ async def test_a_refused_config_write_notes_nothing(fake_transport) -> None:
     from opendisplay.exceptions import ConfigWriteBusyError
 
     fake = _with_address(
-        fake_transport([_version(3, 0), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY, bytes.fromhex("ff410100")])
+        fake_transport([_version(3, 0), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, NO_CONFIG, bytes.fromhex("ff410100")])
     )
 
     async with opendisplay.connect(transport=fake) as dev:
@@ -412,7 +412,7 @@ async def test_default_still_interrogates(fake_transport) -> None:
 
 async def test_3_0_device_with_a_malformed_identity_reply_still_connects(fake_transport, caplog) -> None:
     fake = fake_transport(
-        [_version(3, 0), SEC_UNCLAIMED, _config_reply(ESP32_CONFIG), bytes.fromhex("00460401")]
+        [_version(3, 0), bytes.fromhex("00460401"), SEC_UNCLAIMED, _config_reply(ESP32_CONFIG)]
     )  # cut short
 
     async with opendisplay.connect(transport=fake) as dev:
@@ -423,7 +423,7 @@ async def test_3_0_device_with_a_malformed_identity_reply_still_connects(fake_tr
 
 
 async def test_link_loss_during_the_identity_read_still_fails_the_connect(fake_transport) -> None:
-    fake = fake_transport([_version(3, 0), SEC_UNCLAIMED, _config_reply(ESP32_CONFIG), BLEConnectionError("link lost")])
+    fake = fake_transport([_version(3, 0), BLEConnectionError("link lost"), SEC_UNCLAIMED, _config_reply(ESP32_CONFIG)])
 
     with pytest.raises(BLEConnectionError):
         async with opendisplay.connect(transport=fake):
@@ -433,18 +433,18 @@ async def test_link_loss_during_the_identity_read_still_fails_the_connect(fake_t
 
 
 # Piece 4 changed this on purpose (piece 2b pinned the old failure). connect() now reads the
-# firmware version and, on 3.0, SEC_STATUS before any handshake, and picks the scheme from them:
+# firmware version and, on 3.0, READ_IDENT and SEC_STATUS before any handshake, and picks the scheme from them:
 # a 2.x key no longer reaches the 2.x handshake on a 3.0 device, so the caller learns what the
 # device is instead of failing with status 0x03 / 0x05 before a profile exists.
 
 
 async def test_a_key_on_an_unclaimed_3_0_device_needs_no_handshake(fake_transport) -> None:
-    fake = fake_transport([_version(3, 0, 2), SEC_UNCLAIMED, NO_CONFIG, IDENT_V3_NO_DISPLAY])
+    fake = fake_transport([_version(3, 0, 2), IDENT_V3_NO_DISPLAY, SEC_UNCLAIMED, NO_CONFIG])
 
     async with opendisplay.connect(transport=fake, encryption_key=bytes(16)) as dev:
         assert dev.profile.generation is Generation.V3
 
-    assert _opcodes(fake.written) == [READ_FW_VERSION, b"\x00\x54", READ_CONFIG, READ_IDENT]
+    assert _opcodes(fake.written) == [READ_FW_VERSION, READ_IDENT, b"\x00\x54", READ_CONFIG]
     assert b"\x00\x50" not in _opcodes(fake.written)
 
 
@@ -453,11 +453,11 @@ async def test_only_a_2x_key_for_a_claimed_3_0_device_fails_after_reading_what_i
     from opendisplay.sec2.errors import Sec2KeyRequiredError
 
     claimed = bytes.fromhex("005402020000000000441bf6c96440100e0100")
-    fake = fake_transport([_version(3, 0, 2), claimed])
+    fake = fake_transport([_version(3, 0, 2), IDENT_V3_NO_DISPLAY, claimed])
 
     with pytest.raises(Sec2KeyRequiredError):
         async with opendisplay.connect(transport=fake, encryption_key=LegacyKey(bytes(16))):
             pytest.fail("entered")
 
-    assert _opcodes(fake.written) == [READ_FW_VERSION, b"\x00\x54"]  # never the 2.x handshake
+    assert _opcodes(fake.written) == [READ_FW_VERSION, READ_IDENT, b"\x00\x54"]  # never the 2.x handshake
     assert fake.is_connected is False

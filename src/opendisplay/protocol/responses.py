@@ -324,8 +324,12 @@ def parse_firmware_version(data: bytes) -> FirmwareVersion:
         FirmwareVersion dictionary with 'major', 'minor', 'sha', and 'patch' fields
 
     Raises:
+        AuthenticationRequiredError: If the device answers ``[00][43][FE]``: firmware that gates
+            every command behind the session (Firmware_Silabs 2.x with encryption on)
         InvalidResponseError: If response format invalid
     """
+    if len(data) == 3 and data[1] == 0x43 and data[2] == 0xFE:
+        raise AuthenticationRequiredError("The device answers nothing before a session; connect with its key")
     if len(data) < 5:
         raise InvalidResponseError(f"Firmware version response too short: {len(data)} bytes (need at least 5)")
 

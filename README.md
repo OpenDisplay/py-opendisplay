@@ -472,7 +472,9 @@ A wrong code is never sent to the display, and nothing is kept. If the key is lo
 the display with five quick power cycles.
 
 In Python, pass a key store; `connect()` reads the display's security state before any handshake
-and picks the scheme itself (2.x, firmware 3.0 unclaimed, or firmware 3.0 claimed):
+and picks the scheme itself (2.x, firmware 3.0 unclaimed, or firmware 3.0 claimed). A 3.0 build
+without the security module (nRF52811) connects open, and a 2.x BG22 with encryption on gets its
+2.x handshake before the firmware version read, which it otherwise refuses:
 
 ```python
 import opendisplay
@@ -504,7 +506,8 @@ async with opendisplay.connect(name="OD4064C9", key_store=store) as dev:
 - **Errors** say what to do: `NotInClaimModeError` (power-cycle twice), `Sec2KeyRequiredError` (no
   key opened a session; import it, or factory-reset), `Sec2CodeMismatchError`, `DeviceLockedError`,
   `RateLimitedError`, `Sec2BusyError`, and `Sec2RequiredError` when a 2.x-only API meets a claimed
-  display.
+  display. `Sec2KeyRequiredError`, `DeviceLockedError` and `Sec2RequiredError` import from
+  `opendisplay`; the others from `opendisplay.sec2.errors`.
 - **LAN**: claiming, sessions and key changes run over Bluetooth only. TLS with a firmware 3.0 key
   is not supported yet.
 

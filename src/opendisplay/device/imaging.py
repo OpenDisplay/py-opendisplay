@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Final
 
 import numpy as np
 from epaper_dithering import DbsParams, DitherMode, DitherOptions, dither_image
@@ -24,6 +25,7 @@ from ..exceptions import ImageEncodingError
 from ..models.capabilities import DeviceCapabilities
 from ..models.config import DisplayConfig, GlobalConfig
 from ..models.enums import ColorScheme, FitMode, Rotation
+from ..models.firmware import FirmwareVersion
 from ..models.panel_drive import COLOR_SCHEME_INHERIT, DisplayMode
 
 _LOGGER = logging.getLogger(__name__)
@@ -113,29 +115,36 @@ _DIRECT_WRITE_PIXELS_PER_BYTE: dict[ColorScheme, int] = {
 }
 
 
-def _warn_firmware_upload_limitations(color_scheme: ColorScheme, width: int) -> None:
-    """Warn about known device-firmware upload bugs the library can't fix on-device.
+#: The firmware release that fixed C1 and C2 (Firmware #82, #87).
+_FIRMWARE_UPLOAD_FIXES: Final = (2, 10)
 
-    - BWR/BWY direct write drops the red/yellow plane on current firmware (C1).
+
+def _warn_firmware_upload_limitations(color_scheme: ColorScheme, width: int, firmware: FirmwareVersion | None) -> None:
+    """Warn about device-firmware upload bugs that firmware before 2.10 has.
+
+    - BWR/BWY direct write drops the red/yellow plane (C1, fixed in 2.10).
     - Widths not aligned to the scheme's byte boundary are truncated because the
-      firmware sizes the upload from the raw pixel count (C2). GRAYSCALE_4 is
-      exempt because firmware row-pads it.
+      firmware sizes the upload from the raw pixel count (C2, fixed in 2.10).
+      GRAYSCALE_4 is exempt because firmware row-pads it.
+
+    Says nothing when the firmware is unknown or 2.10 and later, firmware 3.x included.
     """
+    if firmware is None or (firmware["major"], firmware["minor"]) >= _FIRMWARE_UPLOAD_FIXES:
+        return
     if color_scheme in (ColorScheme.BWR, ColorScheme.BWY):
         _LOGGER.warning(
-            "Color scheme %s (BWR/BWY direct write) is not reliably supported by current "
-            "firmware: it stores only one plane, so the red/yellow layer is discarded and "
-            "the black/white layer renders over stale color RAM. Output may be wrong until "
-            "device firmware gains BWR/BWY parity.",
+            "Color scheme %s (BWR/BWY direct write) is not reliably supported by firmware "
+            "before 2.10: it stores only one plane, so the red/yellow layer is discarded and "
+            "the black/white layer renders over stale color RAM. Update the firmware.",
             color_scheme.name,
         )
 
     ppb = _DIRECT_WRITE_PIXELS_PER_BYTE.get(color_scheme)
     if ppb is not None and width % ppb != 0:
         _LOGGER.warning(
-            "Panel width %d is not a multiple of %d for color scheme %s; current firmware "
+            "Panel width %d is not a multiple of %d for color scheme %s; firmware before 2.10 "
             "sizes the upload from the raw pixel count and will truncate the last rows on "
-            "the device. A byte-aligned width avoids this.",
+            "the device. A byte-aligned width or a firmware update avoids this.",
             width,
             ppb,
             color_scheme.name,
@@ -251,8 +260,6 @@ def prepare_image(
             "Panel IC 0x%04x is not a known 4-gray panel. GRAYSCALE_4 encoding may not display correctly.",
             panel_ic_type,
         )
-
-    _warn_firmware_upload_limitations(color_scheme, capabilities.width)
 
     palette = get_palette_for_display(panel_ic_type, color_scheme, use_measured_palettes)
     display_cfg = config.displays[0] if config is not None and config.displays else None

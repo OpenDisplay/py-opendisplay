@@ -37,7 +37,8 @@ async def test_a_claimed_device_opens_a_sec2_session_with_the_stored_key() -> No
         assert device.written[-1][:2] == b"\x00\x40" and len(device.written[-1]) == 18  # a sealed request
 
     assert device.written[0][:2] == b"\x00\x43"  # the firmware version first
-    assert device.written[1][:2] == b"\x00\x54"  # then SEC_STATUS, before any handshake
+    assert device.written[1][:2] == b"\x00\x46"  # the identity: SEC_V2 says whether SEC_STATUS exists
+    assert device.written[2][:2] == b"\x00\x54"  # then SEC_STATUS, before any handshake
     assert b"\x00\x50" not in [f[:2] for f in device.written]  # never the 2.x handshake
 
 

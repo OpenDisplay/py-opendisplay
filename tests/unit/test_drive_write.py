@@ -65,7 +65,7 @@ def _image() -> Image.Image:
 
 
 async def _connected(fake_transport, config: GlobalConfig = ALPHA):  # noqa: ANN001, ANN202
-    fake = fake_transport([_version(), SEC_UNCLAIMED, _config_reply(config), IDENT_BG22])
+    fake = fake_transport([_version(), IDENT_BG22, SEC_UNCLAIMED, _config_reply(config)])
     dev = opendisplay.connect(transport=fake)
     await dev.__aenter__()
     fake.written.clear()

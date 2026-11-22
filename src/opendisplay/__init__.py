@@ -135,6 +135,7 @@ from .models.profile import DeviceProfile, Generation, ProfileMode, build_profil
 from .ota import find_nrf_dfu_device, perform_nrf_dfu, perform_silabs_ota
 from .partial import PartialState
 from .protocol import MANUFACTURER_ID, SERVICE_UUID
+from .sec2.errors import DeviceLockedError, Sec2KeyRequiredError
 from .sensors import SensorReading, read_sensor_values
 from .transport import BleTransport, TcpTransport, Transport
 
@@ -192,6 +193,8 @@ __all__ = [
     "LegacyKey",
     "SecurityView",
     "Sec2RequiredError",
+    "Sec2KeyRequiredError",
+    "DeviceLockedError",
     "ConfigSecretNeedsClaimError",
     "ConfigKeyMismatchError",
     "NeedsMigrationError",

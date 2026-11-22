@@ -19,7 +19,13 @@ from .. import redraw
 from ..credentials import DeviceKey
 from ..encoding import compress_image_data
 from ..encoding.compression import FIRMWARE_ZLIB_WINDOW_BITS
-from ..exceptions import IdentNotSupportedError, InvalidResponseError, NoStoredConfigError, OpenDisplayTimeoutError
+from ..exceptions import (
+    AuthenticationRequiredError,
+    IdentNotSupportedError,
+    InvalidResponseError,
+    NoStoredConfigError,
+    OpenDisplayTimeoutError,
+)
 from ..firmware import updater
 from ..firmware.releases import can_roll_back
 from ..models.enums import FitMode, RefreshMode, Rotation
@@ -328,22 +334,28 @@ class Device:
         """
         if firmware is None:
             firmware = await self.legacy.read_firmware_version()
-        try:
-            config: GlobalConfig | None = await self.config.read()
-        except NoStoredConfigError:
-            config = None
-        ident: DeviceIdent | None = None
-        ident_missing = False
-        if firmware["major"] >= _IDENT_MIN_MAJOR:
-            try:
-                ident = await self.legacy.read_ident()
-            except IdentNotSupportedError:
-                ident_missing = True
-            except InvalidResponseError as err:
-                _LOGGER.warning("Ignoring a malformed identity reply from %s: %s", self.legacy.mac_address, err)
-                ident_missing = True
+        config = await self._read_config()
+        ident, ident_missing = await self._read_ident(firmware)
         self._profile = build_profile(firmware, config, ident, ident_missing=ident_missing)
         return self._profile
+
+    async def _read_config(self) -> GlobalConfig | None:
+        try:
+            return await self.config.read()
+        except NoStoredConfigError:
+            return None
+
+    async def _read_ident(self, firmware: FirmwareVersion) -> tuple[DeviceIdent | None, bool]:
+        """The identity, and whether a device that should answer READ_IDENT did not."""
+        if firmware["major"] < _IDENT_MIN_MAJOR:
+            return None, False
+        try:
+            return await self.legacy.read_ident(), False
+        except IdentNotSupportedError:
+            return None, True
+        except InvalidResponseError as err:
+            _LOGGER.warning("Ignoring a malformed identity reply from %s: %s", self.legacy.mac_address, err)
+            return None, True
 
     async def _first_read(self) -> FirmwareVersion:
         """The firmware version; a silence with no redraw noted says the display may be redrawing."""
@@ -357,9 +369,17 @@ class Device:
     async def __aenter__(self) -> Device:
         await self.legacy.__aenter__()
         try:
-            firmware = await self._first_read()
-            await self.security.establish(firmware["major"])
-            await self.refresh(firmware)
+            try:
+                firmware = await self._first_read()
+            except AuthenticationRequiredError:
+                # Firmware_Silabs 2.x with encryption on answers even the version only in a session.
+                if not await self.security.open_legacy_session():
+                    raise
+                firmware = await self._first_read()
+            ident, ident_missing = await self._read_ident(firmware)
+            await self.security.establish(firmware["major"], ident)
+            config = await self._read_config()
+            self._profile = build_profile(firmware, config, ident, ident_missing=ident_missing)
         except BaseException:
             with suppress(Exception):
                 await self.legacy.__aexit__(None, None, None)
