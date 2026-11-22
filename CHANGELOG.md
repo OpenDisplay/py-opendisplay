@@ -1,5 +1,19 @@
 # Changelog
 
+## [8.3.0](https://github.com/OpenDisplay/py-opendisplay/compare/v8.2.0...v8.3.0) (2026-11-22)
+
+
+### Features
+
+* export Sec2KeyRequiredError and DeviceLockedError from opendisplay ([13e6698](https://github.com/OpenDisplay/py-opendisplay/commit/13e669871d9302b608e9413fd45d67a8bbdde681))
+
+
+### Bug Fixes
+
+* **config-json:** use the Toolbox field names and keep touch/flash pins ([2c6cd28](https://github.com/OpenDisplay/py-opendisplay/commit/2c6cd28a4d2fee729419819a346a913d365ab27a))
+* connect() to a 2.x BG22 with encryption on and to 3.0 builds without SEC2 ([ad36f37](https://github.com/OpenDisplay/py-opendisplay/commit/ad36f377a2665b56f1cf91265368fe25244d110c))
+* warn about the BWR/BWY plane and width bugs only on firmware before 2.10 ([38582bd](https://github.com/OpenDisplay/py-opendisplay/commit/38582bde31c63a9143895f68be6def6288c02452))
+
 ## [8.2.0](https://github.com/OpenDisplay/py-opendisplay/compare/v8.1.1...v8.2.0) (2026-11-21)
 
 
