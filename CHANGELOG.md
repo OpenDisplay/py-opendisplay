@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.3.1](https://github.com/OpenDisplay/py-opendisplay/compare/v8.3.0...v8.3.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* connect() runs no 2.x handshake over LAN ([cfbd913](https://github.com/OpenDisplay/py-opendisplay/commit/cfbd9131038c43779ad6b2824f5a7b2ffed4086b))
+
 ## [8.3.0](https://github.com/OpenDisplay/py-opendisplay/compare/v8.2.0...v8.3.0) (2026-11-22)
 
 
