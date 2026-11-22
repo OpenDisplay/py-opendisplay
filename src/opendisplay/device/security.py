@@ -112,8 +112,14 @@ class SecurityView:
     # ── connect ──────────────────────────────────────────────────────────────
 
     async def open_legacy_session(self) -> bool:
-        """Run the 2.x handshake with the given key; ``False`` when there is no 2.x key to use."""
+        """Run the 2.x handshake with the given key; ``False`` when there is no 2.x key to use.
+
+        Never over LAN: the device trusts frames there by origin (TLS or plaintext), and the
+        handshake would encrypt them a second time.
+        """
         if self._credential is None or isinstance(self._credential, DeviceKey):
+            return False
+        if isinstance(self._transport(), TcpTransport):
             return False
         await self._legacy.authenticate(bytes(self._credential))
         self._legacy_session_open = True
