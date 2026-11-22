@@ -225,10 +225,10 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
                     "color_scheme": str(display.color_scheme),
                     "transmission_modes": f"0x{display.transmission_modes:x}",
                     "clk_pin": f"0x{display.clk_pin:x}",
-                    # reserved_pins holds GPIO pins 2-8 (7 bytes); export the real
+                    # reserved_pins holds cs_pin_2 then reserved_pin_3..8; export the real
                     # values so a JSON round-trip does not zero real hardware pins.
                     **{
-                        f"reserved_pin_{i + 2}": f"0x{display.reserved_pins[i]:x}"
+                        ("cs_pin_2" if i == 0 else f"reserved_pin_{i + 2}"): f"0x{display.reserved_pins[i]:x}"
                         if i < len(display.reserved_pins)
                         else "0x0"
                         for i in range(7)
@@ -310,14 +310,15 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
                     "instance_number": f"0x{binary_input.instance_number:x}",
                     "input_type": str(binary_input.input_type),
                     "display_as": str(binary_input.display_as),
-                    # 8 GPIO reserved pins; export the real values.
+                    # The 8 input GPIOs (model: reserved_pins) and the pins-used bitmap
+                    # (model: input_flags), under the Toolbox's names.
                     **{
-                        f"reserved_pin_{i + 1}": f"0x{binary_input.reserved_pins[i]:x}"
+                        f"inputpin{i + 1}": f"0x{binary_input.reserved_pins[i]:x}"
                         if i < len(binary_input.reserved_pins)
                         else "0x0"
                         for i in range(8)
                     },
-                    "input_flags": f"0x{binary_input.input_flags:x}",
+                    "isused": f"0x{binary_input.input_flags:x}",
                     "invert": f"0x{binary_input.invert:x}",
                     "pullups": f"0x{binary_input.pullups:x}",
                     "pulldowns": f"0x{binary_input.pulldowns:x}",
@@ -383,6 +384,7 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
                     "flags": f"0x{tc.flags:02x}",
                     "poll_interval_ms": str(tc.poll_interval_ms),
                     "touch_data_start_byte": str(tc.touch_data_start_byte),
+                    "enable_pin": f"0x{tc.reserved[0]:02x}",  # model: reserved[0]
                     "reserved": "0x0",
                 },
             }
@@ -452,6 +454,10 @@ def config_to_json(config: GlobalConfig) -> dict[str, Any]:
                     "power_on_delay_ms": f"0x{flash.power_on_delay_ms:x}",
                     "power_off_delay_ms": f"0x{flash.power_off_delay_ms:x}",
                     "mode": f"0x{flash.mode:x}",
+                    # model: reserved[0..2]
+                    "miso_pin": f"0x{flash.reserved[0]:02x}",
+                    "wp_pin": f"0x{flash.reserved[1]:02x}",
+                    "hold_pin": f"0x{flash.reserved[2]:02x}",
                     "reserved": "0x0",
                 },
             }
@@ -607,7 +613,10 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                     color_scheme=_parse_int(fields.get("color_scheme", "0")),
                     transmission_modes=_parse_int(fields.get("transmission_modes", "0")),
                     clk_pin=_parse_int(fields.get("clk_pin", "0xff")),
-                    reserved_pins=bytes(_parse_int(fields.get(f"reserved_pin_{i}", "0")) & 0xFF for i in range(2, 9)),
+                    reserved_pins=bytes(
+                        [_parse_int(fields.get("cs_pin_2", "0")) & 0xFF]
+                        + [_parse_int(fields.get(f"reserved_pin_{i}", "0")) & 0xFF for i in range(3, 9)]
+                    ),
                     full_update_mC=_parse_int(fields.get("full_update_mC", "0")),
                     reserved=_parse_hex_bytes(fields.get("reserved", "0x0"), 13),
                 )
@@ -665,8 +674,8 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                     instance_number=_parse_int(fields.get("instance_number", "0")),
                     input_type=_parse_int(fields.get("input_type", "0")),
                     display_as=_parse_int(fields.get("display_as", "0")),
-                    reserved_pins=bytes(_parse_int(fields.get(f"reserved_pin_{i}", "0")) & 0xFF for i in range(1, 9)),
-                    input_flags=_parse_int(fields.get("input_flags", "0")),
+                    reserved_pins=bytes(_parse_int(fields.get(f"inputpin{i}", "0")) & 0xFF for i in range(1, 9)),
+                    input_flags=_parse_int(fields.get("isused", "0")),
                     invert=_parse_int(fields.get("invert", "0")),
                     pullups=_parse_int(fields.get("pullups", "0")),
                     pulldowns=_parse_int(fields.get("pulldowns", "0")),
@@ -714,7 +723,8 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                     flags=_parse_int(fields.get("flags", "0")),
                     poll_interval_ms=_parse_int(fields.get("poll_interval_ms", "0")),
                     touch_data_start_byte=_parse_int(fields.get("touch_data_start_byte", "0")),
-                    reserved=bytes(21),
+                    # enable_pin is reserved[0] in the model
+                    reserved=bytes([_parse_int(fields.get("enable_pin", "0")) & 0xFF]) + bytes(20),
                 )
             )
 
@@ -768,7 +778,11 @@ def config_from_json(data: dict[str, Any]) -> GlobalConfig:
                     power_on_delay_ms=_parse_int(fields.get("power_on_delay_ms", "0")),
                     power_off_delay_ms=_parse_int(fields.get("power_off_delay_ms", "0")),
                     mode=_parse_int(fields.get("mode", "0")),
-                    reserved=bytes(20),
+                    # miso_pin / wp_pin / hold_pin are reserved[0..2] in the model
+                    reserved=bytes(
+                        _parse_int(fields.get(name, "0")) & 0xFF for name in ("miso_pin", "wp_pin", "hold_pin")
+                    )
+                    + bytes(17),
                 )
             )
 

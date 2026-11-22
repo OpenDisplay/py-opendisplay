@@ -231,7 +231,7 @@ def test_config_from_json_binary_input_reads_button_data_byte_index() -> None:
                 "instance_number": "0x0",
                 "input_type": "1",
                 "display_as": "0",
-                "input_flags": "0x0",
+                "isused": "0x0",
                 "invert": "0x0",
                 "pullups": "0x0",
                 "pulldowns": "0x0",
