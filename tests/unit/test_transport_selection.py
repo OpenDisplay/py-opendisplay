@@ -163,3 +163,29 @@ async def test_ble_with_key_authenticates(monkeypatch: pytest.MonkeyPatch) -> No
     dev = OpenDisplayDevice(mac_address="AA:BB:CC:DD:EE:FF", encryption_key=b"0123456789abcdef", capabilities=_caps())
     async with dev:
         assert calls == [b"0123456789abcdef"]
+
+
+class _ScriptedTcp(_SpyTcp):
+    """A TCP link that answers from a script: a 2.x device with no stored config."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.replies = [b"\x00\x43\x02\x1b\x28" + b"0" * 40 + b"\x01", bytes.fromhex("ff400000")]
+
+    async def read_response(self, timeout: float = 5.0) -> bytes:
+        return self.replies.pop(0)
+
+
+async def test_connect_over_tcp_with_a_2x_key_does_not_authenticate(monkeypatch: pytest.MonkeyPatch) -> None:
+    import opendisplay
+
+    monkeypatch.setattr(device_mod, "TcpTransport", _ScriptedTcp)
+    calls: list[bytes] = []
+
+    async def _spy_auth(self: OpenDisplayDevice, key: bytes) -> None:
+        calls.append(key)
+
+    monkeypatch.setattr(OpenDisplayDevice, "authenticate", _spy_auth)
+    async with opendisplay.connect(host="10.0.0.5", encryption_key=b"0123456789abcdef") as dev:
+        assert dev.profile.firmware["major"] == 2
+        assert calls == []

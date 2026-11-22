@@ -479,9 +479,11 @@ Piece 2 was split: 2a is pure reading, 2b is `DeviceProfile` plus `opendisplay.c
   third-party firmware says a device must only provide 0x20: the opposite gap of the one 3a
   handles (0x20 present, the rest missing) will need handling one day. 3a makes only the display
   packet optional.
-- **For piece 6:** `connect()` does not yet pass `max_attempts`, `use_services_cache`,
-  `discovery_timeout`, `blocks_per_ack`, `max_queue_size` or `use_measured_palettes` through.
-  Home Assistant passes none of them today.
+- **Piece 6, decided 2026-11-22:** `connect()` does not pass the facade's tuning arguments
+  through, and does not need to. `use_measured_palettes` is a per-upload choice
+  (`dev.display.show()`, `prepare_image()`); a caller that wants a short connect budget puts a
+  deadline around entering `connect()`; the custom integration drops its `blocks_per_ack` /
+  `max_queue_size` options, so the library defaults and the device's advertised limits apply.
 - **For 3b: measured colours.** 0xB0 calibration packets are host-only, "the renderable palette
   of one multi-pass mode", flagged "measured on this unit". Mode 0 has no 0xB0 in the captured
   config, so the library's per-panel measured palettes (`display_palettes.py`, keyed by
