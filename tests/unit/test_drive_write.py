@@ -118,6 +118,12 @@ def test_an_unnamed_refusal_names_its_code() -> None:
         parse_drive_write_start(bytes([0xFF, 0x85, 0x03, 0x01]))
 
 
+def test_an_etag_mismatch_is_named() -> None:
+    """Protocol 2.5 refusal 0x09 (flag ETAG): named, not reported as an unknown error."""
+    with pytest.raises(InvalidResponseError, match=r"0x09 \(the panel does not show the frame the etag names\)"):
+        parse_drive_write_start(bytes([0xFF, 0x85, 0x09, 0x00]))
+
+
 # ── the transfer ─────────────────────────────────────────────────────────────
 
 
