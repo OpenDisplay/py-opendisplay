@@ -149,6 +149,34 @@ def test_interrogate_still_reports_error_frame_after_a_stray() -> None:
         asyncio.run(device.interrogate())
 
 
+def test_read_firmware_version_ignores_stray_frame_from_another_command(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A late READ_CONFIG reply must not be parsed as the firmware-version
+    reply: it hard-fails the echo check (expected 0x0043, got 0x0040)."""
+    device = _make_device()
+    stray = b"\x00\x40" + b"\x00\x00" + (100).to_bytes(2, "little") + b"\x01" * 10
+    real = b"\x00\x43\x01\x05\x07gaberin"  # version 1.5, SHA "gaberin"
+    device._attach(_ScriptedConn([stray, real]))  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.WARNING, logger="opendisplay.device"):
+        result = asyncio.run(device.read_firmware_version())
+
+    assert result == {"major": 1, "minor": 5, "sha": "gaberin", "patch": 0}
+    assert "Ignoring stray READ_CONFIG (0x0040) frame" in caplog.text
+    assert device._connection._responses == []  # type: ignore[attr-defined]
+
+
+def test_read_firmware_version_gives_up_after_too_many_stray_frames() -> None:
+    device = _make_device()
+    stray = b"\x00\x40\x00\x00"
+    strays: list[bytes | Exception] = [stray] * (OpenDisplayDevice.MAX_STRAY_CONFIG_FRAMES + 1)
+    device._attach(_ScriptedConn(strays))  # type: ignore[arg-type]
+
+    with pytest.raises(ProtocolError, match="frames from other commands"):
+        asyncio.run(device.read_firmware_version())
+
+
 def test_is_compressed_failure_frame_accepts_both_forms() -> None:
     """Both the legacy {0xFF,0xFF} and spec-conformant {0xFF,0x70} count as failures."""
     assert is_compressed_failure_frame(b"\xff\xff") is True

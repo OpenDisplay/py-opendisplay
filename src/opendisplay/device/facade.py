@@ -58,7 +58,9 @@ from ..protocol import (
     validate_ack_response,
 )
 from ..protocol.responses import (
+    describe_command_code,
     is_ident_unsupported_frame,
+    matches_command_echo,
     parse_read_ident,
     parse_read_msd,
     raise_for_config_write_refusal,
@@ -698,8 +700,27 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
         cmd = build_read_fw_version_command()
         await self._conn.write_command(cmd)
 
-        # Read response
-        response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
+        # Read response, skipping frames from other commands (e.g. a late
+        # READ_CONFIG reply): the queue has no request/response correlation,
+        # so the first notification is not necessarily this command's reply.
+        for _ in range(self.MAX_STRAY_CONFIG_FRAMES + 1):
+            response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
+            if matches_command_echo(response, CommandCode.READ_FW_VERSION):
+                break
+            _LOGGER.warning(
+                "Ignoring stray %s frame (%d B) while reading firmware version",
+                (
+                    describe_command_code(unpack_command_code(response))
+                    if len(response) >= 2
+                    else f"malformed {response.hex() or '<empty>'}"
+                ),
+                len(response),
+            )
+        else:
+            raise ProtocolError(
+                f"Firmware version read aborted: more than {self.MAX_STRAY_CONFIG_FRAMES} frames from other "
+                "commands arrived while waiting for a firmware version response"
+            )
 
         # Parse version (includes SHA hash)
         self._fw_version = parse_firmware_version(response)
