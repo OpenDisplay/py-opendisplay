@@ -7,6 +7,7 @@ legacy ``interrogate()`` and the new ``Device`` can parse the same bytes strictl
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 
 from ..exceptions import NoStoredConfigError, OpenDisplayTimeoutError, ProtocolError, TruncatedConfigError
 from ..protocol import CommandCode, build_read_config_command
@@ -16,45 +17,64 @@ from .channel import SecureChannel
 _LOGGER = logging.getLogger(__name__)
 
 
-async def _read_config_frame(channel: SecureChannel, timeout: float, max_stray: int) -> bytes:
-    """Read the next READ_CONFIG frame, ignoring frames from other commands.
+async def read_matching_echo(
+    read: Callable[[float], Awaitable[bytes]],
+    expected: CommandCode,
+    timeout: float,
+    max_stray: int,
+    *,
+    purpose: str,
+    allow_nack: bool = False,
+) -> bytes:
+    """Read until a frame echoes ``expected``, ignoring frames from other commands.
 
     The notification queue has no request/response correlation, so a frame
     belonging to a different exchange — a duplicated response, or one the
     firmware held in its TX ring until notifications were enabled — can land
-    mid-transfer. It must not reach ``strip_command_echo``, which returns a
-    non-matching frame *unchanged*: its 2-byte echo would then be consumed as
-    the chunk-number field and its body spliced into the config, silently
-    corrupting it (no length check catches this — the loop only counts bytes).
-    Skipping such frames keeps the config read on its own command stream.
+    mid-transfer. Skipping such frames keeps each command on its own stream.
 
-    The device's no-config error frame ({0xFF, 0x40, ...}) is passed through
-    rather than skipped: it answers this command and the caller reports it.
+    When ``allow_nack`` is true, a NACK form ``{0xFF, <cmd low byte>, ...}`` for
+    ``expected`` is returned rather than skipped (config read uses this).
 
     Raises:
         OpenDisplayTimeoutError: If no frame arrives within ``timeout``
-        ProtocolError: If more than ``max_stray`` foreign frames arrive while
-            waiting for this chunk
+        ProtocolError: If more than ``max_stray`` foreign frames arrive first
     """
     for _ in range(max_stray + 1):
-        response = await channel.read(timeout)
-        if matches_command_echo(response, CommandCode.READ_CONFIG):
+        response = await read(timeout)
+        if matches_command_echo(response, expected):
             return response
-        # NACK form of the same command: {0xFF, <cmd low byte>, ...}
-        if len(response) >= 2 and response[0] == 0xFF and response[1] == CommandCode.READ_CONFIG:
+        if allow_nack and len(response) >= 2 and response[0] == 0xFF and response[1] == (expected & 0xFF):
             return response
         _LOGGER.warning(
-            "Ignoring stray %s frame (%d B) while reading config",
+            "Ignoring stray %s frame (%d B) while reading %s",
             (
                 describe_command_code(unpack_command_code(response))
                 if len(response) >= 2
                 else f"malformed {response.hex() or '<empty>'}"
             ),
             len(response),
+            purpose,
         )
     raise ProtocolError(
-        f"Config read aborted: more than {max_stray} frames from other "
-        "commands arrived while waiting for a config chunk"
+        f"{purpose} read aborted: more than {max_stray} frames from other "
+        f"commands arrived while waiting for a {purpose} response"
+    )
+
+
+async def _read_config_frame(channel: SecureChannel, timeout: float, max_stray: int) -> bytes:
+    """Read the next READ_CONFIG frame, ignoring frames from other commands.
+
+    The device's no-config error frame ({0xFF, 0x40, ...}) is passed through
+    rather than skipped: it answers this command and the caller reports it.
+    """
+    return await read_matching_echo(
+        channel.read,
+        CommandCode.READ_CONFIG,
+        timeout,
+        max_stray,
+        purpose="config",
+        allow_nack=True,
     )
 
 
