@@ -28,6 +28,7 @@ from ..exceptions import (
     AuthenticationRequiredError,
     AuthenticationSessionExistsError,
     IntegrityCheckError,
+    OpenDisplayTimeoutError,
     ProtocolError,
 )
 from ..protocol import (
@@ -342,9 +343,24 @@ class SecureChannel:
         Inside a SEC2 session an unsealed frame outside the plaintext set, and a sealed frame
         with a stale counter or a bad tag, are discarded (SECURITY_V2.md § 9.5); the third bad
         tag raises ``Sec2SessionLostError`` from the session.
+
+        Firmware_Unified before 6ad0ee0 sent a handler's refusal (``[FF][cmd][err]...``: a
+        config write with the wrong key, BUSY, a refused upload START) unsealed inside a session.
+        Such a frame is still discarded, since nothing proves the device sent it, but a timeout
+        that follows names it so the caller can tell a refusal from a silent device.
         """
+        discarded_refusal: bytes | None = None
         for _ in range(_MAX_DISCARDED_FRAMES + 1):
-            raw = await self.transport.read_response(timeout=timeout)
+            try:
+                raw = await self.transport.read_response(timeout=timeout)
+            except OpenDisplayTimeoutError as err:
+                if discarded_refusal is None:
+                    raise
+                raise type(err)(
+                    f"{err}; the device sent an unsealed refusal {discarded_refusal.hex()} that the session "
+                    "discarded (firmware before Firmware_Unified 6ad0ee0 does not seal refusals; update it "
+                    "to see the reason)"
+                ) from err
             session = self.session
             if session is None:
                 return raw, False
@@ -357,6 +373,8 @@ class SecureChannel:
             if session.allows_plaintext(raw):
                 return raw, False
             _LOGGER.warning("Discarding an unsealed %d-byte frame the session does not allow", len(raw))
+            if len(raw) >= 3 and raw[0] == 0xFF:
+                discarded_refusal = raw[:8]
         raise ProtocolError(f"More than {_MAX_DISCARDED_FRAMES} frames were discarded while waiting for an answer")
 
     def start_payload_limit(self) -> int:
