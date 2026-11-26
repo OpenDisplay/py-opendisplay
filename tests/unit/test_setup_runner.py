@@ -589,3 +589,29 @@ async def test_the_manifest_may_be_fetched_only_when_a_2x_device_needs_it() -> N
     assert isinstance(await run.run_until_input(_factory(legacy)), rq.NeedBoardChoice)
     assert isinstance(await run.run_until_input(_factory(legacy)), rq.NeedBoardChoice)
     assert asked == ["manifest"]  # once
+
+
+@pytest.mark.parametrize("scheme", list(ColorScheme))
+def test_panel_pattern_has_a_band_per_ink_of_the_scheme(scheme: ColorScheme) -> None:
+    """Every scheme, the split ones included, gets one solid band per ink of its palette."""
+    from opendisplay.display_palettes import IDEAL_PALETTE_FILES, load_palette_file
+
+    inks = load_palette_file(IDEAL_PALETTE_FILES[scheme]).entries
+    image, names = runner_mod.panel_pattern(1200, 1600, int(scheme))
+    assert names == tuple(e.name for e in inks)
+    step = 1200 // len(inks)
+    for i, ink in enumerate(inks):
+        assert image.getpixel((i * step + step // 2, 800)) == ink.nominal
+
+
+def test_panel_pattern_of_a_split_scheme_shows_all_six_inks() -> None:
+    """BWGBRY_SPLIT once fell back to black and white (EE02, 2026-11-26)."""
+    _, names = runner_mod.panel_pattern(1200, 1600, int(ColorScheme.BWGBRY_SPLIT))
+    assert set(names) == {"black", "white", "yellow", "red", "blue", "green"}
+
+
+def test_panel_pattern_of_an_unknown_scheme_is_black_and_white() -> None:
+    _, names = runner_mod.panel_pattern(400, 300, None)
+    assert names == ("black", "white")
+    _, names = runner_mod.panel_pattern(400, 300, 99)
+    assert names == ("black", "white")

@@ -27,6 +27,7 @@ from epaper_dithering import DitherMode
 from PIL import Image, ImageDraw
 
 from .. import redraw
+from ..display_palettes import IDEAL_PALETTE_FILES, load_palette_file
 from ..exceptions import OpenDisplayError
 from ..firmware import smp
 from ..firmware.releases import BoardRelease, ReleaseManifest
@@ -57,28 +58,6 @@ _CHIPS: Final[dict[int, str]] = {
     ICType.EFR32BG22: "efr32bg22",
 }
 _REMEMBERED: Final = frozenset({Step.BACK_UP, Step.CONFIRM_IMAGE, Step.VERIFY_PANEL, Step.SECRETS})
-_BLACK, _WHITE, _RED, _YELLOW = (0, 0, 0), (255, 255, 255), (255, 0, 0), (255, 255, 0)
-_PATTERNS: Final[dict[int, tuple[tuple[str, tuple[int, int, int]], ...]]] = {
-    ColorScheme.MONO: (("black", _BLACK), ("white", _WHITE)),
-    ColorScheme.BWR: (("black", _BLACK), ("white", _WHITE), ("red", _RED)),
-    ColorScheme.BWY: (("black", _BLACK), ("white", _WHITE), ("yellow", _YELLOW)),
-    ColorScheme.BWRY: (("black", _BLACK), ("white", _WHITE), ("red", _RED), ("yellow", _YELLOW)),
-    ColorScheme.BWGBRY: (
-        ("black", _BLACK),
-        ("white", _WHITE),
-        ("green", (0, 255, 0)),
-        ("blue", (0, 0, 255)),
-        ("red", _RED),
-        ("yellow", _YELLOW),
-    ),
-    ColorScheme.GRAYSCALE_4: (
-        ("black", _BLACK),
-        ("dark gray", (85, 85, 85)),
-        ("light gray", (170, 170, 170)),
-        ("white", _WHITE),
-    ),
-}
-
 DeviceFactory = Callable[[], AbstractAsyncContextManager[Any]]
 ManifestSource = ReleaseManifest | Callable[[], Awaitable[ReleaseManifest]]
 FetchImage = Callable[[str], Awaitable[bytes]]
@@ -90,14 +69,25 @@ class SetupError(OpenDisplayError):
 
 
 def panel_pattern(width: int, height: int, scheme: int | None) -> tuple[Image.Image, tuple[str, ...]]:
-    """Vertical bands of every colour the scheme has, and their names left to right."""
-    bands = _PATTERNS.get(scheme if scheme is not None else -1, _PATTERNS[ColorScheme.MONO])
-    image = Image.new("RGB", (width, height), _WHITE)
+    """Vertical bands of every ink the scheme has, and their names left to right.
+
+    The inks are the scheme's idealised palette, so every scheme gets its own bands, the split
+    ones included. An unknown scheme gets black and white.
+    """
+    try:
+        known = ColorScheme.from_value(scheme) if scheme is not None else ColorScheme.MONO
+    except ValueError:
+        known = ColorScheme.MONO
+    palette = load_palette_file(IDEAL_PALETTE_FILES[known])
+    colours = [ink.nominal or shown for ink, shown in zip(palette.entries, palette.preview_rgb(), strict=True)]
+    names = tuple(ink.name or "#" + bytes(colour).hex() for ink, colour in zip(palette.entries, colours, strict=True))
+    image = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(image)
-    step = width // len(bands)
-    for i, (_, colour) in enumerate(bands):
-        draw.rectangle((i * step, 0, width - 1 if i == len(bands) - 1 else (i + 1) * step - 1, height - 1), fill=colour)
-    return image, tuple(name for name, _ in bands)
+    step = width // len(colours)
+    for i, colour in enumerate(colours):
+        right = width - 1 if i == len(colours) - 1 else (i + 1) * step - 1
+        draw.rectangle((i * step, 0, right, height - 1), fill=colour)
+    return image, names
 
 
 class SetupRun:  # pylint: disable=too-many-instance-attributes
