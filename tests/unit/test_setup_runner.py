@@ -150,6 +150,7 @@ class _Dev:
         self.config = SimpleNamespace(cached=w.config, read=read, write=write)
         self.legacy = SimpleNamespace(
             mac_address="AA:BB:CC:DD:EE:FF",
+            device_name="OD123456",
             trigger_dfu_bootloader=trigger_dfu_bootloader,
             read_ident=read_ident,
             _redraw_keys=lambda: ("AA:BB:CC:DD:EE:FF",),
@@ -222,7 +223,9 @@ async def test_a_virgin_device_is_configured_checked_and_claimed() -> None:
 
     req = await run.run_until_input(_factory(world))
     assert isinstance(req, rq.NeedConfirmation) and req.reason == "panel_ok"
-    assert "show:800x480" in world.calls and "config_write" in world.calls
+    # Claim mode refuses every draw: the check is the device's own SETUP MODE screen.
+    assert "config_write" in world.calls and not any(c.startswith("show:") for c in world.calls)
+    assert "SETUP MODE" in req.detail and "OD123456" in req.detail
     run.answer(req, True)
 
     req = await run.run_until_input(_factory(world))
@@ -286,6 +289,22 @@ async def test_claim_mode_without_a_key_is_left_and_the_device_configured() -> N
 
     assert world.calls.count("use_without_key") == 1 and not world.claim_mode
     assert isinstance(req, rq.NeedConfig)  # no config, no backup: the caller supplies one
+
+
+async def test_an_undecided_run_in_claim_mode_checks_the_setup_screen_and_draws_nothing() -> None:
+    # The EE02 on 2026-11-26: a fresh 3.1.1 device refused the test pattern (NACK 0x70).
+    world = _World(claim_mode=True, fresh=True)
+    run = SetupRun.start(want_key=None, backup_sink=lambda b: None, manifest=MANIFEST)
+
+    req = await run.run_until_input(_factory(world))
+    run.answer(req, _config(displays=[_display(panel_ic_type=0x0037)]))
+    req = await run.run_until_input(_factory(world))
+    run.answer(req, True)  # untested panel
+
+    req = await run.run_until_input(_factory(world))
+    assert isinstance(req, rq.NeedConfirmation) and req.reason == "panel_ok"
+    assert "SETUP MODE" in req.detail
+    assert not any(c.startswith("show:") for c in world.calls)
 
 
 async def test_a_config_the_run_wrote_is_checked_on_the_panel_also_without_a_key() -> None:
