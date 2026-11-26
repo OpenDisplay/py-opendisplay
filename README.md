@@ -561,6 +561,10 @@ async with opendisplay.connect(name="OD4064C9") as dev:
   over SMP, which is correct.
 - **Home Assistant** passes `find_device=` (a coroutine giving the `BLEDevice` for an address),
   so the update works through an ESPHome Bluetooth proxy.
+- **A stalled or dropped transfer** goes on over a new link at 8 writes per request (what an
+  ESPHome proxy's queue carries), up to three times, stopping when a link gains nothing. From 3.1.1
+  an ESP32 keeps the upload for 120 s after a drop, so each new link resumes where the last one
+  stopped; firmware that dropped it refuses the resume, and the upload starts over from 0.
 - **Which image**: from 3.1 on a device reports its release board in READ_IDENT
   (`dev.profile.ident.board`, for example `s3-n16r8`; several boards share a chip), and
   `ReleaseManifest.ble_ota_file(board)` names its image. Older firmware reports none (`None`).
