@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import gzip
 import hashlib
 import json
@@ -12,6 +13,7 @@ import pytest
 
 from opendisplay.models.config import GlobalConfig
 from opendisplay.models.ident import FirmwareTarget
+from opendisplay.models.panel_drive import LengthPrefixedPacket
 from opendisplay.panels import NativeController, PanelDatabase, PanelEntry, TargetClass, target_class_for
 from opendisplay.panels.database import check_drive_packets_fit, needs_drive_data
 
@@ -217,3 +219,29 @@ def test_nrf52811_panel_for_prefers_entries_derived_from_the_2x_driver() -> None
     db = PanelDatabase(_doc({}), {TargetClass.NRF52811: _doc({"0xE001": panel(None), "0xE005": panel(4)})})
 
     assert db.nrf52811_panel_for(1001) == 0xE005
+
+
+def _with_tail(packets: tuple[LengthPrefixedPacket, ...], packet_type: int, tail: bytes) -> list[LengthPrefixedPacket]:
+    return [dataclasses.replace(p, body=p.body + tail) if p.packet_type == packet_type else p for p in packets]
+
+
+def test_a_mode_or_panel_tail_after_the_sequence_still_fits() -> None:
+    """Schema 1.4 (release 3.1.0) appends tails; the device reads them by length (REFRESH_MODES.md)."""
+    entry = DB.entry_for(0x0023, TargetClass.DEFAULT)
+    assert entry is not None and not check_drive_packets_fit(entry.packets, TargetClass.DEFAULT)
+
+    mode_tail = bytes([1, 0x01, 2, 0xFF])  # ext_version, EXPERIMENTAL, budget_cost, no scrub
+    panel_tail = bytes([1, 0, 0, 1, 0, 0, 0xFF, 1, 40])  # ext_version ... lut_family, busy_timeout_s
+    packets = _with_tail(_with_tail(entry.packets, 0xAE, mode_tail), 0xB1, panel_tail)
+
+    assert check_drive_packets_fit(packets, TargetClass.DEFAULT) == []
+
+
+def test_a_body_shorter_than_its_sequence_is_still_refused() -> None:
+    entry = DB.entry_for(0x0023, TargetClass.DEFAULT)
+    assert entry is not None
+    cut = [dataclasses.replace(p, body=p.body[:-1]) if p.packet_type == 0xAE else p for p in entry.packets]
+
+    problems = check_drive_packets_fit(cut, TargetClass.DEFAULT)
+
+    assert problems and "seq_len" in problems[0]
