@@ -6,7 +6,6 @@ import dataclasses
 import gzip
 import hashlib
 import json
-import re
 from importlib.resources import files
 
 import pytest
@@ -29,12 +28,12 @@ def _minimal_config(packets: tuple) -> GlobalConfig:
 
 
 def test_packaged_files_match_the_recorded_sha256() -> None:
-    record = _PANELS.joinpath("SOURCE.md").read_text(encoding="utf-8")
-    for name in ("drive_presets.json.gz", "drive_presets_nrf52811.json.gz"):
-        row = next(line for line in record.splitlines() if f"`{name}`" in line)
-        expected = re.findall(r"`([0-9a-f]{64})`", row)[0]
-
-        assert hashlib.sha256(gzip.decompress(_PANELS.joinpath(name).read_bytes())).hexdigest() == expected
+    """``source.json`` is written by tools/sync_drive_presets.py; a hand-edited copy fails here."""
+    record = json.loads(_PANELS.joinpath("source.json").read_text(encoding="utf-8"))
+    assert set(record["files"]) == {"drive_presets.json.gz", "drive_presets_nrf52811.json.gz"}
+    for name, entry in record["files"].items():
+        data = gzip.decompress(_PANELS.joinpath(name).read_bytes())
+        assert hashlib.sha256(data).hexdigest() == entry["sha256"]
 
 
 def test_database_loads_and_declares_its_schema() -> None:
@@ -111,7 +110,9 @@ def test_glass_verified_panels_are_marked() -> None:
     entries = [DB.entry_for(i, TargetClass.DEFAULT) for i in DB.panel_ids()]
     glass = [e for e in entries if e is not None and e.usable and e.verified == "glass"]
 
-    assert len(glass) == in_file == 7
+    # Which panels are glass-verified is data (a sync may add or drop reports, and the sync PR
+    # lists the changes); the code must mark exactly the ones the file marks.
+    assert in_file > 0 and len(glass) == in_file
 
 
 def test_nrf52811_panels_exist_only_on_their_class() -> None:

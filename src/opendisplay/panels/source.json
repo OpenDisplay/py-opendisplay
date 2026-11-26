@@ -1,0 +1,15 @@
+{
+  "repository": "OpenDisplay/Firmware_Unified",
+  "release": "3.1.1",
+  "commit": "7c3d11a34e0e0e2eac748cb4db2fa97d6c45db0b",
+  "files": {
+    "drive_presets.json.gz": {
+      "source": "drive_presets.json",
+      "sha256": "f201ec416c25903e5d589183dac8613b3780e308392bad17657b365c0a372922"
+    },
+    "drive_presets_nrf52811.json.gz": {
+      "source": "drive_presets_nrf52811.json",
+      "sha256": "dba76087e6345cdb915a02f0060df8a8fead04f9b18a2d9a661eda0f862f1b94"
+    }
+  }
+}
