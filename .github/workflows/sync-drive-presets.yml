@@ -1,0 +1,88 @@
+name: Sync drive presets
+
+# Keeps the bundled panel drive database (the offline fallback) in step with the latest
+# Firmware_Unified release. Opens or updates one pull request; never merges.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Firmware_Unified release tag (empty: the latest)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-drive-presets
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Sync from the release
+        id: sync
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          uv run --no-project python tools/sync_drive_presets.py ${RELEASE:+--release "$RELEASE"} \
+            --summary "$RUNNER_TEMP/changes.md"
+          tag=$(python3 -c "import json; print(json.load(open('src/opendisplay/panels/source.json'))['release'])")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git diff --quiet -- src/opendisplay/panels; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test the new data
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          uv sync --all-extras
+          uv run pytest tests/ -q
+
+      - name: Write the pull request body
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          TAG: ${{ steps.sync.outputs.tag }}
+        run: |
+          {
+            echo "\`tools/sync_drive_presets.py\` took the drive presets of Firmware_Unified release"
+            echo "\`$TAG\`, checked them against its \`manifest.json\`, and the test suite passed on them."
+            echo
+            echo "This copy is the offline fallback: \`setup\`, \`upgrade\` and \`migrate\` read the"
+            echo "release's own data when they can."
+            echo
+            echo "## What changed"
+            echo
+            if [ -s "$RUNNER_TEMP/changes.md" ]; then cat "$RUNNER_TEMP/changes.md"; else echo "Only the release record."; fi
+          } > "$RUNNER_TEMP/pr-body.md"
+
+      - name: Open or update the pull request
+        if: steps.sync.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          # A PR opened with the default token does not start the other workflows (tests, lint).
+          # PRESETS_SYNC_TOKEN (a GitHub App or fine-grained token with contents and
+          # pull-requests write) makes them run; without it the PR is opened all the same.
+          token: ${{ secrets.PRESETS_SYNC_TOKEN || github.token }}
+          branch: chore/sync-drive-presets
+          delete-branch: true
+          add-paths: src/opendisplay/panels
+          commit-message: "fix: update the bundled panel drive database to release ${{ steps.sync.outputs.tag }}"
+          title: "Update the bundled panel drive database to release ${{ steps.sync.outputs.tag }}"
+          body-path: ${{ runner.temp }}/pr-body.md
