@@ -171,20 +171,22 @@ def check_drive_packets_fit(
                 problems.append("0xAE body shorter than its 37-byte head")
                 continue
             seq_len = body[35] | (body[36] << 8)
-            if _MODE_HEAD + seq_len != len(body):
+            if _MODE_HEAD + seq_len > len(body):
                 problems.append(f"0xAE mode {body[1]}: seq_len {seq_len} does not match the body")
                 continue
-            seq, what, cap = body[_MODE_HEAD:], f"mode {body[1]}", None  # streamed: no byte cap
+            # Bytes after the sequence are the mode tail (schema 1.4), read by length and ignored here.
+            seq, what, cap = body[_MODE_HEAD : _MODE_HEAD + seq_len], f"mode {body[1]}", None  # streamed: no byte cap
         elif packet.packet_type == PACKET_TYPE_DISPLAY_PANEL:
             if len(body) < _PANEL_HEAD:
                 problems.append("0xB1 body shorter than its 13-byte head")
                 continue
-            if _PANEL_HEAD + body[12] != len(body):
+            if _PANEL_HEAD + body[12] > len(body):
                 problems.append(f"0xB1: sleep_seq_len {body[12]} does not match the body")
                 continue
             if not body[12]:
                 continue
-            seq, what, cap = body[_PANEL_HEAD:], "sleep sequence", limits.sleep_max
+            # Bytes after the sleep sequence are the panel tail (schema 1.4).
+            seq, what, cap = body[_PANEL_HEAD : _PANEL_HEAD + body[12]], "sleep sequence", limits.sleep_max
         else:
             continue
         walk = _walk_sequence(seq)
