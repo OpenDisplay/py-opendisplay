@@ -163,6 +163,14 @@ class ReleaseManifest:
         """Every board built for ``chip`` (``"esp32s3"``, ``"efr32bg22"``, ...)."""
         return [b for b in self.boards if b.chip == chip]
 
+    def ble_ota_file(self, board: str) -> str | None:
+        """The file a 3.x device of ``board`` takes over Bluetooth, or ``None``.
+
+        ``board`` is what READ_IDENT reports (``DeviceIdent.board``, Firmware_Unified #107).
+        """
+        release = self.board(board)
+        return release.ble_ota_files[0] if release is not None and release.ble_ota_files else None
+
     def artefact(self, file: str) -> Artefact | None:
         """The release file called ``file``, or ``None``."""
         return next((a for a in self.artefacts if a.file == file), None)

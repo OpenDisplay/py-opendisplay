@@ -120,3 +120,10 @@ def test_drive_presets_are_release_files_like_any_other() -> None:
 
 def test_a_release_before_3_1_has_no_drive_presets(manifest: ReleaseManifest) -> None:
     assert manifest.presets == ()
+
+
+def test_the_bluetooth_image_of_a_reported_board() -> None:
+    manifest = ReleaseManifest.parse(MANIFEST_311)
+
+    assert manifest.ble_ota_file("s3-n16r8") == "opendisplay-s3-n16r8-app.bin"
+    assert manifest.ble_ota_file("no-such-board") is None

@@ -5,8 +5,10 @@ Layout (Firmware_Unified ``shared/protocol/opendisplay_protocol.h``, CMD_READ_ID
     [0x00][0x46][proto_minor][fw_target][display_count]
     display_count x [panel_ic_type:2 LE][pixel_width:2 LE][pixel_height:2 LE][color_scheme:1]
     3.0 tail: [flags:1][max_config:2 LE][max_seq_steps:2 LE][escapes:1]
+    release board (Firmware_Unified #107): [board_len:1][board:board_len]
 
-A 2.x device ends after the display records; later firmware may append bytes after the tail.
+A 2.x device ends after the display records, and firmware before #107 after ``escapes``; later
+firmware may append more bytes.
 """
 
 from __future__ import annotations
@@ -55,8 +57,10 @@ class DeviceIdent:
     """What a device reports about itself.
 
     ``flags``, ``max_config``, ``max_seq_steps`` and ``escapes`` are ``None`` when the reply has
-    no 3.0 tail. ``flags`` is the raw byte: bits beyond the three named ones are set by 3.0
-    firmware and are kept so nothing is lost.
+    no 3.0 tail. ``board`` names the release board (``"s3-n16r8"``, ``"bg22"``) whose images the
+    device takes; ``None`` on firmware before that field, or one that is not a release build.
+    ``flags`` is the raw byte: bits beyond the three named ones are set by 3.0 firmware and are
+    kept so nothing is lost.
     """
 
     proto_minor: int
@@ -66,6 +70,7 @@ class DeviceIdent:
     max_config: int | None = None
     max_seq_steps: int | None = None
     escapes: int | None = None
+    board: str | None = None  # the release manifest's boards[].board; None if not reported
     extra: bytes = b""
 
     @property
