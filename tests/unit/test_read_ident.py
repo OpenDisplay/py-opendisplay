@@ -133,7 +133,9 @@ async def test_not_supported_says_whether_the_device_was_silent(fake_transport, 
     assert exc.value.timed_out is timed_out
 
 
-# The E1002 on 3.0.3 (captured 2026-11-26): one display record, the tail, no board field.
+# Captured 2026-11-26 from the E1002 running a 3.0.3 test build (Firmware_Unified
+# fix/esp32-firmware-version 63701e1, a release-workflow dry run, not a published release). It
+# predates the board field (#107): one display record, the tail, and nothing after it.
 E1002_303 = bytes.fromhex("004604010123002003e0010409a00f800003")
 
 
