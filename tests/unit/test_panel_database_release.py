@@ -114,3 +114,15 @@ async def test_a_failed_download_uses_the_bundled_copy(caplog: pytest.LogCapture
 
 async def test_the_bundled_copy_says_where_it_came_from() -> None:
     assert PanelDatabase.load().source == "bundled"
+
+
+async def test_two_main_files_or_none_use_the_bundled_copy(caplog: pytest.LogCaptureFixture) -> None:
+    main = _release_main()
+    two = _manifest({"a.json": (main, [1]), "b.json": (main, [2])})
+    only_class = _manifest({"drive_presets_nrf52811.json": (_NRF52811, [4])})
+
+    assert (await PanelDatabase.for_release(two, _fetcher({"a.json": main, "b.json": main}))).source == "bundled"
+    assert "second main" in caplog.text
+    db = await PanelDatabase.for_release(only_class, _fetcher({"drive_presets_nrf52811.json": _NRF52811}))
+    assert db.source == "bundled"
+    assert "no main" in caplog.text

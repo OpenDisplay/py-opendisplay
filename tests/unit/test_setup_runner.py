@@ -670,3 +670,20 @@ async def test_without_a_fetcher_the_bundled_drive_data_is_used() -> None:
     run.answer(req, _config(displays=[_display(panel_ic_type=0x0037)]))
     await run.run_until_input(_factory(world))
     assert _DBS_USED and set(_DBS_USED) == {"bundled"}
+
+
+async def test_a_manifest_that_cannot_be_read_leaves_the_bundled_drive_data() -> None:
+    world = _World(claim_mode=True, fresh=True)
+
+    async def manifest() -> ReleaseManifest:
+        raise OSError("offline")
+
+    async def fetch(name: str) -> bytes:
+        raise AssertionError("nothing to fetch without a manifest")
+
+    _DBS_USED.clear()
+    run = SetupRun.start(want_key=False, backup_sink=lambda b: None, manifest=manifest, fetch_image=fetch)
+    req = await run.run_until_input(_factory(world))
+    run.answer(req, _config(displays=[_display(panel_ic_type=0x0037)]))
+    await run.run_until_input(_factory(world))
+    assert _DBS_USED and set(_DBS_USED) == {"bundled"}
