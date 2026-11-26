@@ -43,6 +43,7 @@ class _Server:
         self.split: int | None = None
         self.stale_first = False
         self.stuck = False
+        self.active = False  # an upload is held (od_smp.cpp: s_ota_part != NULL)
 
     def handle(self, frame: bytes) -> list[bytes]:
         header, body = frame[:8], _cbor.decode(frame[8:]) if len(frame) > 8 else {}
@@ -72,9 +73,13 @@ class _Server:
     def _upload(self, body: dict[str, Any]) -> dict[str, Any]:
         if self.refuse_upload_with is not None:
             return {"rc": self.refuse_upload_with}
+        if body["off"] == 0:
+            self.active = True
         if body["off"] == 0 and not self.stuck:
             self.received.clear()
             self.off = 0
+        if not self.active:
+            return {"rc": 6}  # RC_BADSTATE: no upload held, as before Firmware_Unified #116 after a drop
         if body["off"] == self.off and not self.stuck:
             self.received.extend(body["data"])
             self.off += len(body["data"])
@@ -414,3 +419,47 @@ async def test_image_states_reads_every_field(server: _Server, links: _Links) ->
 
     assert running == smp.ImageState(0, "3.0.2", b"\x01" * 32, True, True, False, True)
     assert other == smp.ImageState(1, "3.0.3", None, False, False, True, False)
+
+
+async def test_an_upload_resumes_at_the_offset_the_device_still_holds(server: _Server, links: _Links) -> None:
+    """Firmware_Unified #116 (in 3.1.1): an ESP32 keeps an upload across a link drop."""
+    image = bytes(range(256)) * 40
+    server.received, server.off, server.active = bytearray(image[:4000]), 4000, True
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        await smp.upload(client, image, start=4000)
+
+    uploads = [body for (header, body) in server.requests if header[7] == 1]
+    assert uploads[0]["off"] == 4000 and "len" not in uploads[0] and "sha" not in uploads[0]
+    assert bytes(server.received) == image
+
+
+async def test_a_resume_the_device_refuses_starts_over_from_zero(server: _Server, links: _Links) -> None:
+    """Firmware without #116 dropped the upload with the link and answers a resume RC_BADSTATE."""
+    image = bytes(range(256)) * 40
+
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        await smp.upload(client, image, start=4000)
+
+    uploads = [body for (header, body) in server.requests if header[7] == 1]
+    assert uploads[0]["off"] == 4000
+    assert uploads[1]["off"] == 0 and uploads[1]["len"] == len(image) and "sha" in uploads[1]
+    assert bytes(server.received) == image
+
+
+async def test_a_stall_reports_the_last_offset_the_device_confirmed(
+    server: _Server, links: _Links, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smp, "_REQUEST_TIMEOUT_S", 0.05)
+    image = bytes(range(256)) * 40
+    confirmed: list[int] = []
+
+    def silent(group: int, command: int, body: dict[str, Any]) -> bool:
+        return group == 1 and command == 1 and body["off"] >= 2000
+
+    server.silent_on = silent
+    async with smp.session(DEVICE) as client:  # type: ignore[arg-type]
+        with pytest.raises(smp.SmpStallError) as raised:
+            await smp.upload(client, image, on_progress=lambda done, total: confirmed.append(done))
+
+    assert raised.value.offset == confirmed[-1] > 0

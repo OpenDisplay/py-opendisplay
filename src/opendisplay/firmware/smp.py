@@ -82,11 +82,17 @@ class SmpTransferError(SmpError):
 
 
 class SmpStallError(SmpTransferError):
-    """The link stopped carrying the exchange (no reply, or a disconnect): worth starting over.
+    """The link stopped carrying the exchange (no reply, or a disconnect): worth trying again.
 
     An ESPHome Bluetooth proxy drops a burst of unacknowledged writes it cannot queue; the device
     then waits for the rest of a request and never replies. Not the device refusing anything.
+    ``offset`` is the last upload offset the device confirmed (0 outside an upload): a new link
+    can resume there (``upload(start=offset)``).
     """
+
+    def __init__(self, message: str, offset: int = 0) -> None:
+        super().__init__(message)
+        self.offset = offset
 
 
 class SmpAlreadyRunningError(SmpError):
@@ -268,16 +274,27 @@ def _upload_body(image: bytes, offset: int, digest: bytes) -> dict[str, Any]:
     return {"off": offset}
 
 
-async def upload(client: SmpClient, image: bytes, *, on_progress: Callable[[int, int], None] | None = None) -> None:
+async def upload(
+    client: SmpClient,
+    image: bytes,
+    *,
+    start: int = 0,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> None:
     """Upload ``image`` to the update slot (image 0), one request per ``max_request`` bytes.
 
+    ``start`` resumes an upload the device still holds from an earlier link: firmware with
+    Firmware_Unified #116 (ESP32, 3.1.1 on) keeps it across a link drop, for 120 s. Firmware
+    that dropped it refuses the resume, and the upload then starts over from 0.
+
     Raises:
-        SmpStallError: The link stopped carrying it; starting over may work.
+        SmpStallError: The link stopped carrying it; its ``offset`` is where to resume.
         SmpTransferError: The device refused the image. Either way it keeps running its old image.
     """
     total = len(image)
     digest = hashlib.sha256(image).digest()
-    offset = 0
+    offset = start if 0 < start < total else 0
+    resuming = offset > 0
     stalled = 0
     while offset < total:
         body = _upload_body(image, offset, digest)
@@ -289,15 +306,20 @@ async def upload(client: SmpClient, image: bytes, *, on_progress: Callable[[int,
         try:
             reply = await client.request(_OP_WRITE, _GROUP_IMAGE, _IMG_UPLOAD, body, timeout=timeout)
         except SmpRefusedError as err:
+            if resuming:
+                _LOGGER.info("The device holds no upload to resume at %d (%s); starting over from 0", offset, err)
+                offset, resuming = 0, False
+                continue
             raise SmpTransferError(f"The device refused the image at {offset} of {total} bytes: {err}") from err
         except SmpStallError as err:
-            raise SmpStallError(f"Upload stopped at {offset} of {total} bytes: {err}") from err
+            raise SmpStallError(f"Upload stopped at {offset} of {total} bytes: {err}", offset) from err
+        resuming = False
         reached = reply.get("off")
         if not isinstance(reached, int) or reached > total:
             raise SmpTransferError(f"The device sent no usable offset at {offset} of {total} bytes: {reply!r}")
         stalled = stalled + 1 if reached <= offset else 0
         if stalled >= _MAX_STALLED_REPLIES:
-            raise SmpStallError(f"Upload stopped at {offset} of {total} bytes: the device stopped advancing")
+            raise SmpStallError(f"Upload stopped at {offset} of {total} bytes: the device stopped advancing", offset)
         offset = reached
         if on_progress is not None:
             on_progress(offset, total)

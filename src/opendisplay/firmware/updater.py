@@ -46,6 +46,7 @@ _SCAN_TIMEOUT_S: Final = 30.0
 _SCAN_ATTEMPTS: Final = 3  # macOS sometimes misses a display that has just been disconnected
 _APPLOADER_NAME: Final = "OTA"
 STALL_BURST_WRITES: Final = 8  # writes per request after a stall; the Bedroom proxy failed at 20+
+STALL_RETRIES: Final = 3  # new links after a stall; each resumes, and one that gains nothing ends it
 
 SMP: Final = "smp"
 APPLOADER: Final = "silabs-apploader"
@@ -214,15 +215,17 @@ async def _attempt(
     on_progress: Callable[[int, int], None] | None,
     *,
     burst_writes: int | None,
+    start: int = 0,
 ) -> tuple[Any, bytes | None, smp.SmpError | None]:
     """One upload on its own link: (running slot before, hash marked for the test boot, failure).
 
-    Any SMP failure before the reset is returned, not raised: the device keeps its old image.
+    ``start`` resumes at that offset. Any SMP failure before the reset is returned, not raised:
+    the device keeps its old image.
     """
     async with smp.session(await _find(find, address), burst_writes=burst_writes) as client:
         before = _running(await smp.image_states(client)) if burst_writes is None else None
         try:
-            await smp.upload(client, image, on_progress=on_progress)
+            await smp.upload(client, image, start=start, on_progress=on_progress)
             return before, await smp.test_and_reset(client), None
         except smp.SmpError as err:
             return before, None, err
@@ -240,16 +243,29 @@ async def _update_smp(
     except (smp.SmpError, OpenDisplayError) as err:  # no link, or no SMP service on it
         failed = err if isinstance(err, smp.SmpError) else smp.SmpError(str(err))
     old = _slot_version(before, device) if before is not None else _version(device.profile.firmware)
-    if isinstance(failed, smp.SmpStallError):
-        # An ESP32 aborts the upload when its link drops, so this starts over, on a new link, in
-        # bursts short enough for an ESPHome proxy's queue (reliable up to 16 there, failing at 20+).
+    # After a stall, go on over a new link in bursts short enough for an ESPHome proxy's queue
+    # (reliable up to 16 there, failing at 20+). Firmware with Firmware_Unified #116 (ESP32, 3.1.1 on)
+    # keeps the upload across the drop, so each new link resumes where the last one stopped; older
+    # firmware refuses the resume and smp.upload() starts over from 0.
+    retries = 0
+    while isinstance(failed, smp.SmpStallError) and retries < STALL_RETRIES:
+        retries += 1
+        reached = failed.offset
         _LOGGER.info(
-            "The upload to %s stalled (%s); starting over, %d writes per request", address, failed, STALL_BURST_WRITES
+            "The upload to %s stalled (%s); resuming at %d on a new link, %d writes per request",
+            address,
+            failed,
+            reached,
+            STALL_BURST_WRITES,
         )
         try:
-            _, new_hash, failed = await _attempt(find, address, image, on_progress, burst_writes=STALL_BURST_WRITES)
+            _, new_hash, failed = await _attempt(
+                find, address, image, on_progress, burst_writes=STALL_BURST_WRITES, start=reached
+            )
         except Exception as err:  # pylint: disable=broad-exception-caught  # bleak and asyncio alike
-            failed = smp.SmpStallError(f"Could not open a link for a second attempt: {err}")
+            failed = smp.SmpStallError(f"Could not open a link for another attempt: {err}", reached)
+        if isinstance(failed, smp.SmpStallError) and failed.offset <= reached:
+            break  # this link gained nothing: another would not either
     if failed is not None:
         _LOGGER.debug("SMP upload to %s failed", address, exc_info=failed)
         await _reconnect_quietly(device)
