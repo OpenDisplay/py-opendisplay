@@ -475,6 +475,15 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
         return None
 
     async def _verify(self, dev: Any) -> rq.Request:
+        status = dev.security.status
+        if status is not None and status.claim_mode:
+            # Claim mode refuses every command that draws (SECURITY_V2 section 7): the panel
+            # check is the device's own setup screen, which shows SETUP MODE and its ID.
+            name = dev.legacy.device_name
+            return rq.NeedConfirmation(
+                reason="panel_ok",
+                detail="Does the display show SETUP MODE" + (f" and the ID {name}?" if name else "?"),
+            )
         profile = dev.profile
         image, names = panel_pattern(profile.width or 400, profile.height or 300, profile.color_scheme)
         await dev.display.show(image, dither_mode=DitherMode.NONE)
