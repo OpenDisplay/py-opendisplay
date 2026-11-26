@@ -145,27 +145,51 @@ def test_firmware_before_the_board_field_reports_no_board() -> None:
     assert ident.board is None and ident.extra == b""
 
 
-def test_parses_the_release_board_after_the_tail() -> None:
+# Captured 2026-11-26 from the EE02 (OD688CB0) on the published 3.1.1 release: protocol minor 5,
+# ESP32, one display (0x0042, 1200x1600, scheme 8), the tail, then [8]"s3-n16r8".
+EE02_311 = bytes.fromhex("00460501014200b00440060809a00f8000030873332d6e31367238")
+
+
+def test_parses_the_release_board_a_3_1_device_reports() -> None:
     """Firmware_Unified #107: [board_len][board] after escapes, the manifest's boards[].board."""
-    ident = parse_read_ident(E1002_303 + b"\x08s3-n16r8")
+    ident = parse_read_ident(EE02_311)
 
     assert ident.board == "s3-n16r8"
     assert ident.extra == b""
+    assert (ident.proto_minor, ident.fw_target) == (5, FirmwareTarget.ESP32)
+    assert ident.displays == (IdentDisplay(panel_ic_type=0x0042, pixel_width=1200, pixel_height=1600, color_scheme=8),)
+
+
+# Captured 2026-11-26 from the E1002 (OD4064C9) right after `opendisplay update` took it from the
+# 3.0.3 test build to the published 3.1.1: one display (0x0023, 800x480, scheme 4), the tail, then
+# [16]"s3-n32r8-extuart".
+E1002_311 = bytes.fromhex("004605010123002003e0010409a00f8000031073332d6e333272382d65787475617274")
+
+
+def test_parses_a_longer_release_board() -> None:
+    ident = parse_read_ident(E1002_311)
+
+    assert ident.board == "s3-n32r8-extuart" and ident.extra == b""
+    assert ident.displays == (IdentDisplay(panel_ic_type=0x0023, pixel_width=800, pixel_height=480, color_scheme=4),)
+
+
+# The edge cases below alter the EE02's capture after its tail (no firmware sends them).
+_EE02_TO_TAIL = EE02_311[: -len(b"\x08s3-n16r8")]
 
 
 def test_board_len_zero_means_not_a_release_board() -> None:
-    assert parse_read_ident(E1002_303 + b"\x00").board is None
+    assert parse_read_ident(_EE02_TO_TAIL + b"\x00").board is None
 
 
 def test_bytes_after_the_board_are_kept() -> None:
-    ident = parse_read_ident(E1002_303 + b"\x04bg22" + b"\xaa\xbb")
+    ident = parse_read_ident(EE02_311 + b"\xaa\xbb")
 
-    assert ident.board == "bg22" and ident.extra == b"\xaa\xbb"
+    assert ident.board == "s3-n16r8" and ident.extra == b"\xaa\xbb"
 
 
 @pytest.mark.parametrize("tail", [b"\x08s3-n16", b"\x04BG22", b"\x03b g", b"\x21" + b"a" * 33])
 def test_a_board_field_that_breaks_the_rules_is_ignored(tail: bytes) -> None:
     """Cut short, outside [a-z0-9_-] or over 32 characters: no board, and the bytes stay in extra."""
-    ident = parse_read_ident(E1002_303 + tail)
+    ident = parse_read_ident(_EE02_TO_TAIL + tail)
 
     assert ident.board is None and ident.extra == tail
