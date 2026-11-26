@@ -2,20 +2,24 @@
 
 A port of the database half of the website's ``httpdocs/js/od-v3.js`` (Web ``v3/website``
 ``b7df514``). Each function names the JS function it ports, so the two stay comparable. The data
-is Firmware_Unified's generated drive presets, vendored gzip-compressed (see ``SOURCE.md``).
+is Firmware_Unified's generated drive presets. Each firmware release from 3.1.0 on carries them
+(:meth:`PanelDatabase.for_release`); a copy is vendored gzip-compressed for when the release cannot
+be read (see ``SOURCE.md``).
 """
 
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
+import logging
 import re
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from ..models.ident import FirmwareTarget
 from ..models.panel_drive import (
@@ -25,6 +29,10 @@ from ..models.panel_drive import (
     LengthPrefixedPacket,
 )
 
+if TYPE_CHECKING:
+    from ..firmware.releases import ReleaseManifest
+
+_LOGGER = logging.getLogger(__name__)
 _SCHEMA: Final = "opendisplay.drive_presets"
 _MAIN_FILE: Final = "drive_presets.json.gz"
 _CLASS_FILES: Final = {"nrf52811": "drive_presets_nrf52811.json.gz"}
@@ -393,6 +401,8 @@ class PanelDatabase:
         self,
         generated: Mapping[str, Any],
         class_files: Mapping[TargetClass, Mapping[str, Any]] | None = None,
+        *,
+        source: str = "bundled",
     ) -> None:
         """Build the database from the parsed JSON documents.
 
@@ -400,9 +410,11 @@ class PanelDatabase:
             generated: ``drive_presets.json``.
             class_files: Class-only files (``drive_presets_nrf52811.json``): their panels exist on
                 that class only. ``generated`` wins for an id both have.
+            source: Where the documents came from (``"bundled"``, ``"release 3.1.1"``), for logs.
         """
         _check_schema(generated, "main")
         self.schema_minor: int = int(generated.get("schema_minor", 0))
+        self.source = source
         self.caps: Mapping[str, int] = dict(generated.get("caps") or {})
         self._panels: dict[int, _Panel] = {}
         for target_class, doc in (class_files or {}).items():
@@ -463,7 +475,7 @@ class PanelDatabase:
         """
         if path is not None:
             data = path.read_bytes()
-            return cls(json.loads(gzip.decompress(data) if path.suffix == ".gz" else data))
+            return cls(json.loads(gzip.decompress(data) if path.suffix == ".gz" else data), source=str(path))
         package = files(__package__)
         main = json.loads(gzip.decompress(package.joinpath(_MAIN_FILE).read_bytes()))
         class_files = {
@@ -471,6 +483,45 @@ class PanelDatabase:
             for name, file in _CLASS_FILES.items()
         }
         return cls(main, class_files)
+
+    @classmethod
+    async def for_release(cls, manifest: ReleaseManifest, fetch: Callable[[str], Awaitable[bytes]]) -> PanelDatabase:
+        """The release's drive database, or the bundled copy when the release cannot give one.
+
+        The release's ``presets`` name one main file and the class-only files (nRF52811) by the
+        READ_IDENT targets they serve. Each file is used only when its size and SHA-256 match the
+        manifest. A release without presets (before 3.1.0), a failed download, a mismatch or an
+        unreadable file falls back to the bundled copy, with a warning.
+
+        Args:
+            manifest: The release's parsed ``manifest.json``.
+            fetch: Returns a release file's bytes by name (``ReleaseDownloader.fetch``, or Home
+                Assistant's own fetcher).
+        """
+        if not manifest.presets:
+            return cls.load()
+        try:
+            main: Mapping[str, Any] | None = None
+            class_files: dict[TargetClass, Mapping[str, Any]] = {}
+            for preset in manifest.presets:
+                data = await fetch(preset.file)
+                if len(data) != preset.size or hashlib.sha256(data).hexdigest() != preset.sha256:
+                    raise ValueError(f"{preset.file} does not match the manifest's size and SHA-256")
+                doc = json.loads(data)
+                classes = {target_class_for(t) for t in preset.ident_targets}
+                only = next(iter(classes)) if len(classes) == 1 else None
+                if only is not None and only.value in _CLASS_FILES:
+                    class_files[only] = doc
+                elif main is None:
+                    main = doc
+                else:
+                    raise ValueError(f"{preset.file}: a second main drive database")
+            if main is None:
+                raise ValueError("no main drive database")
+            return cls(main, class_files, source=f"release {manifest.version}")
+        except Exception as err:  # pylint: disable=broad-exception-caught  # a host's fetcher raises its own types
+            _LOGGER.warning("Drive presets of release %s not used (%s); using the bundled copy", manifest.version, err)
+        return cls.load()
 
     def panel_ids(self) -> Iterator[int]:
         """Every panel id the database has an entry for, in ascending order."""

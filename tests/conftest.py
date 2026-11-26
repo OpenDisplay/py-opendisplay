@@ -169,3 +169,14 @@ def _forget_redraw_notes():
     redraw._reset()
     yield
     redraw._reset()
+
+
+@pytest.fixture(autouse=True)
+def _no_release_downloads(monkeypatch):
+    """No test reaches GitHub: a release fetch fails as it does offline (tests that want one pass ``get``)."""
+    from opendisplay.firmware import download
+
+    def offline(url: str) -> bytes:
+        raise download.DownloadError(f"tests are offline: {url}")
+
+    monkeypatch.setattr(download, "_get", offline)

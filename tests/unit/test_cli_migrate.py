@@ -620,3 +620,16 @@ def test_a_claimed_device_in_a_session_takes_the_backups_secrets(
     written = device.written[0]
     assert written.security_config is None
     assert written.wifi_config == _wifi() and written.findmy_config_raw == findmy
+
+
+async def test_offline_uses_the_bundled_drive_data() -> None:
+    db = await cli_migrate._panel_database(argparse.Namespace(offline=True, release=None))
+    assert db.source == "bundled"
+
+
+async def test_a_release_that_cannot_be_read_uses_the_bundled_drive_data(capsys: pytest.CaptureFixture[str]) -> None:
+    # tests/conftest.py makes every release download fail, as it does offline
+    db = await cli_migrate._panel_database(argparse.Namespace(offline=False, release="3.1.1"))
+    assert db.source == "bundled"
+    captured = capsys.readouterr()
+    assert "using the bundled drive data" in " ".join((captured.out + captured.err).split())

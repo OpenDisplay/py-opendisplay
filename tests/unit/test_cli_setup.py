@@ -95,7 +95,7 @@ async def test_an_upgrade_pauses_for_the_wired_install_and_resumes_from_the_stat
     assert "set up" in out.lower()
     for line in ("Leaving claim mode", "Configuring the display", "Checking the panel"):
         assert out.count(line) == 1, line
-    assert releases.asked == 1  # the second run went on from the saved state without a manifest
+    assert releases.asked == 2  # the second run reads it again only for the drive data of its config
 
 
 async def test_a_backup_never_overwrites_an_earlier_one(tmp_path: Path) -> None:

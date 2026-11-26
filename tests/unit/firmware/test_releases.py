@@ -92,3 +92,31 @@ def test_another_schema_is_refused() -> None:
 )
 def test_which_targets_can_roll_back(target: FirmwareTarget | int | None, expected: bool) -> None:
     assert can_roll_back(target) is expected
+
+
+MANIFEST_311 = (Path(__file__).parents[2] / "fixtures" / "firmware" / "manifest-3.1.1.json").read_bytes()
+
+
+def test_a_release_lists_its_drive_presets_and_the_targets_each_serves() -> None:
+    manifest = ReleaseManifest.parse(MANIFEST_311)
+
+    assert [(p.file, p.ident_targets) for p in manifest.presets] == [
+        ("drive_presets.json", frozenset({1, 2, 3, 5})),
+        ("drive_presets_nrf52811.json", frozenset({4})),
+    ]
+    main = manifest.presets[0]
+    assert main.schema_minor == 4 and main.size == 959091
+    assert main.sha256 == "f201ec416c25903e5d589183dac8613b3780e308392bad17657b365c0a372922"
+
+
+def test_drive_presets_are_release_files_like_any_other() -> None:
+    """So the downloader (and Home Assistant's fetcher) checks them against the manifest too."""
+    manifest = ReleaseManifest.parse(MANIFEST_311)
+
+    artefact = manifest.artefact("drive_presets_nrf52811.json")
+    assert artefact is not None and artefact.kind == "drive-presets" and artefact.board is None
+    assert artefact.sha256 == "dba76087e6345cdb915a02f0060df8a8fead04f9b18a2d9a661eda0f862f1b94"
+
+
+def test_a_release_before_3_1_has_no_drive_presets(manifest: ReleaseManifest) -> None:
+    assert manifest.presets == ()

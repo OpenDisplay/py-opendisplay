@@ -175,6 +175,7 @@ def _migration(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
     def plan(config: Any, profile: Any, db: Any, *, panel_ic_type: int | None = None) -> Any:
         seen.append(panel_ic_type)
+        _DBS_USED.append(db.source)
         needed = config is not None and (profile.needs_migration or not profile.configured)
         blocked = config is None or not config.displays
         return SimpleNamespace(
@@ -188,8 +189,19 @@ def _migration(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
     monkeypatch.setattr(runner_mod, "plan_migration", plan)
     monkeypatch.setattr(runner_mod, "apply_migration", lambda config, plan: config)
-    monkeypatch.setattr(runner_mod.PanelDatabase, "load", classmethod(lambda cls, path=None: None))
+    monkeypatch.setattr(runner_mod.PanelDatabase, "load", classmethod(lambda cls, path=None: _DB_BUNDLED))
+
+    async def for_release(cls: Any, manifest: Any, fetch: Any) -> Any:
+        return SimpleNamespace(source=f"release {manifest.version}")
+
+    monkeypatch.setattr(runner_mod.PanelDatabase, "for_release", classmethod(for_release))
     return seen
+
+
+_DB_BUNDLED = SimpleNamespace(source="bundled")
+
+
+_DBS_USED: list[str] = []
 
 
 def _restart(run: SetupRun, **kw: Any) -> SetupRun:
@@ -634,3 +646,44 @@ def test_panel_pattern_of_an_unknown_scheme_is_black_and_white() -> None:
     assert names == ("black", "white")
     _, names = runner_mod.panel_pattern(400, 300, 99)
     assert names == ("black", "white")
+
+
+async def test_the_drive_data_comes_from_the_release_when_the_run_can_fetch_it() -> None:
+    world = _World(claim_mode=True, fresh=True)
+
+    async def fetch(name: str) -> bytes:
+        return b""
+
+    _DBS_USED.clear()
+    run = SetupRun.start(want_key=False, backup_sink=lambda b: None, manifest=MANIFEST, fetch_image=fetch)
+    req = await run.run_until_input(_factory(world))
+    run.answer(req, _config(displays=[_display(panel_ic_type=0x0037)]))
+    await run.run_until_input(_factory(world))
+    assert _DBS_USED and set(_DBS_USED) == {f"release {MANIFEST.version}"}
+
+
+async def test_without_a_fetcher_the_bundled_drive_data_is_used() -> None:
+    world = _World(claim_mode=True, fresh=True)
+    _DBS_USED.clear()
+    run = SetupRun.start(want_key=False, backup_sink=lambda b: None, manifest=MANIFEST)
+    req = await run.run_until_input(_factory(world))
+    run.answer(req, _config(displays=[_display(panel_ic_type=0x0037)]))
+    await run.run_until_input(_factory(world))
+    assert _DBS_USED and set(_DBS_USED) == {"bundled"}
+
+
+async def test_a_manifest_that_cannot_be_read_leaves_the_bundled_drive_data() -> None:
+    world = _World(claim_mode=True, fresh=True)
+
+    async def manifest() -> ReleaseManifest:
+        raise OSError("offline")
+
+    async def fetch(name: str) -> bytes:
+        raise AssertionError("nothing to fetch without a manifest")
+
+    _DBS_USED.clear()
+    run = SetupRun.start(want_key=False, backup_sink=lambda b: None, manifest=manifest, fetch_image=fetch)
+    req = await run.run_until_input(_factory(world))
+    run.answer(req, _config(displays=[_display(panel_ic_type=0x0037)]))
+    await run.run_until_input(_factory(world))
+    assert _DBS_USED and set(_DBS_USED) == {"bundled"}
