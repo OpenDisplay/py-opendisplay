@@ -121,6 +121,7 @@ opendisplay setup --device OD4064C9 --claim
 opendisplay upgrade --device OD5A2F4C --no-key --state-file en05.json
 
 # Send a firmware 3.x image (see "Firmware 3.x updates" below)
+opendisplay update --device OD4064C9                # the release's image for the board it reports
 opendisplay update --device OD4064C9 --file opendisplay-s3-n32r8-extuart-app.bin
 
 # Debugging: send one command frame and print the reply as hex (nothing checks it)
@@ -528,11 +529,11 @@ yet. The first move from 2.x to 3.0 is a different job; see "Moving to firmware 
 ```python
 from opendisplay.firmware import ReleaseManifest, UpdateOutcome
 
-manifest = ReleaseManifest.parse(json.loads(manifest_json))  # the release's manifest.json
-board = manifest.board("s3-n32r8-extuart")                   # ESP32: the board must be named
-image = Path(board.ble_ota_files[0]).read_bytes()            # downloaded from the same release
+manifest = ReleaseManifest.parse(manifest_json)  # the release's manifest.json, as bytes
 
 async with opendisplay.connect(name="OD4064C9") as dev:
+    name = manifest.ble_ota_file(dev.profile.ident.board)  # the board READ_IDENT reports
+    image = ...  # the release file `name`, downloaded and checked against the manifest
     if not dev.firmware.can_roll_back:
         ...  # a BG22 cannot undo a bad image by itself: ask the user first
     result = await dev.firmware.update(image, on_progress=lambda done, total: print(done, total))
@@ -557,13 +558,20 @@ async with opendisplay.connect(name="OD4064C9") as dev:
   over SMP, which is correct.
 - **Home Assistant** passes `find_device=` (a coroutine giving the `BLEDevice` for an address),
   so the update works through an ESPHome Bluetooth proxy.
+- **Which image**: from 3.1 on a device reports its release board in READ_IDENT
+  (`dev.profile.ident.board`, for example `s3-n16r8`; several boards share a chip), and
+  `ReleaseManifest.ble_ota_file(board)` names its image. Older firmware reports none (`None`).
+  `opendisplay update` without `--file` does this itself: it reads the board, downloads the image
+  from the latest release (`--release TAG` for another) and checks it against the manifest.
+  `--board NAME` stands in for a device that does not report its board.
 
 ### Setting up a display (setup and upgrade)
 
 `opendisplay setup` takes a display from wherever it stands to set up, one step at a time:
 
 - **No config, or a config that needs migration:** configure the panel.
-- **Check the panel:** draw a test pattern and ask whether it looks right.
+- **Check the panel:** draw a test pattern and ask whether it looks right. In setup mode, which
+  refuses every draw, ask instead whether the display shows SETUP MODE and its ID.
 - **Key:** claim it, or use it without a key.
 - **A claimed display with a 2.x key:** rotate that key.
 

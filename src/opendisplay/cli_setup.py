@@ -86,7 +86,13 @@ def add_setup_parsers(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
 
     update = subparsers.add_parser("update", help="Send a firmware 3.x image to a 3.x display over Bluetooth")
     _add_device_options(update)
-    update.add_argument("--file", required=True, metavar="IMAGE", help="The board's ble-ota file from the release")
+    update.add_argument(
+        "--file",
+        metavar="IMAGE",
+        help="Send this image file (default: the release's image for the board the display reports)",
+    )
+    update.add_argument("--board", metavar="NAME", help="The release board, when the display does not report one")
+    update.add_argument("--release", metavar="TAG", help="The Firmware_Unified release (default: the latest)")
     update.add_argument("--yes", action="store_true", help="Do not ask, also on a device that cannot roll back")
     update.set_defaults(func=lambda args: _run(_update(args)))
 
@@ -240,10 +246,29 @@ async def _setup(args: argparse.Namespace, *, open_device: Any = None, releases:
 # ── update ───────────────────────────────────────────────────────────────────
 
 
+async def _release_image(args: argparse.Namespace, dev: Any) -> bytes:
+    """The release's Bluetooth image for the display's board (``--board``, else READ_IDENT's)."""
+    ident = dev.profile.ident
+    board = args.board or (ident.board if ident is not None else None)
+    if board is None:
+        _error("The display does not report its board (firmware before 3.1). Pass --board NAME or --file IMAGE.")
+    releases = ReleaseDownloader(args.release)
+    manifest = await releases.manifest()
+    name = manifest.ble_ota_file(board)
+    if name is None:
+        known = ", ".join(b.board for b in manifest.boards)
+        _error(f"Release {manifest.version} has no Bluetooth image for board {board!r} (boards: {known}).")
+    _console.print(f"Release {manifest.version}, board {board}: {name}")
+    data: bytes = await releases.fetch(name)  # checked against the manifest's SHA-256
+    return data
+
+
 async def _update(args: argparse.Namespace) -> None:
-    image = Path(args.file).read_bytes()
+    image = Path(args.file).read_bytes() if args.file else None
     try:
         async with connect(**_connect_kwargs(args)) as dev:
+            if image is None:
+                image = await _release_image(args, dev)
             if dev.firmware.can_roll_back:
                 _console.print("If the new image does not start, the display returns to its old one by itself.")
             else:

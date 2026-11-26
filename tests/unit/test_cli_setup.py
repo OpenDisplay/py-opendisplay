@@ -169,3 +169,86 @@ async def test_update_says_whether_the_device_can_roll_back_and_asks_on_a_bg22(
     _answers(monkeypatch, "yes")
     await cli_setup._update(_args(["update", "--device", "OD1", "--file", str(image)]))
     assert sent and "The display runs 3.0.2." in capsys.readouterr().err
+
+
+_MANIFEST_311 = (Path(__file__).parent.parent / "fixtures" / "firmware" / "manifest-3.1.1.json").read_bytes()
+
+
+class _Releases311:
+    """ReleaseDownloader with the 3.1.1 manifest; fetch returns the file's name as its bytes."""
+
+    def __init__(self, tag: str | None = None) -> None:
+        self.tag, self.fetched = tag, []
+
+    async def manifest(self) -> Any:
+        from opendisplay.firmware.releases import ReleaseManifest
+
+        return ReleaseManifest.parse(_MANIFEST_311)
+
+    async def fetch(self, name: str) -> bytes:
+        self.fetched.append(name)
+        return name.encode()
+
+
+def _update_conn(board: str | None, sent: list[bytes]) -> Any:
+    async def update(data: bytes, **kw: Any) -> UpdateResult:
+        sent.append(data)
+        return UpdateResult(UpdateOutcome.UPDATED, "3.1.0", "3.1.1", "The display runs 3.1.1.")
+
+    class _Conn:
+        async def __aenter__(self) -> Any:
+            ident = SimpleNamespace(board=board)
+            return SimpleNamespace(
+                profile=SimpleNamespace(ident=ident),
+                firmware=SimpleNamespace(can_roll_back=True, update=update),
+            )
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+    return _Conn()
+
+
+@pytest.mark.parametrize(
+    ("reported", "argv", "expected"),
+    [
+        ("s3-n16r8", [], "opendisplay-s3-n16r8-app.bin"),  # the board READ_IDENT reports
+        (None, ["--board", "s3-n32r8-extuart"], "opendisplay-s3-n32r8-extuart-app.bin"),  # older firmware
+    ],
+)
+async def test_update_without_a_file_takes_the_release_image_for_the_board(
+    monkeypatch: pytest.MonkeyPatch, reported: str | None, argv: list[str], expected: str
+) -> None:
+    sent: list[bytes] = []
+    monkeypatch.setattr(cli_setup, "connect", lambda **kw: _update_conn(reported, sent))
+    monkeypatch.setattr(cli_setup, "ReleaseDownloader", _Releases311)
+
+    await cli_setup._update(_args(["update", "--device", "OD1", *argv]))
+
+    assert sent == [expected.encode()]
+
+
+async def test_update_without_a_file_or_a_board_says_what_to_pass(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sent: list[bytes] = []
+    monkeypatch.setattr(cli_setup, "connect", lambda **kw: _update_conn(None, sent))
+    monkeypatch.setattr(cli_setup, "ReleaseDownloader", _Releases311)
+
+    with pytest.raises(SystemExit):
+        await cli_setup._update(_args(["update", "--device", "OD1"]))
+
+    assert not sent and "--board NAME or --file IMAGE" in " ".join(capsys.readouterr().err.split())
+
+
+async def test_update_for_a_board_the_release_lacks_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sent: list[bytes] = []
+    monkeypatch.setattr(cli_setup, "connect", lambda **kw: _update_conn("no-such-board", sent))
+    monkeypatch.setattr(cli_setup, "ReleaseDownloader", _Releases311)
+
+    with pytest.raises(SystemExit):
+        await cli_setup._update(_args(["update", "--device", "OD1"]))
+
+    assert not sent and "no Bluetooth image for board 'no-such-board'" in " ".join(capsys.readouterr().err.split())

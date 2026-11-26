@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass
 
@@ -506,11 +507,33 @@ def parse_drive_write_start(data: bytes) -> tuple[int, int, int | None]:
     return data[2], data[3], None if temp == _TEMP_UNKNOWN else int.from_bytes(bytes([temp]), "little", signed=True)
 
 
+_IDENT_BOARD_MAX = 32
+_IDENT_BOARD_NAME = re.compile(rb"[a-z0-9_-]+")
+
+
+def _ident_board(after_tail: bytes) -> tuple[str | None, bytes]:
+    """The release board after the 3.0 tail, ``[board_len][board]``, and the bytes after it.
+
+    A length of 0 means not a release board. A field cut short, longer than 32 characters or
+    outside ``[a-z0-9_-]`` is not trusted: no board, and every byte stays in ``extra``.
+    """
+    if not after_tail:
+        return None, b""
+    length = after_tail[0]
+    name = after_tail[1 : 1 + length]
+    if length == 0:
+        return None, after_tail[1:]
+    if length > _IDENT_BOARD_MAX or len(name) < length or not _IDENT_BOARD_NAME.fullmatch(name):
+        return None, after_tail
+    return name.decode("ascii"), after_tail[1 + length :]
+
+
 def parse_read_ident(data: bytes) -> DeviceIdent:
     """Parse a READ_IDENT (0x0046) response.
 
     A reply that ends after the display records comes from 2.x firmware and has no tail.
-    Bytes after the 3.0 tail are kept in ``DeviceIdent.extra``.
+    The release board after the 3.0 tail goes to ``DeviceIdent.board``; any other bytes after the
+    tail are kept in ``DeviceIdent.extra``.
 
     Raises:
         InvalidResponseError: If the echo is wrong or the reply is cut short
@@ -541,6 +564,7 @@ def parse_read_ident(data: bytes) -> DeviceIdent:
             f"READ_IDENT tail cut short: {len(rest)} byte(s) after the display records (need {_IDENT_TAIL.size})"
         )
     flags, max_config, max_seq_steps, escapes = _IDENT_TAIL.unpack_from(rest)
+    board, extra = _ident_board(rest[_IDENT_TAIL.size :])
     return DeviceIdent(
         proto_minor=proto_minor,
         fw_target=fw_target,
@@ -549,7 +573,8 @@ def parse_read_ident(data: bytes) -> DeviceIdent:
         max_config=max_config,
         max_seq_steps=max_seq_steps,
         escapes=escapes,
-        extra=rest[_IDENT_TAIL.size :],
+        board=board,
+        extra=extra,
     )
 
 

@@ -131,3 +131,39 @@ async def test_not_supported_says_whether_the_device_was_silent(fake_transport, 
         await device.read_ident()
 
     assert exc.value.timed_out is timed_out
+
+
+# The E1002 on 3.0.3 (captured 2026-11-26): one display record, the tail, no board field.
+E1002_303 = bytes.fromhex("004604010123002003e0010409a00f800003")
+
+
+def test_firmware_before_the_board_field_reports_no_board() -> None:
+    ident = parse_read_ident(E1002_303)
+
+    assert ident.board is None and ident.extra == b""
+
+
+def test_parses_the_release_board_after_the_tail() -> None:
+    """Firmware_Unified #107: [board_len][board] after escapes, the manifest's boards[].board."""
+    ident = parse_read_ident(E1002_303 + b"\x08s3-n16r8")
+
+    assert ident.board == "s3-n16r8"
+    assert ident.extra == b""
+
+
+def test_board_len_zero_means_not_a_release_board() -> None:
+    assert parse_read_ident(E1002_303 + b"\x00").board is None
+
+
+def test_bytes_after_the_board_are_kept() -> None:
+    ident = parse_read_ident(E1002_303 + b"\x04bg22" + b"\xaa\xbb")
+
+    assert ident.board == "bg22" and ident.extra == b"\xaa\xbb"
+
+
+@pytest.mark.parametrize("tail", [b"\x08s3-n16", b"\x04BG22", b"\x03b g", b"\x21" + b"a" * 33])
+def test_a_board_field_that_breaks_the_rules_is_ignored(tail: bytes) -> None:
+    """Cut short, outside [a-z0-9_-] or over 32 characters: no board, and the bytes stay in extra."""
+    ident = parse_read_ident(E1002_303 + tail)
+
+    assert ident.board is None and ident.extra == tail
