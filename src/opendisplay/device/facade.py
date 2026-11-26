@@ -68,7 +68,7 @@ from ..sec2.wire import CMD_SEC_STATUS, SecStatus, parse_sec_status
 from ..sensors import SensorReading, read_sensor_values
 from ..transport import BLEConnection, TcpTransport, Transport
 from .channel import MAX_STRAY_AUTH_FRAMES, SecureChannel
-from .config_read import read_config_blob
+from .config_read import read_config_blob, read_matching_echo
 from .imaging import _capabilities_from_config, _warn_firmware_upload_limitations, prepare_image
 from .nfc import write_nfc_record
 from .upload import Uploader, UploadTarget
@@ -693,17 +693,16 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             FirmwareVersion dictionary with 'major', 'minor', and 'sha' fields
         """
         _LOGGER.debug("Reading firmware version")
-
-        # Send read firmware version command
-        cmd = build_read_fw_version_command()
-        await self._conn.write_command(cmd)
-
-        # Read response
-        response = await self._conn.read_response(timeout=self.TIMEOUT_ACK)
-
-        # Parse version (includes SHA hash)
+        await self._conn.write_command(build_read_fw_version_command())
+        # Skip late/duplicate frames from other commands (e.g. READ_CONFIG).
+        response = await read_matching_echo(
+            self._conn.read_response,
+            CommandCode.READ_FW_VERSION,
+            self.TIMEOUT_ACK,
+            self.MAX_STRAY_CONFIG_FRAMES,
+            purpose="firmware version",
+        )
         self._fw_version = parse_firmware_version(response)
-
         _LOGGER.info(
             "Firmware version: %d.%d.%d (SHA: %s...)",
             self._fw_version["major"],
@@ -711,7 +710,6 @@ class OpenDisplayDevice:  # pylint: disable=too-many-instance-attributes
             self._fw_version["patch"],
             self._fw_version["sha"][:8],
         )
-
         return self._fw_version
 
     @_serialized
