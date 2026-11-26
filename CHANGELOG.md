@@ -1,5 +1,34 @@
 # Changelog
 
+## [8.4.0](https://github.com/OpenDisplay/py-opendisplay/compare/v8.3.1...v8.4.0) (2026-11-26)
+
+
+### Features
+
+* name an unsealed refusal discarded inside a SEC2 session in the timeout ([aba0bd1](https://github.com/OpenDisplay/py-opendisplay/commit/aba0bd1680efb60a04851e447a794cc4f4ff3828))
+* name the drive write ETAG_MISMATCH refusal (protocol 2.5) ([baf1c92](https://github.com/OpenDisplay/py-opendisplay/commit/baf1c92053bb58dfdaa9f7b892b57a91c77e409f))
+* name the remaining DeviceFlags bits, including the active-low power pin ([2b937f0](https://github.com/OpenDisplay/py-opendisplay/commit/2b937f069ab805c212c22b56408403d0efb06655))
+* read the release board from READ_IDENT and update from the release by it ([9996671](https://github.com/OpenDisplay/py-opendisplay/commit/9996671f7086313fff2b5349352184e63ef4a44e))
+* resume a stalled SMP upload on a new link instead of starting over ([0c26734](https://github.com/OpenDisplay/py-opendisplay/commit/0c2673466543a909e7f021975952b4c9d87bf059))
+* show the no-reset-pattern flag and warn before it leaves a claimed display unrecoverable ([b8bcc9e](https://github.com/OpenDisplay/py-opendisplay/commit/b8bcc9edea1727e5c753aba31e3d89a1eb21ad43))
+* take the panel drive data from the firmware release ([bef56b9](https://github.com/OpenDisplay/py-opendisplay/commit/bef56b993ce103ade8a4b91963c01ccf611e5223))
+
+
+### Bug Fixes
+
+* accept the 0xAE and 0xB1 tails after the drive sequence ([4530d17](https://github.com/OpenDisplay/py-opendisplay/commit/4530d17864f4cf6d1a642102c40f873fb84799da))
+* check the setup screen instead of drawing while the device is in claim mode ([354f8f8](https://github.com/OpenDisplay/py-opendisplay/commit/354f8f8bba0d2df3d8b138ba59e02ad80db82b07))
+* draw the setup test pattern from the scheme's palette ([b236da7](https://github.com/OpenDisplay/py-opendisplay/commit/b236da703de4572f6e91c0ea8fc987870a6aa532))
+* drop a config chunk delivered twice instead of splicing it into the config ([8a404df](https://github.com/OpenDisplay/py-opendisplay/commit/8a404dfab3097bdddb22aaa0e5d234cfb47e4324))
+* share stray-frame skip so facade stays under line limit ([7aab276](https://github.com/OpenDisplay/py-opendisplay/commit/7aab2769c596f339c70411aa02ea49c183f1a2e7))
+* skip stray frames in read_firmware_version ([befcb46](https://github.com/OpenDisplay/py-opendisplay/commit/befcb463cf4faaf3e19ddede7ecf9e5f617365d0))
+* update the bundled panel drive database to release 3.1.1, with a sync script ([3df9941](https://github.com/OpenDisplay/py-opendisplay/commit/3df99416fb4cca2aaa661f2e2de898894411d939))
+
+
+### Documentation
+
+* say how a firmware update goes on after a stalled transfer ([#262](https://github.com/OpenDisplay/py-opendisplay/issues/262)) ([7c0e761](https://github.com/OpenDisplay/py-opendisplay/commit/7c0e76170779c84857675dc122eb0270fb7898b8))
+
 ## [8.3.1](https://github.com/OpenDisplay/py-opendisplay/compare/v8.3.0...v8.3.1) (2026-11-22)
 
 
