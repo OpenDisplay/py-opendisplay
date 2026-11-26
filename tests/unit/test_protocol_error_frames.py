@@ -99,7 +99,7 @@ def test_interrogate_raises_on_stalled_empty_chunk() -> None:
     """An empty chunk (no progress) raises TruncatedConfigError instead of looping forever."""
     device = _make_device()
     # Second chunk carries only the echo + chunk number, no payload -> no progress.
-    empty_chunk = b"\x00\x40" + b"\x00\x01"
+    empty_chunk = b"\x00\x40" + b"\x01\x00"
     device._attach(_ScriptedConn([_FIRST_CHUNK, empty_chunk]))  # type: ignore[arg-type]
 
     with pytest.raises(TruncatedConfigError, match="stalled"):
@@ -114,7 +114,7 @@ def test_interrogate_ignores_stray_frame_from_another_command(caplog: pytest.Log
     device = _make_device()
     # 90 payload bytes still owed after the first chunk's 10.
     stray = b"\x00\x43\x01\x00\x28" + b"\xaa" * 20  # firmware-version reply, wrong exchange
-    real_chunk = b"\x00\x40" + b"\x00\x01" + b"\x02" * 90
+    real_chunk = b"\x00\x40" + b"\x01\x00" + b"\x02" * 90
     device._attach(_ScriptedConn([_FIRST_CHUNK, stray, real_chunk]))  # type: ignore[arg-type]
 
     with caplog.at_level(logging.WARNING, logger="opendisplay.device"), pytest.raises(ConfigParseError):
@@ -157,3 +157,52 @@ def test_is_compressed_failure_frame_accepts_both_forms() -> None:
     assert is_compressed_failure_frame(b"\x00\x70") is False
     assert is_compressed_failure_frame(b"\xff\x40") is False
     assert is_compressed_failure_frame(b"\xff") is False
+
+
+# A 30-byte config in three 10-byte chunks, as the firmware numbers them (0, 1, 2).
+_C0 = b"\x00\x40" + b"\x00\x00" + (30).to_bytes(2, "little") + bytes(range(10))
+_C1 = b"\x00\x40" + (1).to_bytes(2, "little") + bytes(range(10, 20))
+_C2 = b"\x00\x40" + (2).to_bytes(2, "little") + bytes(range(20, 30))
+_VERSION = b"\x00\x43\x02\x1b\x07abcdefg"
+
+
+@pytest.mark.parametrize("frames", [[_C0, _C1, _C1, _C2], [_C0, _C0, _C1, _C2], [_C0, _C1, _C2]])
+def test_a_duplicated_config_chunk_is_dropped(frames: list[bytes], caplog: pytest.LogCaptureFixture) -> None:
+    """A Bluetooth stack (an ESPHome proxy, for one) can deliver a notification twice. Taken as the
+    next chunk, the duplicate corrupted the config and left the real last chunk for the next
+    command (HA integration #177: 'expected 0x0043, got 0x0040')."""
+    device = _make_device()
+    device._attach(_ScriptedConn([*frames, _VERSION]))  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.WARNING, logger="opendisplay.device"):
+        data = asyncio.run(device._read_config_bytes())
+        version = asyncio.run(device.read_firmware_version())
+
+    assert data == bytes(range(30))
+    assert version["major"] == 2
+    assert ("delivered twice" in caplog.text) == (len(frames) == 4)
+
+
+def test_a_config_chunk_out_of_order_fails_the_read() -> None:
+    device = _make_device()
+    device._attach(_ScriptedConn([_C0, _C2, _C1]))  # type: ignore[arg-type]
+
+    with pytest.raises(ProtocolError, match="expected chunk 1, got chunk 2"):
+        asyncio.run(device._read_config_bytes())
+
+
+def test_a_repeated_chunk_number_with_other_bytes_fails_the_read() -> None:
+    device = _make_device()
+    other = b"\x00\x40" + (1).to_bytes(2, "little") + bytes(10)
+    device._attach(_ScriptedConn([_C0, _C1, other, _C2]))  # type: ignore[arg-type]
+
+    with pytest.raises(ProtocolError, match="expected chunk 2, got chunk 1"):
+        asyncio.run(device._read_config_bytes())
+
+
+def test_endless_repeats_of_a_chunk_give_up() -> None:
+    device = _make_device()
+    device._attach(_ScriptedConn([_C0] + [_C1] * (OpenDisplayDevice.MAX_STRAY_CONFIG_FRAMES + 2)))  # type: ignore[arg-type]
+
+    with pytest.raises(ProtocolError, match="delivered twice"):
+        asyncio.run(device._read_config_bytes())

@@ -97,6 +97,11 @@ async def read_config_blob(
     # against both a mid-transfer read timeout and a stalled transfer (empty
     # chunk making no progress) so we raise a typed error instead of hanging
     # or returning a partial config.
+    #
+    # Every firmware numbers the chunks 0, 1, 2, ... A Bluetooth stack can deliver a notification
+    # twice (ESPHome proxies do): an exact repeat of the previous chunk is dropped, and any other
+    # number fails the read, rather than splicing the wrong bytes into the config.
+    previous, expected, repeats = response, 1, 0
     while len(tlv_data) < total_length:
         try:
             next_response = await _read_config_frame(channel, chunk_timeout, max_stray)
@@ -105,6 +110,20 @@ async def read_config_blob(
                 f"Config read truncated: device stopped sending chunks at {len(tlv_data)}/{total_length} bytes"
             ) from err
         next_chunk_data = strip_command_echo(next_response, CommandCode.READ_CONFIG)
+        number = int.from_bytes(next_chunk_data[:2], "little")
+        if next_response == previous:
+            repeats += 1
+            if repeats > max_stray:
+                raise ProtocolError(f"Config read aborted: more than {max_stray} chunks delivered twice")
+            _LOGGER.warning(
+                "Config chunk %d delivered twice; dropped the copy (the Bluetooth stack or a proxy "
+                "repeats notifications)",
+                expected - 1,
+            )
+            continue
+        if number != expected:
+            raise ProtocolError(f"Config read out of order: expected chunk {expected}, got chunk {number}")
+        previous, expected = next_response, expected + 1
 
         # Skip chunk number field (2 bytes) and append data
         chunk_payload = next_chunk_data[2:]
