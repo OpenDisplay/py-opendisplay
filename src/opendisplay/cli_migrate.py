@@ -12,6 +12,7 @@ from typing import Any
 from .cli_common import _add_device_options, _console, _device_kwargs, _error, _handle_ble_error, _parse_hex_key, _run
 from .device import connect
 from .exceptions import OpenDisplayError
+from .firmware.download import ReleaseDownloader
 from .models.config import GlobalConfig
 from .models.config_json import config_from_json, config_to_json
 from .models.panel_drive import LengthPrefixedPacket
@@ -160,7 +161,24 @@ def add_migrate_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         action="store_true",
         help="With --from-backup: write the backup without its key, WiFi password and FindMy settings",
     )
+    p.add_argument("--release", metavar="TAG", help="Take the drive data from this release (default: the latest)")
+    p.add_argument(
+        "--offline", action="store_true", help="Use the drive data bundled with py-opendisplay, without a download"
+    )
     p.set_defaults(func=_cmd_migrate, parser=p)
+
+
+async def _panel_database(args: argparse.Namespace) -> PanelDatabase:
+    """The release's drive data (``--release``, else the latest), or the bundled copy."""
+    if getattr(args, "offline", False):
+        return PanelDatabase.load()
+    releases = ReleaseDownloader(getattr(args, "release", None))
+    try:
+        manifest = await releases.manifest()
+    except OpenDisplayError as err:
+        _console.print(f"Release not read ({err}); using the bundled drive data.")
+        return PanelDatabase.load()
+    return await PanelDatabase.for_release(manifest, releases.fetch)
 
 
 def _cmd_migrate(args: argparse.Namespace) -> None:
@@ -228,7 +246,8 @@ async def _migrate_connected(dev: Any, args: argparse.Namespace, backup: GlobalC
             if lost:
                 _console.print("The device has packet types the backup lacks: " + ", ".join(f"0x{t:02X}" for t in lost))
 
-    db = PanelDatabase.load()
+    db = await _panel_database(args)
+    _console.print(f"Drive data: {db.source}")
     plan = plan_migration(start, profile, db, panel_ic_type=args.panel)
     if plan.blocked:
         _error(plan.reason)

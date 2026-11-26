@@ -110,6 +110,7 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
         self._manifest: ReleaseManifest | None = manifest if isinstance(manifest, ReleaseManifest) else None
         self._fetch = fetch_image
         self._find = find_device
+        self._db: PanelDatabase | None = None  # per run: read once, from the release when it can
         self._done: set[Step] = set()
         self._backup: dict[str, Any] | None = None  # without secrets
         self._board: str | None = None
@@ -366,6 +367,22 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
             self._manifest = await self._manifest_source()
         return self._manifest
 
+    async def _panel_db(self) -> PanelDatabase:
+        """The release's drive database when this run has a release and a fetcher, else the bundled one."""
+        if self._db is None:
+            manifest = self._manifest
+            if manifest is None and self._fetch is not None and callable(self._manifest_source):
+                try:
+                    manifest = self._manifest = await self._manifest_source()
+                except Exception as err:  # pylint: disable=broad-exception-caught  # offline: the bundled copy
+                    _LOGGER.warning("Release manifest not read (%s); using the bundled drive presets", err)
+            if manifest is not None and self._fetch is not None:
+                self._db = await PanelDatabase.for_release(manifest, self._fetch)
+            else:
+                self._db = PanelDatabase.load()
+            _LOGGER.debug("Drive presets: %s", self._db.source)
+        return self._db
+
     async def _choose_board(self, dev: Any) -> BoardRelease | rq.NeedBoardChoice:
         await self._release()
         assert self._manifest is not None
@@ -449,7 +466,7 @@ class SetupRun:  # pylint: disable=too-many-instance-attributes
             start = self._for_device(dev, config_from_json(self._backup))
         if start is None:
             return rq.NeedConfig()
-        plan = plan_migration(start, profile, PanelDatabase.load(), panel_ic_type=self._panel)
+        plan = plan_migration(start, profile, await self._panel_db(), panel_ic_type=self._panel)
         if plan.blocked:
             return rq.NeedPanelChoice(reason=plan.reason)
         subject = f"{plan.panel_ic_type:#06x}" if plan.panel_ic_type is not None else ""

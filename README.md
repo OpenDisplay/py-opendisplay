@@ -446,6 +446,11 @@ opendisplay migrate --device OD4064C9 --dry-run           # show what would chan
 opendisplay migrate --device OD4064C9                     # write it, then read it back
 ```
 
+- The drive data comes from the latest Firmware_Unified release (from 3.1.0 on each release
+  carries its panel database, checked against the release manifest). `--release TAG` picks
+  another release, and `--offline` uses the copy bundled with py-opendisplay, which is also the
+  fallback when the release cannot be read. `setup` and `upgrade` take it from the release they
+  install. The command prints which one it used.
 - `--panel ID` picks the panel (`panel_ic_type`) when the config does not say which one it is.
 - `--yes-untested` writes drive data not yet seen working on real glass without asking.
 - `--from-backup FILE` restores a backup instead of starting from the device's config. A backup
@@ -454,7 +459,9 @@ opendisplay migrate --device OD4064C9                     # write it, then read 
   `--strip-secrets` writes the backup without them. Claim the display first to keep them.
 
 In Python, `dev.config.plan_migration()` returns the plan and `dev.config.write(config)` writes a
-config and reads it back.
+config and reads it back. `plan_migration(db)` takes a database:
+`await PanelDatabase.for_release(manifest, fetch)` builds it from a release (falling back to the
+bundled copy), `PanelDatabase.load()` is the bundled copy.
 
 ### Firmware 3.0 security (claiming a display)
 

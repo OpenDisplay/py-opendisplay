@@ -2,7 +2,9 @@
 
 The manifest lists, per board, which files each flow uses (``usb-install``, ``usb-update``,
 ``ble-ota``, ``ble-ota-from-2x``) and with which protocol, plus every file's size and SHA-256
-(Firmware_Unified ``docs/RELEASE_ARTEFACTS.md``). No I/O: the caller fetches the bytes.
+(Firmware_Unified ``docs/RELEASE_ARTEFACTS.md``). From 3.1.0 on it also lists the panel drive
+databases (``presets``), one per group of READ_IDENT ``fw_target`` values. No I/O: the caller
+fetches the bytes.
 
 ``READ_IDENT`` does not report the board, and several ESP32 boards share a chip (flash, PSRAM and
 console differ), so :meth:`ReleaseManifest.boards_for_chip` returns every candidate; a caller picks
@@ -57,6 +59,18 @@ class BoardRelease:  # pylint: disable=too-many-instance-attributes
     from_2x_erases_config: bool | None = None
 
 
+@dataclass(frozen=True)
+class PresetsFile:
+    """One drive database of the release: the READ_IDENT ``fw_target`` values it serves, its
+    schema minor, size and SHA-256."""
+
+    file: str
+    ident_targets: frozenset[int]
+    schema_minor: int
+    size: int
+    sha256: str
+
+
 def _flow(flows: Mapping[str, Any], name: str) -> tuple[tuple[str, ...], str | None, bool | None]:
     flow = flows.get(name) or {}
     return tuple(flow.get("files") or ()), flow.get("protocol"), flow.get("erases_config")
@@ -71,6 +85,7 @@ class ReleaseManifest:
     signing: Mapping[str, str]
     boards: tuple[BoardRelease, ...]
     artefacts: tuple[Artefact, ...]
+    presets: tuple[PresetsFile, ...] = ()
 
     @classmethod
     def parse(cls, data: bytes) -> ReleaseManifest:
@@ -115,12 +130,29 @@ class ReleaseManifest:
             )
             for a in doc["artefacts"]
         )
+        presets = tuple(
+            PresetsFile(
+                file=p["file"],
+                ident_targets=frozenset(int(t) for t in p.get("ident_targets") or ()),
+                schema_minor=int(p.get("schema_minor", 0)),
+                size=p["size"],
+                sha256=p["sha256"],
+            )
+            for p in doc.get("presets") or ()
+        )
+        # The presets are release files too, so whatever fetches and checks artefacts takes them.
+        artefacts += tuple(
+            Artefact(file=p.file, board=None, kind="drive-presets", offset=None, size=p.size, sha256=p.sha256)
+            for p in presets
+            if all(a.file != p.file for a in artefacts)
+        )
         return cls(
             version=doc["version"],
             commit=doc.get("commit", ""),
             signing=dict(doc.get("signing") or {}),
             boards=tuple(boards),
             artefacts=artefacts,
+            presets=presets,
         )
 
     def board(self, name: str) -> BoardRelease | None:
