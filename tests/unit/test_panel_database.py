@@ -246,3 +246,9 @@ def test_a_body_shorter_than_its_sequence_is_still_refused() -> None:
     problems = check_drive_packets_fit(cut, TargetClass.DEFAULT)
 
     assert problems and "seq_len" in problems[0]
+
+
+@pytest.mark.parametrize("key", ["0x002B", "0x0042"])
+def test_dual_cs_spectra_panels_carry_the_both_controllers_refresh_order(key: str) -> None:
+    """Firmware_Unified ef40854 (README D9): a DRF to cs1 first, then cs0, or BUSY stays low past 120 s."""
+    assert "D9" in _RAW["panels"][key]["differences"]
