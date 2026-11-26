@@ -461,11 +461,15 @@ DRIVE_NACK_UNSUPPORTED = 0x05
 DRIVE_NACK_TEMP_RANGE = 0x06
 DRIVE_NACK_SEQ_UNSUPPORTED = 0x07
 DRIVE_NACK_PANEL_BUSY = 0x08
+# Protocol 2.5: the ETAG flag's old_etag is not the displayed etag. The library never sets that
+# flag, so this only names the code; the device has cleared its displayed etag.
+DRIVE_NACK_ETAG_MISMATCH = 0x09
 _DRIVE_NACK_NAMES = {
     DRIVE_NACK_BAD_ARGS: "bad arguments",
     DRIVE_NACK_BAD_MODE: "mode not in the config",
     DRIVE_NACK_BAD_SIZE: "declared size is not passes x frame",
     DRIVE_NACK_UNSUPPORTED: "unsupported on this target",
+    DRIVE_NACK_ETAG_MISMATCH: "the panel does not show the frame the etag names",
 }
 _TEMP_UNKNOWN = 0x7F
 

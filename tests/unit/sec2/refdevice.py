@@ -52,6 +52,10 @@ class RefDevice:  # pylint: disable=too-many-instance-attributes
         self.busy_replies = 0
         self.refusal = wire.SecErr.BUSY
         self.handshake_starts = 0
+        #: Answer these opcodes inside a session with the given refusal frame instead of OK.
+        self.refusals: dict[int, bytes] = {}
+        #: Seal those refusals (Firmware_Unified 6ad0ee0 on); False sends them unsealed as before.
+        self.seal_refusals = True
 
     # ── Transport ────────────────────────────────────────────────────────────
 
@@ -138,6 +142,10 @@ class RefDevice:  # pylint: disable=too-many-instance-attributes
         return seal_d2h(self.session.k_d2h, self.tx_ctr, frame)
 
     def _sealed(self, cmd: int, payload: bytes) -> None:
+        if cmd in self.refusals:
+            frame = self.refusals[cmd]
+            self._queue.append(self._seal(frame) if self.seal_refusals else frame)
+            return
         if cmd != wire.CMD_SEC_KEY:
             self._queue.append(self._seal(self._answer(cmd, payload)))
             return
