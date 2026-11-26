@@ -535,6 +535,14 @@ _INFO_SECTIONS: tuple[_Section, ...] = (
                 lambda c: c.config.security_config.rewrite_allowed if c.config and c.config.security_config else None,
                 lambda v: "[green]Allowed[/green]" if v else "[red]Denied[/red]",
             ),
+            _Field(
+                "Reset pattern",
+                "reset_pattern",
+                lambda c: (
+                    not c.config.security_config.no_reset_pattern if c.config and c.config.security_config else None
+                ),
+                lambda v: "On" if v else "[yellow]Off[/yellow]",
+            ),
         ),
     ),
     _Section(

@@ -33,6 +33,7 @@ from ..models.profile import DeviceProfile, build_profile
 from ..panels import MigrationPlan, PanelDatabase, plan_migration
 from ..protocol.config_parser import parse_config_response
 from ..sec2.keystore import KeyStore
+from ..sec2.wire import SecState
 from .drive_write import drive_write
 from .facade import OpenDisplayDevice
 from .imaging import prepare_multipass
@@ -49,6 +50,11 @@ if TYPE_CHECKING:
     from ..transport.base import Transport
 
 _LOGGER = logging.getLogger(__name__)
+
+ONLY_WIRED_RECOVERY_WARNING = (
+    "This config turns off the factory-reset pattern on a claimed display that has no reset pin: "
+    "if its key is lost, only a wired reflash recovers it"
+)
 
 # Spectra and some other panels redraw for about 30 s after a config write and answer nothing
 # meanwhile; the read-back retries every 10 s, 9 times. Each attempt first waits out its own
@@ -118,6 +124,10 @@ class ConfigView:
             OpenDisplayTimeoutError: The device stayed silent after the write. The write itself
                 was acknowledged; only the read-back is missing.
         """
+        if config.security_config is not None and config.security_config.only_wired_recovery:
+            status = self._device.security.status
+            if status is not None and status.state == SecState.CLAIMED:
+                _LOGGER.warning(ONLY_WIRED_RECOVERY_WARNING)
         await self._device.legacy.write_config(config)
         await self._device.refresh()
 

@@ -888,6 +888,21 @@ class SecurityConfig:
         """Bit 5: enable internal pull-down on reset pin."""
         return bool(self.flags & 0x20)
 
+    @property
+    def no_reset_pattern(self) -> bool:
+        """Bit 6 (firmware 3.0, provisional): the five-power-cycle factory reset is off.
+
+        Clear is the default, so every existing config keeps the pattern. The two-cycle claim
+        gesture and the reset pin are not affected (Firmware_Unified SECURITY_V2 § 7.10).
+        """
+        return bool(self.flags & 0x40)
+
+    @property
+    def only_wired_recovery(self) -> bool:
+        """No reset pattern and no reset pin: a claimed device whose key is lost then needs a wired
+        reflash to be recovered."""
+        return self.no_reset_pattern and not (self.reset_pin_enabled and self.reset_pin != 0xFF)
+
     @classmethod
     def from_bytes(cls, data: bytes) -> SecurityConfig:
         """Parse from TLV packet data."""

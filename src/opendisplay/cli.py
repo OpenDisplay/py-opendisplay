@@ -38,6 +38,7 @@ from .cli_raw import add_raw_parser
 from .cli_sec2 import add_sec2_parsers
 from .cli_setup import add_setup_parsers
 from .device import OpenDisplayDevice
+from .device.api import ONLY_WIRED_RECOVERY_WARNING
 from .discovery import discover_devices_with_adv
 from .exceptions import (
     BLEConnectionError,
@@ -58,7 +59,7 @@ from .models.enums import (
 from .models.firmware import FirmwareVersion
 from .models.ident import DeviceIdent
 from .partial import PartialState
-from .sec2.wire import SecStatus
+from .sec2.wire import SecState, SecStatus
 from .sensors import SensorReading
 
 _LOGGER = logging.getLogger(__name__)
@@ -759,6 +760,19 @@ _UNKNOWN_PACKETS_REFUSAL = (
 )
 
 
+def _warn_only_wired_recovery(dev: Any, config: GlobalConfig) -> None:
+    """Firmware_Unified PROTOCOL_CHANGES row 20: warn before leaving a claimed display unrecoverable."""
+    security = config.security_config
+    status = getattr(getattr(dev, "security", None), "status", None)
+    if (
+        security is not None
+        and security.only_wired_recovery
+        and status is not None
+        and status.state == SecState.CLAIMED
+    ):
+        _console.print(f"[bold yellow]Warning:[/bold yellow] {ONLY_WIRED_RECOVERY_WARNING}.")
+
+
 async def _write_config(device_kwargs: dict[str, Any], input_path: str, unknown_packets: str | None = None) -> None:
     """Write a JSON config file to the device.
 
@@ -792,6 +806,7 @@ async def _write_config(device_kwargs: dict[str, Any], input_path: str, unknown_
                     elif unknown_packets != "discard":
                         refusal = _UNKNOWN_PACKETS_REFUSAL.format(size=at_risk)
                 if refusal is None:
+                    _warn_only_wired_recovery(dev, config)
                     progress.update(task, description="Writing config...")
                     await device.write_config(config)
     except OpenDisplayError as exc:
