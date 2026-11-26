@@ -477,7 +477,10 @@ is open, as before. Claiming gives it a key that only you hold:
 3. The new key is saved in the key store. Every later connect opens an encrypted session with it.
 
 A wrong code is never sent to the display, and nothing is kept. If the key is lost, factory-reset
-the display with five quick power cycles.
+the display with five quick power cycles. A config can turn that pattern off (0x27 flags bit 6,
+`SecurityConfig.no_reset_pattern`; `info` shows it as "Reset pattern"). Without a reset pin as well,
+a lost key then needs a wired reflash, so `dev.config.write()` and `write-config` warn before writing
+such a config to a claimed display.
 
 In Python, pass a key store; `connect()` reads the display's security state before any handshake
 and picks the scheme itself (2.x, firmware 3.0 unclaimed, or firmware 3.0 claimed). A 3.0 build
