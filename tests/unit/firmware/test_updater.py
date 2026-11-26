@@ -94,6 +94,7 @@ class _Smp:
         self.calls = device.calls
         self.states = states
         self.upload_errors: list[Exception] = []
+        self.starts: list[int] = []
         self.reset_errors: list[Exception] = []
         self.session_errors: list[Exception] = []
 
@@ -107,8 +108,9 @@ class _Smp:
         async def image_states(client: Any) -> list[Any]:
             return self.states.pop(0)
 
-        async def upload(client: Any, image: bytes, *, on_progress: Any = None) -> None:
+        async def upload(client: Any, image: bytes, *, start: int = 0, on_progress: Any = None) -> None:
             self.calls.append("upload")
+            self.starts.append(start)
             if self.upload_errors:
                 raise self.upload_errors.pop(0)
             if on_progress is not None:
@@ -266,26 +268,27 @@ async def test_an_interrupted_transfer_is_not_updated_and_the_device_is_reconnec
     device = _Device()
     fake = _Smp(monkeypatch, device, [_before()])
     fake.upload_errors = [
-        smp.SmpStallError("Upload stopped at 375593 of 1229968 bytes: link lost"),
-        smp.SmpStallError("Upload stopped at 202400 of 1229968 bytes: link lost"),
+        smp.SmpStallError("Upload stopped at 375593 of 1229968 bytes: link lost", 375593),
+        smp.SmpStallError("Upload stopped at 375593 of 1229968 bytes: link lost", 375593),
     ]
 
     result = await update(device, ESP32_S3_IMAGE, find_device=_find_app)  # type: ignore[arg-type]
 
     assert result.outcome is UpdateOutcome.NOT_UPDATED
     assert (result.version_before, result.version_after) == ("3.0.1", "3.0.1")
-    assert "202400" in result.detail  # the last attempt's
-    assert device.calls.count("upload") == 2  # one retry, not more
+    assert "375593" in result.detail  # the last attempt's
+    assert fake.starts == [0, 375593]  # the resume gained nothing, so no third link
     assert "test_and_reset" not in device.calls  # no reset: the old image keeps running
     assert device.calls[-1] == "connect" and device.connected
 
 
-async def test_a_stalled_upload_starts_over_with_shorter_bursts(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_stalled_upload_resumes_on_a_new_link_with_shorter_bursts(monkeypatch: pytest.MonkeyPatch) -> None:
     # Through the Bedroom proxy, 8 KB requests (33 unacknowledged writes) stalled; 8 writes did not.
-    # An ESP32 aborts an upload when its link drops, so the retry starts from 0 on a new link.
+    # Firmware_Unified #116 keeps the upload across the drop, so the new link resumes at the offset
+    # the device last confirmed (older firmware refuses that, and smp.upload starts over from 0).
     device = _Device()
     fake = _Smp(monkeypatch, device, [_before(), [_slot(0, "3.0.2", NEW, active=True, confirmed=True)]])
-    fake.upload_errors = [smp.SmpStallError("Upload stopped at 375593 of 1229968 bytes: no reply")]
+    fake.upload_errors = [smp.SmpStallError("Upload stopped at 375593 of 1229968 bytes: no reply", 375593)]
 
     result = await update(device, ESP32_S3_IMAGE, find_device=_find_app)  # type: ignore[arg-type]
 
@@ -298,6 +301,36 @@ async def test_a_stalled_upload_starts_over_with_shorter_bursts(monkeypatch: pyt
         "upload",
         "test_and_reset",
     ]
+    assert fake.starts == [0, 375593]
+
+
+async def test_each_new_link_resumes_while_it_gains_ground(monkeypatch: pytest.MonkeyPatch) -> None:
+    device = _Device()
+    fake = _Smp(monkeypatch, device, [_before(), [_slot(0, "3.0.2", NEW, active=True, confirmed=True)]])
+    fake.upload_errors = [
+        smp.SmpStallError("Upload stopped at 300000 of 1229968 bytes: link lost", 300000),
+        smp.SmpStallError("Upload stopped at 700000 of 1229968 bytes: link lost", 700000),
+    ]
+
+    result = await update(device, ESP32_S3_IMAGE, find_device=_find_app)  # type: ignore[arg-type]
+
+    assert result.outcome is UpdateOutcome.UPDATED
+    assert fake.starts == [0, 300000, 700000]
+
+
+async def test_resuming_stops_after_three_new_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    device = _Device()
+    fake = _Smp(monkeypatch, device, [_before()])
+    fake.upload_errors = [
+        smp.SmpStallError(f"Upload stopped at {n} of 1229968 bytes: link lost", n)
+        for n in (100000, 200000, 300000, 400000, 500000)
+    ]
+
+    result = await update(device, ESP32_S3_IMAGE, find_device=_find_app)  # type: ignore[arg-type]
+
+    assert result.outcome is UpdateOutcome.NOT_UPDATED
+    assert fake.starts == [0, 100000, 200000, 300000]
+    assert "400000" in result.detail
 
 
 async def test_an_image_the_device_refuses_is_not_sent_again(monkeypatch: pytest.MonkeyPatch) -> None:
