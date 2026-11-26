@@ -773,3 +773,31 @@ class TestJsonRoundTrip:
         assert reimported.manufacturer.simple_config_display_index == 6
         assert reimported.manufacturer.simple_config_power_index == 7
         assert reimported.manufacturer.simple_config_configured_at == 1700000000
+
+
+@pytest.mark.parametrize(
+    ("flags", "named"),
+    [
+        (0x00, set()),
+        (0x01, {"has_pwr_pin"}),
+        (0x08, {"has_pwr_latch"}),
+        (0x10, {"has_pwr_latch_dff"}),
+        (0x20, {"needs_nm420_init"}),
+        (0x41, {"has_pwr_pin", "pwr_pin_active_low"}),  # a Telink tag's rail switch
+    ],
+)
+def test_device_flags_name_every_firmware_bit(flags: int, named: set[str]) -> None:
+    from opendisplay.models.config import SystemConfig
+
+    system = SystemConfig(ic_type=0, communication_modes=1, device_flags=flags, pwr_pin=0xFF, reserved=bytes(15))
+    every = {
+        "has_pwr_pin",
+        "needs_xiaoinit",
+        "needs_ws_pp_init",
+        "has_pwr_latch",
+        "has_pwr_latch_dff",
+        "needs_nm420_init",
+        "pwr_pin_active_low",
+    }
+
+    assert {name for name in every if getattr(system, name)} == named

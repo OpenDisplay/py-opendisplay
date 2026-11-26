@@ -100,6 +100,30 @@ class SystemConfig:
         return bool(self.device_flags & 0x04)
 
     @property
+    def has_pwr_latch(self) -> bool:
+        """Self-holding MOSFET latch on ``pwr_pin_2``, optional shutdown button on ``pwr_pin_3`` (bit 3)."""
+        return bool(self.device_flags & 0x08)
+
+    @property
+    def has_pwr_latch_dff(self) -> bool:
+        """74AHC1G79 D-flip-flop latch: ``pwr_pin_2`` = D, ``pwr_pin_3`` = CP; 0x0052 releases it (bit 4)."""
+        return bool(self.device_flags & 0x10)
+
+    @property
+    def needs_nm420_init(self) -> bool:
+        """RockBase NM-EPD-420 low-power init (bit 5, firmware 3.0)."""
+        return bool(self.device_flags & 0x20)
+
+    @property
+    def pwr_pin_active_low(self) -> bool:
+        """``pwr_pin`` switches the panel rail on when driven LOW, a P-MOSFET high-side switch (bit 6).
+
+        Provisional (Firmware_Unified PROTOCOL_CHANGES_3.0 row 11): only the Telink target honours
+        it so far; ESP32, Nordic and BG22 still drive ``pwr_pin`` HIGH.
+        """
+        return bool(self.device_flags & 0x40)
+
+    @property
     def ic_type_enum(self) -> ICType | int:
         """Get IC type as enum, or raw int if unknown."""
         try:
