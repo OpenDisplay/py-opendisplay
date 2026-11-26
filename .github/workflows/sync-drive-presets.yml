@@ -76,9 +76,11 @@ jobs:
         if: steps.sync.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
-          # A PR opened with the default token does not start the other workflows (tests, lint).
-          # PRESETS_SYNC_TOKEN (a GitHub App or fine-grained token with contents and
-          # pull-requests write) makes them run; without it the PR is opened all the same.
+          # The default token is enough: the suite already ran on the new data above, and no PR
+          # is opened when it fails. A PR opened with it shows no Tests/Lint checks (GitHub starts
+          # no workflows from the default token's events), as with release-please's PRs.
+          # Optional: a PRESETS_SYNC_TOKEN secret (GitHub App or fine-grained token, contents and
+          # pull-requests write) is used instead when set, and then those checks run too.
           token: ${{ secrets.PRESETS_SYNC_TOKEN || github.token }}
           branch: chore/sync-drive-presets
           delete-branch: true
