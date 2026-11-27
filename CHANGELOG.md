@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.4.1](https://github.com/OpenDisplay/py-opendisplay/compare/v8.4.0...v8.4.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* accept any epaper-dithering 7.x from 7.0.1 ([92e9bc8](https://github.com/OpenDisplay/py-opendisplay/commit/92e9bc81c6ca59b2e9b774924e4a804ce4ad5d29))
+
 ## [8.4.0](https://github.com/OpenDisplay/py-opendisplay/compare/v8.3.1...v8.4.0) (2026-11-26)
 
 
